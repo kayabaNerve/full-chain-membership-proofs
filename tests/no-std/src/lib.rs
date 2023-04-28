@@ -8,6 +8,7 @@ pub mod dalek {
 pub mod ed448 {
   pub use minimal_ed448::*;
 }
+pub use tevone;
 
 pub use ciphersuite::*;
 

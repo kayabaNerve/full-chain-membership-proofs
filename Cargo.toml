@@ -2,13 +2,13 @@
 members = [
   "common/std-shims",
   "common/zalloc",
-  "common/db",
 
   "crypto/transcript",
 
   "crypto/ff-group-tests",
   "crypto/dalek-ff-group",
   "crypto/ed448",
+  "crypto/tevone",
   "crypto/ciphersuite",
 
   "crypto/multiexp",
@@ -17,33 +17,8 @@ members = [
   "crypto/dleq",
   "crypto/dkg",
   "crypto/frost",
-  "crypto/schnorrkel",
 
-  "coins/ethereum",
-  "coins/monero/generators",
   "coins/monero",
-
-  "processor/messages",
-  "processor",
-
-  "coordinator/tributary/tendermint",
-  "coordinator/tributary",
-  "coordinator",
-
-  "substrate/primitives",
-  "substrate/client",
-
-  "substrate/tokens/primitives",
-  "substrate/tokens/pallet",
-
-  "substrate/in-instructions/primitives",
-  "substrate/in-instructions/pallet",
-
-  "substrate/validator-sets/primitives",
-  "substrate/validator-sets/pallet",
-
-  "substrate/runtime",
-  "substrate/node",
 
   "tests/no-std",
 ]
@@ -59,7 +34,6 @@ group = { opt-level = 3 }
 
 crypto-bigint = { opt-level = 3 }
 dalek-ff-group = { opt-level = 3 }
-minimal-ed448 = { opt-level = 3 }
 
 multiexp = { opt-level = 3 }
 

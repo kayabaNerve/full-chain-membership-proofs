@@ -6,12 +6,10 @@ on:
       - develop
     paths:
       - "coins/monero/**"
-      - "processor/**"
 
   pull_request:
     paths:
       - "coins/monero/**"
-      - "processor/**"
 
 jobs:
   # Only run these once since they will be consistent regardless of any node
@@ -55,4 +53,3 @@ jobs:
         if: ${{ matrix.version != 'v0.18.2.0' }}
         run: |
           cargo test --package monero-serai --all-features --test '*'
-          cargo test --package processor --all-features monero

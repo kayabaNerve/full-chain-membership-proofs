@@ -7,12 +7,7 @@ yanked = "deny"
 notice = "warn"
 unmaintained = "warn"
 
-ignore = [
-  "RUSTSEC-2020-0071", # https://github.com/chronotope/chrono/issues/602
-  "RUSTSEC-2021-0139", # https://github.com/serai-dex/serai/228
-  "RUSTSEC-2021-0145", # https://github.com/serai-dex/serai/225
-  "RUSTSEC-2022-0061", # https://github.com/serai-dex/serai/227
-]
+ignore = []
 
 [licenses]
 unlicensed = "deny"
@@ -42,27 +37,6 @@ copyleft = "deny"
 allow-osi-fsf-free = "neither"
 default = "deny"
 
-exceptions = [
-  { allow = ["AGPL-3.0"], name = "ethereum-serai" },
-
-  { allow = ["AGPL-3.0"], name = "processor-messages" },
-  { allow = ["AGPL-3.0"], name = "processor" },
-
-  { allow = ["AGPL-3.0"], name = "tributary-chain" },
-  { allow = ["AGPL-3.0"], name = "coordinator" },
-
-  { allow = ["AGPL-3.0"], name = "tokens-pallet" },
-
-  { allow = ["AGPL-3.0"], name = "in-instructions-pallet" },
-
-  { allow = ["AGPL-3.0"], name = "validator-sets-pallet" },
-
-  { allow = ["AGPL-3.0"], name = "serai-runtime" },
-  { allow = ["AGPL-3.0"], name = "serai-node" },
-
-  { allow = ["AGPL-3.0"], name = "serai-client" },
-]
-
 [[licenses.clarify]]
 name = "ring"
 version = "*"
@@ -80,7 +54,3 @@ highlight = "all"
 unknown-registry = "deny"
 unknown-git = "deny"
 allow-registry = ["https://github.com/rust-lang/crates.io-index"]
-allow-git = [
-  "https://github.com/serai-dex/substrate-bip39",
-  "https://github.com/serai-dex/substrate",
-]

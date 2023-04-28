@@ -18,6 +18,7 @@ flexible-transcript = { path = "../../crypto/transcript", features = ["recommend
 
 dalek-ff-group = { path = "../../crypto/dalek-ff-group" }
 minimal-ed448 = { path = "../../crypto/ed448" }
+tevone = { path = "../../crypto/tevone" }
 
 ciphersuite = { path = "../../crypto/ciphersuite", default-features = false, features = ["alloc", "secp256k1", "p256", "ed25519", "ristretto", "ed448"] }
 

@@ -57,11 +57,6 @@ jobs:
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Build node
-        run: |
-          cd substrate/node
-          cargo build
-
       - name: Run Tests
         run: GITHUB_CI=true cargo test --all-features
 
