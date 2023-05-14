@@ -48,8 +48,6 @@ fn test_zero_weighted_inner_product() {
 fn test_weighted_inner_product() {
   // P = sum(g_bold * a, h_bold * b, g * (a * y * b), h * alpha)
   for i in [1, 2, 4, 8, 16, 32] {
-    dbg!(i);
-
     let mut g_bold = PointVector::<Ristretto>::new(i);
     let mut h_bold = PointVector::<Ristretto>::new(i);
 

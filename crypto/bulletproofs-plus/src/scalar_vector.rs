@@ -73,7 +73,7 @@ impl<C: Ciphersuite> ScalarVector<C> {
   }
 
   pub(crate) fn inner_product(&self, vector: &Self) -> C::F {
-    self.mul_vec(vector).0.iter().sum()
+    self.mul_vec(vector).sum()
   }
 
   pub(crate) fn powers(x: C::F, len: usize) -> Self {

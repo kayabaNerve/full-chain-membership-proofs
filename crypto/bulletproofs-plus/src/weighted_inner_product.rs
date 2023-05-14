@@ -190,7 +190,8 @@ impl<C: BulletproofsCurve> WipStatement<C> {
       assert_eq!(h_bold1.len(), n_hat);
       assert_eq!(h_bold2.len(), n_hat);
 
-      let y_n_hat = y_vec[n_hat];
+      let y_n_hat = y_vec[n_hat - 1];
+      debug_assert_eq!(y_n_hat, y.pow([u64::try_from(n_hat).unwrap()]));
 
       let d_l = C::F::random(&mut *rng);
       let d_r = C::F::random(&mut *rng);
@@ -273,7 +274,6 @@ impl<C: BulletproofsCurve> WipStatement<C> {
     let B = (C::generator() * (ry * s)) + (C::alt_generator() * long_n);
 
     let e = Self::transcript_A_B(transcript, A, B);
-    dbg!("P", e.to_repr().as_ref());
 
     let r_answer = r + (a[0] * e);
     let s_answer = s + (b[0] * e);
@@ -318,7 +318,7 @@ impl<C: BulletproofsCurve> WipStatement<C> {
       let (h_bold1, h_bold2) = h_bold.split();
 
       let n_hat = g_bold1.len();
-      let y_n_hat = y_vec[n_hat];
+      let y_n_hat = y_vec[n_hat - 1];
       let y_inv_n_hat = y_n_hat.invert().unwrap();
 
       (_e, _inv_e, _e_square, _inv_e_square, g_bold, h_bold, P) =
@@ -337,7 +337,6 @@ impl<C: BulletproofsCurve> WipStatement<C> {
     );
 
     let e = Self::transcript_A_B(transcript, proof.A, proof.B);
-    dbg!("V", e.to_repr().as_ref());
     assert_eq!(
       (P * e.square()) + (proof.A * e) + proof.B,
       (g_bold[0] * (proof.r_answer * e)) +
