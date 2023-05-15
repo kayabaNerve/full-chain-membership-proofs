@@ -58,6 +58,12 @@ impl<C: BulletproofsCurve> WipStatement<C> {
     Self { g_bold, h_bold, P }
   }
 
+  fn initial_transcript<T: Transcript>(transcript: &mut T) {
+    transcript.domain_separate(b"weighted_inner_product");
+    transcript.append_message(b"generator", C::generator().to_bytes());
+    transcript.append_message(b"alt_generator", C::alt_generator().to_bytes());
+  }
+
   fn transcript_statement<T: Transcript>(
     transcript: &mut T,
     g_bold1: &PointVector<C>,
@@ -85,7 +91,7 @@ impl<C: BulletproofsCurve> WipStatement<C> {
     transcript.append_message(b"L", L.to_bytes());
     transcript.append_message(b"R", R.to_bytes());
 
-    let e = C::hash_to_F(b"e", transcript.challenge(b"e").as_ref());
+    let e = C::hash_to_F(b"weighted_inner_product", transcript.challenge(b"e").as_ref());
     if bool::from(e.is_zero()) {
       panic!("zero challenge in WIP round");
     }
@@ -96,7 +102,7 @@ impl<C: BulletproofsCurve> WipStatement<C> {
     transcript.append_message(b"A", A.to_bytes());
     transcript.append_message(b"B", B.to_bytes());
 
-    let e = C::hash_to_F(b"e", transcript.challenge(b"e").as_ref());
+    let e = C::hash_to_F(b"weighted_inner_product", transcript.challenge(b"e").as_ref());
     if bool::from(e.is_zero()) {
       panic!("zero challenge in final WIP round");
     }
@@ -154,10 +160,10 @@ impl<C: BulletproofsCurve> WipStatement<C> {
         self.h_bold.mul_vec(&witness.b).sum() +
         (C::generator() * weighted_inner_product(&witness.a, &witness.b, &y_vec)) +
         (C::alt_generator() * witness.alpha),
-      self.P
+      self.P,
     );
 
-    transcript.domain_separate(b"weighted_inner_product");
+    Self::initial_transcript(transcript);
 
     let WipStatement { mut g_bold, mut h_bold, mut P } = self;
     assert_eq!(g_bold.len(), h_bold.len());
@@ -284,7 +290,7 @@ impl<C: BulletproofsCurve> WipStatement<C> {
 
   // TODO: Use a BatchVerifier
   pub fn verify<T: Transcript>(self, transcript: &mut T, proof: WipProof<C>, y: C::F) {
-    transcript.domain_separate(b"weighted_inner_product");
+    Self::initial_transcript(transcript);
 
     let WipStatement { mut g_bold, mut h_bold, mut P } = self;
 

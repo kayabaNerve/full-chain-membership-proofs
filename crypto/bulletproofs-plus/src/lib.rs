@@ -10,6 +10,7 @@ pub mod point_vector;
 pub(crate) use point_vector::PointVector;
 
 pub mod weighted_inner_product;
+pub mod single_range_proof;
 
 #[cfg(test)]
 mod tests;
@@ -37,6 +38,15 @@ impl<C: BulletproofsCurve> Commitment<C> {
 
   /// Calculate a Pedersen commitment, as a point, from the transparent structure.
   pub fn calculate(&self) -> C::G {
-    (C::generator() * self.mask) + (C::alt_generator() * C::F::from(self.value))
+    (C::generator() * C::F::from(self.value)) + (C::alt_generator() * self.mask)
   }
+}
+
+// Returns the little-endian decomposition.
+fn u64_decompose<C: BulletproofsCurve>(value: u64) -> ScalarVector<C> {
+  let mut bits = ScalarVector::<C>::new(64);
+  for bit in 0 .. 64 {
+    bits[bit] = C::F::from((value & (1u64 << bit)) >> bit);
+  }
+  bits
 }
