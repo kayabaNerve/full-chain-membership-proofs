@@ -68,10 +68,10 @@ pub struct ArithmeticCircuitProof<C: Ciphersuite> {
 
 impl<C: BulletproofsCurve> ArithmeticCircuitStatement<C> {
   pub fn new(
-    g_bold1: PointVector<C>,
-    g_bold2: PointVector<C>,
-    h_bold1: PointVector<C>,
-    h_bold2: PointVector<C>,
+    mut g_bold1: PointVector<C>,
+    mut g_bold2: PointVector<C>,
+    mut h_bold1: PointVector<C>,
+    mut h_bold2: PointVector<C>,
     V: PointVector<C>,
     WL: ScalarMatrix<C>,
     WR: ScalarMatrix<C>,
@@ -96,9 +96,13 @@ impl<C: BulletproofsCurve> ArithmeticCircuitStatement<C> {
 
     assert_eq!(c.len(), q);
 
+    g_bold1.0.truncate(n);
     assert_eq!(g_bold1.len(), n);
+    g_bold2.0.truncate(n);
     assert_eq!(g_bold2.len(), n);
+    h_bold1.0.truncate(n);
     assert_eq!(h_bold1.len(), n);
+    h_bold2.0.truncate(n);
     assert_eq!(h_bold2.len(), n);
 
     Self { g_bold1, g_bold2, h_bold1, h_bold2, V, WL, WR, WO, WV, c }

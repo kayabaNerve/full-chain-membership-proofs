@@ -7,7 +7,7 @@ use ciphersuite::{
 };
 
 use crate::{
-  RANGE_PROOF_BITS, PointVector, Commitment,
+  RANGE_PROOF_BITS, PointVector, RangeCommitment,
   single_range_proof::{SingleRangeStatement, SingleRangeWitness},
 };
 
@@ -21,7 +21,7 @@ fn test_single_range_proof() {
   }
 
   let commitment =
-    Commitment::new(OsRng.next_u64(), <Ristretto as Ciphersuite>::F::random(&mut OsRng));
+    RangeCommitment::new(OsRng.next_u64(), <Ristretto as Ciphersuite>::F::random(&mut OsRng));
   let statement = SingleRangeStatement::<Ristretto>::new(g_bold, h_bold, commitment.calculate());
   let witness = SingleRangeWitness::<Ristretto>::new(commitment);
 

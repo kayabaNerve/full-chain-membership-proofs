@@ -10,7 +10,7 @@ use ciphersuite::{
 };
 
 use crate::{
-  RANGE_PROOF_BITS, BulletproofsCurve, ScalarVector, PointVector, Commitment,
+  RANGE_PROOF_BITS, BulletproofsCurve, ScalarVector, PointVector, RangeCommitment,
   weighted_inner_product::{WipStatement, WipWitness, WipProof},
   u64_decompose,
 };
@@ -30,7 +30,7 @@ pub struct SingleRangeWitness<C: Ciphersuite> {
 }
 
 impl<C: BulletproofsCurve> SingleRangeWitness<C> {
-  pub fn new(commitment: Commitment<C>) -> Self {
+  pub fn new(commitment: RangeCommitment<C>) -> Self {
     SingleRangeWitness { value: commitment.value, gamma: commitment.mask }
   }
 }
@@ -122,7 +122,7 @@ impl<C: BulletproofsCurve> SingleRangeStatement<C> {
     transcript: &mut T,
     witness: SingleRangeWitness<C>,
   ) -> SingleRangeProof<C> {
-    assert_eq!(Commitment::<C>::new(witness.value, witness.gamma).calculate(), self.V);
+    assert_eq!(RangeCommitment::<C>::new(witness.value, witness.gamma).calculate(), self.V);
 
     self.initial_transcript(transcript);
 

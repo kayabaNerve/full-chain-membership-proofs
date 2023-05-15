@@ -68,7 +68,7 @@ fn test_multiplication_arithmetic_circuit() {
   let q = 5; // Constraints
 
   // Hand-written circuit for:
-  // Commitments x, y, z, z1
+  // Commitmnts x, y, z, z1
   // y = 2x
   // x * y = z
   // z + 1 = z1

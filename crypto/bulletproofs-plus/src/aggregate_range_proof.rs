@@ -10,7 +10,7 @@ use ciphersuite::{
 };
 
 use crate::{
-  RANGE_PROOF_BITS, BulletproofsCurve, ScalarVector, PointVector, Commitment,
+  RANGE_PROOF_BITS, BulletproofsCurve, ScalarVector, PointVector, RangeCommitment,
   weighted_inner_product::{WipStatement, WipWitness, WipProof},
   u64_decompose,
 };
@@ -32,7 +32,7 @@ pub struct AggregateRangeWitness<C: Ciphersuite> {
 }
 
 impl<C: BulletproofsCurve> AggregateRangeWitness<C> {
-  pub fn new(commitments: &[Commitment<C>]) -> Self {
+  pub fn new(commitments: &[RangeCommitment<C>]) -> Self {
     let mut values = vec![];
     let mut gammas = vec![];
     for commitment in commitments {
@@ -158,7 +158,7 @@ impl<C: BulletproofsCurve> AggregateRangeStatement<C> {
     for (commitment, (value, gamma)) in
       self.V.0.iter().zip(witness.values.iter().zip(witness.gammas.iter()))
     {
-      assert_eq!(Commitment::<C>::new(*value, *gamma).calculate(), *commitment);
+      assert_eq!(RangeCommitment::<C>::new(*value, *gamma).calculate(), *commitment);
     }
 
     self.initial_transcript(transcript);
