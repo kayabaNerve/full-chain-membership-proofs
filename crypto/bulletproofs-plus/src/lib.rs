@@ -4,14 +4,17 @@ use zeroize::{Zeroize, ZeroizeOnDrop};
 
 use ciphersuite::{group::ff::Field, Ciphersuite};
 
-pub mod scalar_vector;
+mod scalar_vector;
 pub(crate) use scalar_vector::{ScalarVector, weighted_inner_product};
-pub mod point_vector;
+mod scalar_matrix;
+pub(crate) use scalar_matrix::ScalarMatrix;
+mod point_vector;
 pub(crate) use point_vector::PointVector;
 
 pub mod weighted_inner_product;
 pub mod single_range_proof;
 pub mod aggregate_range_proof;
+pub mod arithmetic_circuit_proof;
 
 #[cfg(test)]
 mod tests;

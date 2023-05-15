@@ -56,6 +56,7 @@ impl<C: Ciphersuite> ScalarVector<C> {
   }
 
   pub(crate) fn add_vec(&self, vector: &Self) -> Self {
+    assert_eq!(self.len(), vector.len());
     let mut res = self.clone();
     for (i, val) in res.0.iter_mut().enumerate() {
       *val += vector.0[i];
@@ -63,6 +64,7 @@ impl<C: Ciphersuite> ScalarVector<C> {
     res
   }
   pub(crate) fn sub_vec(&self, vector: &Self) -> Self {
+    assert_eq!(self.len(), vector.len());
     let mut res = self.clone();
     for (i, val) in res.0.iter_mut().enumerate() {
       *val -= vector.0[i];
@@ -70,6 +72,7 @@ impl<C: Ciphersuite> ScalarVector<C> {
     res
   }
   pub(crate) fn mul_vec(&self, vector: &Self) -> Self {
+    assert_eq!(self.len(), vector.len());
     let mut res = self.clone();
     for (i, val) in res.0.iter_mut().enumerate() {
       *val *= vector.0[i];
@@ -90,24 +93,6 @@ impl<C: Ciphersuite> ScalarVector<C> {
       res.push(res[i - 1] * x);
     }
     ScalarVector(res)
-  }
-
-  pub(crate) fn even_powers(x: C::F, pow: usize) -> Self {
-    debug_assert!(pow != 0);
-    // Verify pow is a power of two
-    debug_assert_eq!(((pow - 1) & pow), 0);
-
-    let xsq = x * x;
-    let mut res = ScalarVector(Vec::with_capacity(pow / 2));
-    res.0.push(xsq);
-
-    let mut prev = 2;
-    while prev < pow {
-      res.0.push(res[res.len() - 1] * xsq);
-      prev += 2;
-    }
-
-    res
   }
 
   pub(crate) fn sum(mut self) -> C::F {

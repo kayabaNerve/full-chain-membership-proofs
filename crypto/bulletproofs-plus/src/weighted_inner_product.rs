@@ -181,6 +181,7 @@ impl<C: BulletproofsCurve> WipStatement<C> {
       assert_eq!(h_bold2.len(), n_hat);
 
       let y_n_hat = y_vec[n_hat - 1];
+      y_vec.0.truncate(n_hat);
       debug_assert_eq!(y_n_hat, y.pow([u64::try_from(n_hat).unwrap()]));
 
       let d_l = C::F::random(&mut *rng);
