@@ -158,7 +158,7 @@ impl<C: BulletproofsCurve> Circuit<C> {
   }
 
   /// Add an input publicly committed to.
-  pub fn add_public_input(
+  pub fn add_committed_input(
     &mut self,
     commitment: Option<Commitment<C>>,
     actual: C::G,

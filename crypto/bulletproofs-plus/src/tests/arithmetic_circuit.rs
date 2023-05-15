@@ -50,15 +50,18 @@ fn test_arithmetic_circuit() {
     ),
   ) {
     let x_var = circuit.add_secret_input(x_y_z_z1.as_ref().map(|xyz| xyz.0.value));
-    let x_com = circuit.add_public_input(x_y_z_z1.as_ref().map(|xyz| xyz.0.clone()), commitments.0);
+    let x_com =
+      circuit.add_committed_input(x_y_z_z1.as_ref().map(|xyz| xyz.0.clone()), commitments.0);
 
     let y_var = circuit.add_secret_input(x_y_z_z1.as_ref().map(|xyz| xyz.1.value));
-    let y_com = circuit.add_public_input(x_y_z_z1.as_ref().map(|xyz| xyz.1.clone()), commitments.1);
+    let y_com =
+      circuit.add_committed_input(x_y_z_z1.as_ref().map(|xyz| xyz.1.clone()), commitments.1);
 
-    let z_com = circuit.add_public_input(x_y_z_z1.as_ref().map(|xyz| xyz.2.clone()), commitments.2);
+    let z_com =
+      circuit.add_committed_input(x_y_z_z1.as_ref().map(|xyz| xyz.2.clone()), commitments.2);
 
     let z1_com =
-      circuit.add_public_input(x_y_z_z1.as_ref().map(|xyz| xyz.3.clone()), commitments.3);
+      circuit.add_committed_input(x_y_z_z1.as_ref().map(|xyz| xyz.3.clone()), commitments.3);
 
     let product = circuit.product(x_var, y_var);
 
