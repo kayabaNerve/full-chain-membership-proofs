@@ -7,6 +7,7 @@ use crate::BulletproofsCurve;
 
 mod weighted_inner_product;
 mod single_range_proof;
+mod aggregate_range_proof;
 
 impl BulletproofsCurve for Ristretto {
   fn alt_generator() -> <Self as Ciphersuite>::G {

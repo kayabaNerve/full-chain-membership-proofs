@@ -115,8 +115,12 @@ impl<C: Ciphersuite> ScalarVector<C> {
 
   pub(crate) fn split(mut self) -> (Self, Self) {
     assert!(self.len() > 1);
-    assert_eq!(self.len() % 2, 0);
-    let r = self.0.split_off(self.0.len() / 2);
+    // Make sure the left-side is the heavy one
+    let mut r = self.0.split_off((self.0.len() / 2) + (self.0.len() % 2));
+    // Balance them
+    while r.len() < self.len() {
+      r.push(C::F::ZERO);
+    }
     (self, ScalarVector(r))
   }
 }

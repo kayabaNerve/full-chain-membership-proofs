@@ -31,8 +31,7 @@ pub struct WipWitness<C: Ciphersuite> {
 
 impl<C: BulletproofsCurve> WipWitness<C> {
   pub fn new(a: ScalarVector<C>, b: ScalarVector<C>, alpha: C::F) -> Self {
-    // Make sure this is a power of 2
-    assert_eq!((a.len()) & (a.len() - 1), 0);
+    assert!(!a.0.is_empty());
     assert_eq!(a.len(), b.len());
     Self { a, b, alpha }
   }
@@ -51,9 +50,8 @@ pub struct WipProof<C: Ciphersuite> {
 
 impl<C: BulletproofsCurve> WipStatement<C> {
   pub fn new(g_bold: PointVector<C>, h_bold: PointVector<C>, P: C::G) -> Self {
+    assert!(!g_bold.0.is_empty());
     assert_eq!(g_bold.len(), h_bold.len());
-    // Make sure this is a power of 2
-    assert_eq!((g_bold.len()) & (g_bold.len() - 1), 0);
 
     Self { g_bold, h_bold, P }
   }
@@ -120,9 +118,7 @@ impl<C: BulletproofsCurve> WipStatement<C> {
     R: C::G,
     y_inv_n_hat: C::F,
   ) -> (C::F, C::F, C::F, C::F, PointVector<C>, PointVector<C>, C::G) {
-    // Make sure this is a power of 2
     let n = g_bold1.len() + g_bold2.len();
-    assert_eq!(n & (n - 1), 0);
     assert_eq!(g_bold1.len(), g_bold2.len());
     assert_eq!(g_bold1.len(), h_bold1.len());
     assert_eq!(g_bold1.len(), h_bold2.len());
@@ -294,16 +290,13 @@ impl<C: BulletproofsCurve> WipStatement<C> {
 
     let WipStatement { mut g_bold, mut h_bold, mut P } = self;
 
-    // Make sure this is a power of two
-    assert_eq!((g_bold.len()) & (g_bold.len() - 1), 0);
+    assert!(!g_bold.0.is_empty());
     assert_eq!(g_bold.len(), h_bold.len());
 
     // Verify the L/R lengths
     {
-      let mut n = g_bold.len();
       let mut lr_len = 0;
-      while n > 1 {
-        n >>= 1;
+      while (1 << lr_len) < g_bold.len() {
         lr_len += 1;
       }
       assert_eq!(proof.L.len(), lr_len);

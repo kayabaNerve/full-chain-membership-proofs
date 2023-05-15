@@ -11,9 +11,12 @@ pub(crate) use point_vector::PointVector;
 
 pub mod weighted_inner_product;
 pub mod single_range_proof;
+pub mod aggregate_range_proof;
 
 #[cfg(test)]
 mod tests;
+
+pub const RANGE_PROOF_BITS: usize = 64;
 
 pub trait BulletproofsCurve: Ciphersuite {
   fn alt_generator() -> <Self as Ciphersuite>::G;

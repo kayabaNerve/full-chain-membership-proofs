@@ -7,15 +7,15 @@ use ciphersuite::{
 };
 
 use crate::{
-  BulletproofsCurve, ScalarVector, PointVector, Commitment,
+  RANGE_PROOF_BITS, BulletproofsCurve, ScalarVector, PointVector, Commitment,
   single_range_proof::{SingleRangeStatement, SingleRangeWitness},
 };
 
 #[test]
 fn test_single_range_proof() {
-  let mut g_bold = PointVector::<Ristretto>::new(64);
-  let mut h_bold = PointVector::<Ristretto>::new(64);
-  for i in 0 .. 64 {
+  let mut g_bold = PointVector::<Ristretto>::new(RANGE_PROOF_BITS);
+  let mut h_bold = PointVector::<Ristretto>::new(RANGE_PROOF_BITS);
+  for i in 0 .. RANGE_PROOF_BITS {
     g_bold[i] = <Ristretto as Ciphersuite>::G::random(&mut OsRng);
     h_bold[i] = <Ristretto as Ciphersuite>::G::random(&mut OsRng);
   }
