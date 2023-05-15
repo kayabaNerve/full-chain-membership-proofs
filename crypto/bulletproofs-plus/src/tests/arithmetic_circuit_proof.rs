@@ -65,7 +65,7 @@ fn test_zero_arithmetic_circuit() {
 fn test_multiplication_arithmetic_circuit() {
   let m = 4; // Input secrets
   let n = 1; // Multiplications
-  let q = 2; // Constraints
+  let q = 4; // Constraints
 
   // Hand-written circuit for x * y = z
 
@@ -97,18 +97,37 @@ fn test_multiplication_arithmetic_circuit() {
   let aR = ScalarVector::<Ristretto>(vec![y]);
 
   let WL = ScalarMatrix(vec![
+    ScalarVector(vec![<Ristretto as Ciphersuite>::F::ONE]),
+    ScalarVector(vec![<Ristretto as Ciphersuite>::F::ZERO]),
     ScalarVector(vec![<Ristretto as Ciphersuite>::F::ZERO]),
     ScalarVector(vec![<Ristretto as Ciphersuite>::F::ZERO]),
   ]);
   let WR = ScalarMatrix(vec![
     ScalarVector(vec![<Ristretto as Ciphersuite>::F::ZERO]),
+    ScalarVector(vec![<Ristretto as Ciphersuite>::F::ONE]),
+    ScalarVector(vec![<Ristretto as Ciphersuite>::F::ZERO]),
     ScalarVector(vec![<Ristretto as Ciphersuite>::F::ZERO]),
   ]);
   let WO = ScalarMatrix(vec![
+    ScalarVector(vec![<Ristretto as Ciphersuite>::F::ZERO]),
+    ScalarVector(vec![<Ristretto as Ciphersuite>::F::ZERO]),
     ScalarVector(vec![<Ristretto as Ciphersuite>::F::ONE]),
     ScalarVector(vec![<Ristretto as Ciphersuite>::F::ONE]),
   ]);
   let WV = ScalarMatrix(vec![
+    // Constrain inputs
+    ScalarVector(vec![
+      <Ristretto as Ciphersuite>::F::ONE,
+      <Ristretto as Ciphersuite>::F::ZERO,
+      <Ristretto as Ciphersuite>::F::ZERO,
+      <Ristretto as Ciphersuite>::F::ZERO,
+    ]),
+    ScalarVector(vec![
+      <Ristretto as Ciphersuite>::F::ZERO,
+      <Ristretto as Ciphersuite>::F::ONE,
+      <Ristretto as Ciphersuite>::F::ZERO,
+      <Ristretto as Ciphersuite>::F::ZERO,
+    ]),
     // Confirm the multiplication
     ScalarVector(vec![
       <Ristretto as Ciphersuite>::F::ZERO,
@@ -125,6 +144,8 @@ fn test_multiplication_arithmetic_circuit() {
     ]),
   ]);
   let c = ScalarVector::<Ristretto>(vec![
+    <Ristretto as Ciphersuite>::F::ZERO,
+    <Ristretto as Ciphersuite>::F::ZERO,
     <Ristretto as Ciphersuite>::F::ZERO,
     <Ristretto as Ciphersuite>::F::ONE,
   ]);

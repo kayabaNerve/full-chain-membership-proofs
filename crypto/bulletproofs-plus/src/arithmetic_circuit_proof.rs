@@ -169,6 +169,8 @@ impl<C: BulletproofsCurve> ArithmeticCircuitStatement<C> {
     let z_q_WV = self.WV.mul_vec(&z_q);
     assert_eq!(z_q_WV.len(), self.V.len());
 
+    // This proof only works if this is -z_q, not z_q, which the author's impl also used.
+    // TODO: Is this actually a typo with the paper?
     (
       y,
       *inv_y_n.last().unwrap(),
@@ -181,8 +183,6 @@ impl<C: BulletproofsCurve> ArithmeticCircuitStatement<C> {
         self.h_bold2.mul_vec(&WO_y_z.sub(C::F::ONE).mul(inv_y_n.last().unwrap())).sum() +
         self.V.mul_vec(&z_q_WV).sum() +
         (C::generator() *
-          // The paper has a typo. The author's implementation uses -z_q.
-          // This is the choice which causes the proof to verify.
           (-z_q.inner_product(&self.c) +
             weighted_inner_product(&WR_y_z, &WL_y_z, &ScalarVector(y_n)))),
     )
