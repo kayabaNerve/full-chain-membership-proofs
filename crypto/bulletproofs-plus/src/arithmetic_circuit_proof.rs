@@ -181,7 +181,9 @@ impl<C: BulletproofsCurve> ArithmeticCircuitStatement<C> {
         self.h_bold2.mul_vec(&WO_y_z.sub(C::F::ONE).mul(inv_y_n.last().unwrap())).sum() +
         self.V.mul_vec(&z_q_WV).sum() +
         (C::generator() *
-          (z_q.inner_product(&self.c) +
+          // The paper has a typo. The author's implementation uses -z_q.
+          // This is the choice which causes the proof to verify.
+          (-z_q.inner_product(&self.c) +
             weighted_inner_product(&WR_y_z, &WL_y_z, &ScalarVector(y_n)))),
     )
   }

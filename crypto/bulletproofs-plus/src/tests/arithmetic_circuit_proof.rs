@@ -63,9 +63,9 @@ fn test_zero_arithmetic_circuit() {
 
 #[test]
 fn test_multiplication_arithmetic_circuit() {
-  let m = 3; // Input secrets
+  let m = 4; // Input secrets
   let n = 1; // Multiplications
-  let q = 1; // Constraints
+  let q = 2; // Constraints
 
   // Hand-written circuit for x * y = z
 
@@ -87,20 +87,47 @@ fn test_multiplication_arithmetic_circuit() {
   let z_mask = <Ristretto as Ciphersuite>::F::random(&mut OsRng);
   let z_commitment = commit(z, z_mask);
 
-  let V = PointVector(vec![x_commitment, y_commitment, z_commitment]);
+  let z1 = z + <Ristretto as Ciphersuite>::F::ONE;
+  let z1_mask = <Ristretto as Ciphersuite>::F::random(&mut OsRng);
+  let z1_commitment = commit(z1, z1_mask);
+
+  let V = PointVector(vec![x_commitment, y_commitment, z_commitment, z1_commitment]);
 
   let aL = ScalarVector::<Ristretto>(vec![x]);
   let aR = ScalarVector::<Ristretto>(vec![y]);
 
-  let WL = ScalarMatrix(vec![ScalarVector(vec![<Ristretto as Ciphersuite>::F::ZERO])]);
-  let WR = ScalarMatrix(vec![ScalarVector(vec![<Ristretto as Ciphersuite>::F::ZERO])]);
-  let WO = ScalarMatrix(vec![ScalarVector(vec![<Ristretto as Ciphersuite>::F::ONE])]);
-  let WV = ScalarMatrix(vec![ScalarVector(vec![
-    <Ristretto as Ciphersuite>::F::ZERO,
+  let WL = ScalarMatrix(vec![
+    ScalarVector(vec![<Ristretto as Ciphersuite>::F::ZERO]),
+    ScalarVector(vec![<Ristretto as Ciphersuite>::F::ZERO]),
+  ]);
+  let WR = ScalarMatrix(vec![
+    ScalarVector(vec![<Ristretto as Ciphersuite>::F::ZERO]),
+    ScalarVector(vec![<Ristretto as Ciphersuite>::F::ZERO]),
+  ]);
+  let WO = ScalarMatrix(vec![
+    ScalarVector(vec![<Ristretto as Ciphersuite>::F::ONE]),
+    ScalarVector(vec![<Ristretto as Ciphersuite>::F::ONE]),
+  ]);
+  let WV = ScalarMatrix(vec![
+    // Confirm the multiplication
+    ScalarVector(vec![
+      <Ristretto as Ciphersuite>::F::ZERO,
+      <Ristretto as Ciphersuite>::F::ZERO,
+      <Ristretto as Ciphersuite>::F::ONE,
+      <Ristretto as Ciphersuite>::F::ZERO,
+    ]),
+    // Verify the next commitment is output + 1
+    ScalarVector(vec![
+      <Ristretto as Ciphersuite>::F::ZERO,
+      <Ristretto as Ciphersuite>::F::ZERO,
+      <Ristretto as Ciphersuite>::F::ZERO,
+      <Ristretto as Ciphersuite>::F::ONE,
+    ]),
+  ]);
+  let c = ScalarVector::<Ristretto>(vec![
     <Ristretto as Ciphersuite>::F::ZERO,
     <Ristretto as Ciphersuite>::F::ONE,
-  ])]);
-  let c = ScalarVector::<Ristretto>(vec![<Ristretto as Ciphersuite>::F::ZERO]);
+  ]);
 
   let statement = ArithmeticCircuitStatement::<Ristretto>::new(
     g_bold1, g_bold2, h_bold1, h_bold2, V, WL, WR, WO, WV, c,
@@ -108,8 +135,8 @@ fn test_multiplication_arithmetic_circuit() {
   let witness = ArithmeticCircuitWitness::<Ristretto>::new(
     aL,
     aR,
-    ScalarVector(vec![x, y, z]),
-    ScalarVector(vec![x_mask, y_mask, z_mask]),
+    ScalarVector(vec![x, y, z, z1]),
+    ScalarVector(vec![x_mask, y_mask, z_mask, z1_mask]),
   );
 
   let mut transcript = RecommendedTranscript::new(b"Multiplication Circuit Test");
