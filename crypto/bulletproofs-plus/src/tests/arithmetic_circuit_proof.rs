@@ -65,9 +65,13 @@ fn test_zero_arithmetic_circuit() {
 fn test_multiplication_arithmetic_circuit() {
   let m = 4; // Input secrets
   let n = 1; // Multiplications
-  let q = 4; // Constraints
+  let q = 5; // Constraints
 
-  // Hand-written circuit for x * y = z
+  // Hand-written circuit for:
+  // Commitments x, y, z, z1
+  // y = 2x
+  // x * y = z
+  // z + 1 = z1
 
   let (g_bold1, g_bold2, h_bold1, h_bold2) = generators(n);
 
@@ -79,7 +83,7 @@ fn test_multiplication_arithmetic_circuit() {
   let x_mask = <Ristretto as Ciphersuite>::F::random(&mut OsRng);
   let x_commitment = commit(x, x_mask);
 
-  let y = <Ristretto as Ciphersuite>::F::random(&mut OsRng);
+  let y = x.double();
   let y_mask = <Ristretto as Ciphersuite>::F::random(&mut OsRng);
   let y_commitment = commit(y, y_mask);
 
@@ -101,18 +105,21 @@ fn test_multiplication_arithmetic_circuit() {
     ScalarVector(vec![<Ristretto as Ciphersuite>::F::ZERO]),
     ScalarVector(vec![<Ristretto as Ciphersuite>::F::ZERO]),
     ScalarVector(vec![<Ristretto as Ciphersuite>::F::ZERO]),
+    ScalarVector(vec![<Ristretto as Ciphersuite>::F::ZERO]),
   ]);
   let WR = ScalarMatrix(vec![
     ScalarVector(vec![<Ristretto as Ciphersuite>::F::ZERO]),
     ScalarVector(vec![<Ristretto as Ciphersuite>::F::ONE]),
     ScalarVector(vec![<Ristretto as Ciphersuite>::F::ZERO]),
     ScalarVector(vec![<Ristretto as Ciphersuite>::F::ZERO]),
+    ScalarVector(vec![<Ristretto as Ciphersuite>::F::ONE]),
   ]);
   let WO = ScalarMatrix(vec![
     ScalarVector(vec![<Ristretto as Ciphersuite>::F::ZERO]),
     ScalarVector(vec![<Ristretto as Ciphersuite>::F::ZERO]),
     ScalarVector(vec![<Ristretto as Ciphersuite>::F::ONE]),
     ScalarVector(vec![<Ristretto as Ciphersuite>::F::ONE]),
+    ScalarVector(vec![<Ristretto as Ciphersuite>::F::ZERO]),
   ]);
   let WV = ScalarMatrix(vec![
     // Constrain inputs
@@ -142,12 +149,20 @@ fn test_multiplication_arithmetic_circuit() {
       <Ristretto as Ciphersuite>::F::ZERO,
       <Ristretto as Ciphersuite>::F::ONE,
     ]),
+    // Verify y is 2x
+    ScalarVector(vec![
+      <Ristretto as Ciphersuite>::F::from(2u64),
+      <Ristretto as Ciphersuite>::F::ZERO,
+      <Ristretto as Ciphersuite>::F::ZERO,
+      <Ristretto as Ciphersuite>::F::ZERO,
+    ]),
   ]);
   let c = ScalarVector::<Ristretto>(vec![
     <Ristretto as Ciphersuite>::F::ZERO,
     <Ristretto as Ciphersuite>::F::ZERO,
     <Ristretto as Ciphersuite>::F::ZERO,
     <Ristretto as Ciphersuite>::F::ONE,
+    <Ristretto as Ciphersuite>::F::ZERO,
   ]);
 
   let statement = ArithmeticCircuitStatement::<Ristretto>::new(
