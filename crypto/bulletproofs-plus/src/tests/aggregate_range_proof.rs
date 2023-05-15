@@ -7,7 +7,7 @@ use ciphersuite::{
 };
 
 use crate::{
-  RANGE_PROOF_BITS, BulletproofsCurve, ScalarVector, PointVector, Commitment,
+  RANGE_PROOF_BITS, PointVector, Commitment,
   aggregate_range_proof::{AggregateRangeStatement, AggregateRangeWitness},
 };
 
@@ -24,7 +24,7 @@ fn test_aggregate_range_proof() {
     let mut commitments = vec![];
     for _ in 0 .. m {
       commitments
-        .push(Commitment::new(<Ristretto as Ciphersuite>::F::random(&mut OsRng), OsRng.next_u64()));
+        .push(Commitment::new(OsRng.next_u64(), <Ristretto as Ciphersuite>::F::random(&mut OsRng)));
     }
     let statement = AggregateRangeStatement::<Ristretto>::new(
       g_bold,

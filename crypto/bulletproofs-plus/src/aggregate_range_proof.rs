@@ -5,22 +5,19 @@ use zeroize::{Zeroize, ZeroizeOnDrop};
 use transcript::Transcript;
 
 use ciphersuite::{
-  group::{
-    ff::{Field, PrimeField},
-    Group, GroupEncoding,
-  },
+  group::{ff::Field, Group, GroupEncoding},
   Ciphersuite,
 };
 
 use crate::{
   RANGE_PROOF_BITS, BulletproofsCurve, ScalarVector, PointVector, Commitment,
   weighted_inner_product::{WipStatement, WipWitness, WipProof},
-  u64_decompose, weighted_inner_product,
+  u64_decompose,
 };
 
 const N: usize = RANGE_PROOF_BITS;
 
-// Figure 2
+// Figure 3
 #[derive(Clone, Debug, Zeroize)]
 pub struct AggregateRangeStatement<C: Ciphersuite> {
   g_bold: PointVector<C>,
@@ -110,7 +107,7 @@ impl<C: BulletproofsCurve> AggregateRangeStatement<C> {
     let mn = self.V.len() * N;
     let mut d = ScalarVector::new(mn);
     for j in 1 ..= self.V.len() {
-      z_pow.push(z.pow(&[2 * u64::try_from(j).unwrap()])); // TODO: Optimize this
+      z_pow.push(z.pow([2 * u64::try_from(j).unwrap()])); // TODO: Optimize this
       d = d.add_vec(&Self::d_j(j, self.V.len()).mul(z_pow[j - 1]));
     }
 
@@ -126,7 +123,7 @@ impl<C: BulletproofsCurve> AggregateRangeStatement<C> {
     let d_descending_y = d.mul_vec(&descending_y);
 
     let y_mn_plus_one = descending_y[0] * y;
-    debug_assert_eq!(y_mn_plus_one, y.pow(&[u64::try_from(mn).unwrap() + 1]));
+    debug_assert_eq!(y_mn_plus_one, y.pow([u64::try_from(mn).unwrap() + 1]));
 
     let mut commitment_accum = C::G::identity();
     for (j, commitment) in self.V.0.iter().enumerate() {
@@ -151,15 +148,20 @@ impl<C: BulletproofsCurve> AggregateRangeStatement<C> {
   }
 
   pub fn prove<R: RngCore + CryptoRng, T: Transcript>(
-    mut self,
+    self,
     rng: &mut R,
     transcript: &mut T,
     witness: AggregateRangeWitness<C>,
   ) -> AggregateRangeProof<C> {
-    self.initial_transcript(transcript);
-
     assert_eq!(self.V.len(), witness.values.len());
     debug_assert_eq!(witness.values.len(), witness.gammas.len());
+    for (commitment, (value, gamma)) in
+      self.V.0.iter().zip(witness.values.iter().zip(witness.gammas.iter()))
+    {
+      assert_eq!(Commitment::<C>::new(*value, *gamma).calculate(), *commitment);
+    }
+
+    self.initial_transcript(transcript);
 
     let mut d_js = vec![];
     let mut a_l = ScalarVector(vec![]);
@@ -168,9 +170,9 @@ impl<C: BulletproofsCurve> AggregateRangeStatement<C> {
       a_l.0.append(&mut u64_decompose::<C>(witness.values[j - 1]).0);
     }
 
-    for j in 0 .. self.V.len() {
-      debug_assert_eq!(d_js[j].len(), a_l.len());
-      debug_assert_eq!(a_l.inner_product(&d_js[j]), C::F::from(witness.values[j]));
+    for (value, d_j) in witness.values.iter().zip(d_js.iter()) {
+      debug_assert_eq!(d_j.len(), a_l.len());
+      debug_assert_eq!(a_l.inner_product(d_j), C::F::from(*value));
     }
 
     let a_r = a_l.sub(C::F::ONE);
@@ -201,7 +203,7 @@ impl<C: BulletproofsCurve> AggregateRangeStatement<C> {
   }
 
   // TODO: Use a BatchVerifier
-  pub fn verify<T: Transcript>(mut self, transcript: &mut T, proof: AggregateRangeProof<C>) {
+  pub fn verify<T: Transcript>(self, transcript: &mut T, proof: AggregateRangeProof<C>) {
     self.initial_transcript(transcript);
 
     let (y, _, _, _, _, A_hat) = self.compute_A_hat(transcript, proof.A);

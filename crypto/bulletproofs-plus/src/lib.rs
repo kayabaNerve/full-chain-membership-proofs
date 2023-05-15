@@ -26,17 +26,17 @@ pub trait BulletproofsCurve: Ciphersuite {
 #[allow(non_snake_case)]
 #[derive(Clone, PartialEq, Eq, Debug, Zeroize, ZeroizeOnDrop)]
 pub struct Commitment<C: Ciphersuite> {
-  pub mask: C::F,
   pub value: u64,
+  pub mask: C::F,
 }
 
 impl<C: BulletproofsCurve> Commitment<C> {
   pub fn zero() -> Self {
-    Commitment { mask: C::F::ZERO, value: 0 }
+    Commitment { value: 0, mask: C::F::ZERO }
   }
 
-  pub fn new(mask: C::F, value: u64) -> Self {
-    Commitment { mask, value }
+  pub fn new(value: u64, mask: C::F) -> Self {
+    Commitment { value, mask }
   }
 
   /// Calculate a Pedersen commitment, as a point, from the transparent structure.

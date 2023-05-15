@@ -1,7 +1,4 @@
-use ciphersuite::{
-  group::{ff::Field, Group},
-  Ciphersuite, Ristretto,
-};
+use ciphersuite::{Ciphersuite, Ristretto};
 
 use crate::BulletproofsCurve;
 

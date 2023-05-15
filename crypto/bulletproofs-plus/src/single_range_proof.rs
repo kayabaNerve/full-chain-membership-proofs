@@ -5,17 +5,14 @@ use zeroize::{Zeroize, ZeroizeOnDrop};
 use transcript::Transcript;
 
 use ciphersuite::{
-  group::{
-    ff::{Field, PrimeField},
-    GroupEncoding,
-  },
+  group::{ff::Field, GroupEncoding},
   Ciphersuite,
 };
 
 use crate::{
   RANGE_PROOF_BITS, BulletproofsCurve, ScalarVector, PointVector, Commitment,
   weighted_inner_product::{WipStatement, WipWitness, WipProof},
-  u64_decompose, weighted_inner_product,
+  u64_decompose,
 };
 
 // Figure 2
@@ -87,7 +84,7 @@ impl<C: BulletproofsCurve> SingleRangeStatement<C> {
     debug_assert_eq!(two_pows[0], C::F::ONE);
     debug_assert_eq!(
       two_pows[RANGE_PROOF_BITS - 1],
-      C::F::from(2).pow(&[u64::try_from(RANGE_PROOF_BITS).unwrap() - 1])
+      C::F::from(2).pow([u64::try_from(RANGE_PROOF_BITS).unwrap() - 1])
     );
     debug_assert!(two_pows.0.get(RANGE_PROOF_BITS).is_none());
     // Collapse of [1; RANGE_PROOF_BITS] * z
@@ -102,7 +99,7 @@ impl<C: BulletproofsCurve> SingleRangeStatement<C> {
     descending_y.0.reverse();
 
     let y_n_plus_one = descending_y[0] * y;
-    debug_assert_eq!(y_n_plus_one, y.pow(&[u64::try_from(RANGE_PROOF_BITS).unwrap() + 1]));
+    debug_assert_eq!(y_n_plus_one, y.pow([u64::try_from(RANGE_PROOF_BITS).unwrap() + 1]));
     let y_pows = ascending_y.sum();
 
     let two_descending_y = two_pows.mul_vec(&descending_y);
@@ -125,6 +122,8 @@ impl<C: BulletproofsCurve> SingleRangeStatement<C> {
     transcript: &mut T,
     witness: SingleRangeWitness<C>,
   ) -> SingleRangeProof<C> {
+    assert_eq!(Commitment::<C>::new(witness.value, witness.gamma).calculate(), self.V);
+
     self.initial_transcript(transcript);
 
     let alpha = C::F::random(&mut *rng);

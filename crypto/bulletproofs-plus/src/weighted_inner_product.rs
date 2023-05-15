@@ -5,10 +5,7 @@ use zeroize::{Zeroize, ZeroizeOnDrop};
 use transcript::Transcript;
 
 use ciphersuite::{
-  group::{
-    ff::{Field, PrimeField},
-    GroupEncoding,
-  },
+  group::{ff::Field, GroupEncoding},
   Ciphersuite,
 };
 
@@ -118,7 +115,6 @@ impl<C: BulletproofsCurve> WipStatement<C> {
     R: C::G,
     y_inv_n_hat: C::F,
   ) -> (C::F, C::F, C::F, C::F, PointVector<C>, PointVector<C>, C::G) {
-    let n = g_bold1.len() + g_bold2.len();
     assert_eq!(g_bold1.len(), g_bold2.len());
     assert_eq!(g_bold1.len(), h_bold1.len());
     assert_eq!(g_bold1.len(), h_bold2.len());
