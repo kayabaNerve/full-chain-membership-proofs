@@ -9,7 +9,7 @@ use std_shims::io::{self, Read};
 use rand_core::{RngCore, CryptoRng};
 
 use zeroize::Zeroize;
-use subtle::ConstantTimeEq;
+use subtle::{ConstantTimeEq, ConditionallySelectable};
 
 use digest::{core_api::BlockSizeUser, Digest, HashMarker};
 use transcript::SecureDigest;
@@ -61,6 +61,21 @@ pub trait Ciphersuite:
   /// Generator for the group.
   // While group does provide this in its API, privacy coins may want to use a custom basepoint
   fn generator() -> Self::G;
+
+  /// Perform a constant-time exponentation to a Scalar power.
+  fn scalar_pow(base: Self::F, exp: Self::F) -> Self::F {
+    let mut res = Self::F::ONE;
+    for (i, bit) in exp.to_le_bits().iter().rev().enumerate() {
+      // Square
+      if i != 0 {
+        res *= res;
+      }
+
+      // Multiply
+      res = Self::F::conditional_select(&res, &(res * base), u8::from(*bit).into());
+    }
+    res
+  }
 
   /// Hash the provided domain-separation tag and message to a scalar. Ciphersuites MAY naively
   /// prefix the tag to the message, enabling transpotion between the two. Accordingly, this
