@@ -5,7 +5,12 @@ use core::{
 
 use zeroize::{Zeroize, ZeroizeOnDrop};
 
-use ciphersuite::{group::ff::Field, Ciphersuite};
+use transcript::Transcript;
+
+use ciphersuite::{
+  group::ff::{Field, PrimeField},
+  Ciphersuite,
+};
 
 #[derive(Clone, PartialEq, Eq, Debug, Zeroize, ZeroizeOnDrop)]
 pub struct ScalarVector<C: Ciphersuite>(pub(crate) Vec<C::F>);
@@ -122,6 +127,12 @@ impl<C: Ciphersuite> ScalarVector<C> {
       r.push(C::F::ZERO);
     }
     (self, ScalarVector(r))
+  }
+
+  pub(crate) fn transcript<T: Transcript>(&self, transcript: &mut T, label: &'static [u8]) {
+    for scalar in &self.0 {
+      transcript.append_message(label, scalar.to_repr());
+    }
   }
 }
 

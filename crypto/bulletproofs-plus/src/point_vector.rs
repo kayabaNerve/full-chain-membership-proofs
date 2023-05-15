@@ -2,7 +2,12 @@ use core::ops::{Index, IndexMut};
 
 use zeroize::{Zeroize, ZeroizeOnDrop};
 
-use ciphersuite::{group::Group, Ciphersuite};
+use transcript::Transcript;
+
+use ciphersuite::{
+  group::{Group, GroupEncoding},
+  Ciphersuite,
+};
 
 use crate::ScalarVector;
 
@@ -88,5 +93,11 @@ impl<C: Ciphersuite> PointVector<C> {
       r.push(C::G::identity());
     }
     (self, PointVector(r))
+  }
+
+  pub(crate) fn transcript<T: Transcript>(&self, transcript: &mut T, label: &'static [u8]) {
+    for point in &self.0 {
+      transcript.append_message(label, point.to_bytes());
+    }
   }
 }

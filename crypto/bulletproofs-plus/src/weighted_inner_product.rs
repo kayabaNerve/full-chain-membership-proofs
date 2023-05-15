@@ -53,33 +53,13 @@ impl<C: BulletproofsCurve> WipStatement<C> {
     Self { g_bold, h_bold, P }
   }
 
-  fn initial_transcript<T: Transcript>(transcript: &mut T) {
+  fn initial_transcript<T: Transcript>(&self, transcript: &mut T) {
     transcript.domain_separate(b"weighted_inner_product");
     transcript.append_message(b"generator", C::generator().to_bytes());
     transcript.append_message(b"alt_generator", C::alt_generator().to_bytes());
-  }
-
-  fn transcript_statement<T: Transcript>(
-    transcript: &mut T,
-    g_bold1: &PointVector<C>,
-    g_bold2: &PointVector<C>,
-    h_bold1: &PointVector<C>,
-    h_bold2: &PointVector<C>,
-    P: C::G,
-  ) {
-    for g_bold in &g_bold1.0 {
-      transcript.append_message(b"g_bold1", g_bold.to_bytes());
-    }
-    for g_bold in &g_bold2.0 {
-      transcript.append_message(b"g_bold2", g_bold.to_bytes());
-    }
-    for h_bold in &h_bold1.0 {
-      transcript.append_message(b"h_bold1", h_bold.to_bytes());
-    }
-    for h_bold in &h_bold2.0 {
-      transcript.append_message(b"h_bold2", h_bold.to_bytes());
-    }
-    transcript.append_message(b"P", P.to_bytes());
+    self.g_bold.transcript(transcript, b"g_bold");
+    self.h_bold.transcript(transcript, b"h_bold");
+    transcript.append_message(b"P", self.P.to_bytes());
   }
 
   fn transcript_L_R<T: Transcript>(transcript: &mut T, L: C::G, R: C::G) -> C::F {
@@ -91,6 +71,17 @@ impl<C: BulletproofsCurve> WipStatement<C> {
       panic!("zero challenge in WIP round");
     }
     e
+  }
+
+  fn transcript_round<T: Transcript>(
+    transcript: &mut T,
+    g_bold: &PointVector<C>,
+    h_bold: &PointVector<C>,
+    P: C::G,
+  ) {
+    g_bold.transcript(transcript, b"g_bold_permutation");
+    h_bold.transcript(transcript, b"h_bold_permutation");
+    transcript.append_message(b"P_permutation", P.to_bytes());
   }
 
   fn transcript_A_B<T: Transcript>(transcript: &mut T, A: C::G, B: C::G) -> C::F {
@@ -119,7 +110,6 @@ impl<C: BulletproofsCurve> WipStatement<C> {
     assert_eq!(g_bold1.len(), h_bold1.len());
     assert_eq!(g_bold1.len(), h_bold2.len());
 
-    Self::transcript_statement(transcript, &g_bold1, &g_bold2, &h_bold1, &h_bold2, P);
     let e = Self::transcript_L_R(transcript, L, R);
     let inv_e = e.invert().unwrap();
 
@@ -128,6 +118,8 @@ impl<C: BulletproofsCurve> WipStatement<C> {
     let e_square = e.square();
     let inv_e_square = inv_e.square();
     P += (L * e_square) + (R * inv_e_square);
+
+    Self::transcript_round(transcript, &g_bold, &h_bold, P);
 
     (e, inv_e, e_square, inv_e_square, g_bold, h_bold, P)
   }
@@ -155,7 +147,7 @@ impl<C: BulletproofsCurve> WipStatement<C> {
       self.P,
     );
 
-    Self::initial_transcript(transcript);
+    self.initial_transcript(transcript);
 
     let WipStatement { mut g_bold, mut h_bold, mut P } = self;
     assert_eq!(g_bold.len(), h_bold.len());
@@ -247,15 +239,6 @@ impl<C: BulletproofsCurve> WipStatement<C> {
     assert_eq!(a.len(), 1);
     assert_eq!(b.len(), 1);
 
-    Self::transcript_statement(
-      transcript,
-      &g_bold,
-      &PointVector::new(0),
-      &h_bold,
-      &PointVector::new(0),
-      P,
-    );
-
     let r = C::F::random(&mut *rng);
     let s = C::F::random(&mut *rng);
     let delta = C::F::random(&mut *rng);
@@ -282,7 +265,7 @@ impl<C: BulletproofsCurve> WipStatement<C> {
 
   // TODO: Use a BatchVerifier
   pub fn verify<T: Transcript>(self, transcript: &mut T, proof: WipProof<C>, y: C::F) {
-    Self::initial_transcript(transcript);
+    self.initial_transcript(transcript);
 
     let WipStatement { mut g_bold, mut h_bold, mut P } = self;
 
@@ -321,15 +304,6 @@ impl<C: BulletproofsCurve> WipStatement<C> {
     }
     assert_eq!(g_bold.len(), 1);
     assert_eq!(h_bold.len(), 1);
-
-    Self::transcript_statement(
-      transcript,
-      &g_bold,
-      &PointVector::new(0),
-      &h_bold,
-      &PointVector::new(0),
-      P,
-    );
 
     let e = Self::transcript_A_B(transcript, proof.A, proof.B);
     assert_eq!(
