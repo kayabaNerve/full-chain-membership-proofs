@@ -53,25 +53,16 @@ impl<C: BulletproofsCurve> Constraint<C> {
     Self { WL: vec![], WR: vec![], WO: vec![], WV: vec![], c: C::F::ZERO }
   }
 
-  pub fn weight_left(&mut self, variable: ProductReference, weight: C::F) -> &mut Self {
-    for existing in &self.WL {
-      assert!(existing.0 != variable.0);
+  pub fn weight(&mut self, variable: ProductReference, weight: C::F) -> &mut Self {
+    let (weights, variable) = match variable {
+      ProductReference::Left(value) => (&mut self.WL, value),
+      ProductReference::Right(value) => (&mut self.WR, value),
+      ProductReference::Output(value) => (&mut self.WO, value),
+    };
+    for existing in &*weights {
+      assert!(existing.0 != variable);
     }
-    self.WL.push((variable.0, weight));
-    self
-  }
-  pub fn weight_right(&mut self, variable: ProductReference, weight: C::F) -> &mut Self {
-    for existing in &self.WR {
-      assert!(existing.0 != variable.0);
-    }
-    self.WR.push((variable.0, weight));
-    self
-  }
-  pub fn weight_output(&mut self, variable: ProductReference, weight: C::F) -> &mut Self {
-    for existing in &self.WO {
-      assert!(existing.0 != variable.0);
-    }
-    self.WO.push((variable.0, weight));
+    weights.push((variable, weight));
     self
   }
   pub fn weight_commitment(&mut self, variable: CommitmentReference, weight: C::F) -> &mut Self {
@@ -91,23 +82,57 @@ impl<C: BulletproofsCurve> Constraint<C> {
 #[derive(Copy, Clone, Debug, Zeroize)]
 pub struct VariableReference(usize);
 #[derive(Copy, Clone, Debug, Zeroize)]
-pub struct ProductReference(usize);
+pub enum ProductReference {
+  Left(usize),
+  Right(usize),
+  Output(usize),
+}
 #[derive(Copy, Clone, Debug, Zeroize)]
 pub struct CommitmentReference(usize);
 
 #[derive(Clone, Debug, Zeroize, ZeroizeOnDrop)]
-enum Variable<C: BulletproofsCurve> {
+pub enum Variable<C: BulletproofsCurve> {
+  Constant(C::F),
   Secret(Option<C::F>),
   Public(Option<Commitment<C>>, C::G),
   Product(usize, usize, Option<C::F>),
 }
 
 impl<C: BulletproofsCurve> Variable<C> {
-  fn value(&self) -> Option<C::F> {
+  pub fn value(&self) -> Option<C::F> {
     match self {
+      Variable::Constant(value) => Some(*value),
       Variable::Secret(value) => *value,
-      Variable::Public(_, _) => panic!("asked for value of commitment"),
+      // This branch should never be reachable due to usage of CommitmentReference
+      Variable::Public(_commitment, _) => {
+        // commitment.map(|commitment| commitment.value),
+        panic!("requested value of commitment");
+      }
       Variable::Product(_, _, product) => *product,
+    }
+  }
+}
+
+impl<C: BulletproofsCurve> core::ops::Add for Variable<C> {
+  type Output = Option<C::F>;
+
+  fn add(self, other: Variable<C>) -> Self::Output {
+    if let (Some(a), Some(b)) = (self.value(), other.value()) {
+      Some(a + b)
+    } else {
+      None
+    }
+  }
+}
+
+impl<C: BulletproofsCurve> core::ops::Sub for Variable<C> {
+  type Output = Option<C::F>;
+
+  fn sub(self, other: Variable<C>) -> Self::Output {
+    if let (Some(a), Some(b)) = (self.value(), other.value()) {
+      Some(a - b)
+    } else {
+      None
     }
   }
 }
@@ -123,6 +148,8 @@ pub struct Circuit<C: BulletproofsCurve> {
   commitments: usize,
   products: usize,
   constraints: Vec<Constraint<C>>,
+
+  pending_additive_constraints: Vec<(Constraint<C>, VariableReference)>,
 }
 
 impl<C: BulletproofsCurve> Circuit<C> {
@@ -138,12 +165,36 @@ impl<C: BulletproofsCurve> Circuit<C> {
       g_bold2,
       h_bold1,
       h_bold2,
+
       prover,
       variables: vec![],
       commitments: 0,
       products: 0,
       constraints: vec![],
+
+      pending_additive_constraints: vec![],
     }
+  }
+
+  pub fn add_constant(&mut self, constant: C::F) -> VariableReference {
+    // Return the existing constant, if there's already one
+    for (i, variable) in self.variables.iter().enumerate() {
+      match variable {
+        Variable::Constant(value) => {
+          if *value == constant {
+            return VariableReference(i);
+          }
+        }
+        _ => {}
+      }
+    }
+
+    let res = VariableReference(self.variables.len());
+    self.variables.push(Variable::Constant(constant));
+    let mut constraint = Constraint::new();
+    constraint.offset(-constant);
+    self.pending_additive_constraints.push((constraint, res));
+    res
   }
 
   /// Add an input only known to the prover.
@@ -175,19 +226,85 @@ impl<C: BulletproofsCurve> Circuit<C> {
   }
 
   /// Use a pair of variables in a product relationship.
-  pub fn product(&mut self, a: VariableReference, b: VariableReference) -> ProductReference {
+  ///
+  /// This is unsafe without further constraints on the variables/product.
+  pub fn unchecked_product(
+    &mut self,
+    a: VariableReference,
+    b: VariableReference,
+  ) -> (ProductReference, ProductReference, ProductReference) {
     let left = &self.variables[a.0];
     let right = &self.variables[b.0];
     debug_assert_eq!(left.value().is_some(), right.value().is_some());
 
-    let res = ProductReference(self.products);
+    let res = self.products;
     self.products += 1;
     self.variables.push(Variable::Product(
       a.0,
       b.0,
       left.value().map(|left| left * right.value().unwrap()),
     ));
-    res
+    (ProductReference::Left(res), ProductReference::Right(res), ProductReference::Output(res))
+  }
+
+  pub fn constrain_equality(&mut self, a: ProductReference, b: ProductReference) {
+    let mut constraint = Constraint::new();
+    constraint.weight(a, C::F::ONE);
+    constraint.weight(b, -C::F::ONE);
+    self.constrain(constraint);
+  }
+
+  pub fn product(&mut self, a: ProductReference, b: ProductReference) -> ProductReference {
+    let a_var = self.product_to_unchecked_variable(a);
+    let b_var = self.product_to_unchecked_variable(b);
+    let res = self.unchecked_product(a_var, b_var);
+    self.constrain_equality(res.0, a);
+    self.constrain_equality(res.1, b);
+    res.2
+  }
+
+  /// Create, and constrain, a variable to be the sum of two other variables.
+  ///
+  /// All usages of this variable in product statements will be appropriately constrained.
+  pub fn add(&mut self, a: ProductReference, b: ProductReference) -> VariableReference {
+    let a_var = self.product_to_unchecked_variable(a);
+    let b_var = self.product_to_unchecked_variable(b);
+    let sum =
+      self.add_secret_input(self.unchecked_variable(a_var) + self.unchecked_variable(b_var));
+    let mut constraint = Constraint::new();
+    constraint.weight(a, C::F::ONE);
+    constraint.weight(b, C::F::ONE);
+    // We can only add a constraint for this once the sum has been used in a product statement
+    // Add it as pending, so once the circuit uses it in one naturally, we can use that
+    self.pending_additive_constraints.push((constraint, sum));
+    sum
+  }
+
+  /// Obtain the underlying variable from a reference.
+  ///
+  /// This requires a constraint to be safely used.
+  pub fn unchecked_variable(&self, variable: VariableReference) -> Variable<C> {
+    self.variables[variable.0].clone()
+  }
+
+  /// Obtain a variable from a product.
+  ///
+  /// This returns the requested variable yet further requires a constraint of equality between the
+  /// variables.
+  pub fn product_to_unchecked_variable(&mut self, product: ProductReference) -> VariableReference {
+    let variable = match product {
+      ProductReference::Left(variable) => variable,
+      ProductReference::Right(variable) => variable,
+      ProductReference::Output(variable) => variable,
+    };
+    match self.variables[variable] {
+      Variable::Product(left, right, output) => match product {
+        ProductReference::Left(_) => VariableReference(left),
+        ProductReference::Right(_) => VariableReference(right),
+        ProductReference::Output(_) => self.add_secret_input(output),
+      },
+      _ => panic!("ProductReference to non-product"),
+    }
   }
 
   /// Add a constraint.
@@ -197,7 +314,7 @@ impl<C: BulletproofsCurve> Circuit<C> {
   }
 
   // TODO: This can be significantly optimized
-  fn compile(self) -> (ArithmeticCircuitStatement<C>, Option<ArithmeticCircuitWitness<C>>) {
+  fn compile(mut self) -> (ArithmeticCircuitStatement<C>, Option<ArithmeticCircuitWitness<C>>) {
     // aL, aR, v, gamma
     let witness = if self.prover {
       let mut variables = HashMap::new();
@@ -210,6 +327,9 @@ impl<C: BulletproofsCurve> Circuit<C> {
 
       for (i, variable) in self.variables.iter().enumerate() {
         match variable {
+          Variable::Constant(value) => {
+            variables.insert(i, *value);
+          }
           Variable::Secret(value) => {
             variables.insert(i, value.unwrap());
           }
@@ -241,9 +361,40 @@ impl<C: BulletproofsCurve> Circuit<C> {
     let mut n = 0;
     for variable in &self.variables {
       match variable {
+        Variable::Constant(_) => {}
         Variable::Secret(_) => {}
         Variable::Public(_, actual) => V.push(*actual),
         Variable::Product(_, _, _) => n += 1,
+      }
+    }
+
+    for (constraint, sum) in self.pending_additive_constraints {
+      // Look for a product using this variable
+      let start = self.constraints.len();
+      let mut i = 0;
+      for product in &self.variables {
+        match product {
+          Variable::Product(left, right, _) => {
+            if *left == sum.0 {
+              // TODO: If this is the second constraint, a more minimal constraint can be used
+              // (1 prior, -1 current, instead of 1, 1, -1)
+              let mut constraint = constraint.clone();
+              constraint.weight(ProductReference::Left(i), -C::F::ONE);
+              self.constraints.push(constraint);
+            } else if *right == sum.0 {
+              let mut constraint = constraint.clone();
+              constraint.weight(ProductReference::Right(i), -C::F::ONE);
+              self.constraints.push(constraint);
+            }
+
+            i += 1;
+          }
+          _ => {}
+        }
+      }
+
+      if start == self.constraints.len() {
+        panic!("unused additive sum");
       }
     }
 

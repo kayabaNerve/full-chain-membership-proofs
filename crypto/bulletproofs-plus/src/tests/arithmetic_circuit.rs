@@ -63,29 +63,29 @@ fn test_arithmetic_circuit() {
     let z1_com =
       circuit.add_committed_input(x_y_z_z1.as_ref().map(|xyz| xyz.3.clone()), commitments.3);
 
-    let product = circuit.product(x_var, y_var);
+    let (product_l, product_r, product_o) = circuit.unchecked_product(x_var, y_var);
 
     let mut next_constraint = Constraint::new();
     next_constraint
-      .weight_left(product, <Ristretto as Ciphersuite>::F::ONE)
+      .weight(product_l, <Ristretto as Ciphersuite>::F::ONE)
       .weight_commitment(x_com, <Ristretto as Ciphersuite>::F::ONE);
     circuit.constrain(next_constraint);
 
     let mut next_constraint = Constraint::new();
     next_constraint
-      .weight_right(product, <Ristretto as Ciphersuite>::F::ONE)
+      .weight(product_r, <Ristretto as Ciphersuite>::F::ONE)
       .weight_commitment(y_com, <Ristretto as Ciphersuite>::F::ONE);
     circuit.constrain(next_constraint);
 
     let mut next_constraint = Constraint::new();
     next_constraint
-      .weight_output(product, <Ristretto as Ciphersuite>::F::ONE)
+      .weight(product_o, <Ristretto as Ciphersuite>::F::ONE)
       .weight_commitment(z_com, <Ristretto as Ciphersuite>::F::ONE);
     circuit.constrain(next_constraint);
 
     let mut next_constraint = Constraint::new();
     next_constraint
-      .weight_output(product, <Ristretto as Ciphersuite>::F::ONE)
+      .weight(product_o, <Ristretto as Ciphersuite>::F::ONE)
       .weight_commitment(z1_com, <Ristretto as Ciphersuite>::F::ONE)
       .offset(<Ristretto as Ciphersuite>::F::ONE);
     circuit.constrain(next_constraint);
