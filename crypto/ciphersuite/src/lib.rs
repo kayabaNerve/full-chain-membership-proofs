@@ -42,6 +42,11 @@ mod ed448;
 #[cfg(feature = "ed448")]
 pub use ed448::*;
 
+#[cfg(feature = "pasta")]
+mod pasta;
+#[cfg(feature = "pasta")]
+pub use pasta::*;
+
 /// Unified trait defining a ciphersuite around an elliptic curve.
 pub trait Ciphersuite:
   'static + Send + Sync + Clone + Copy + PartialEq + Eq + Debug + Zeroize
