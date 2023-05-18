@@ -26,7 +26,6 @@ pub const RANGE_PROOF_BITS: usize = 64;
 
 pub trait BulletproofsCurve: Ciphersuite {
   fn alt_generator() -> <Self as Ciphersuite>::G;
-  fn alt_generators() -> &'static [<Self as Ciphersuite>::G];
 }
 
 #[allow(non_snake_case)]

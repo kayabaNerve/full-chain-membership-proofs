@@ -135,6 +135,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "bulletproofs-plus"
+version = "0.1.0"
+dependencies = [
+ "ciphersuite",
+ "flexible-transcript",
+ "multiexp",
+ "rand_core 0.6.4",
+ "subtle",
+ "zeroize",
+]
+
+[[package]]
 name = "bumpalo"
 version = "3.12.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -201,6 +213,7 @@ dependencies = [
 name = "ciphersuite"
 version = "0.3.0"
 dependencies = [
+ "blake2",
  "dalek-ff-group",
  "digest 0.10.6",
  "elliptic-curve",
@@ -212,6 +225,7 @@ dependencies = [
  "k256",
  "minimal-ed448",
  "p256",
+ "pasta_curves 0.5.1 (git+https://github.com/kayabaNerve/pasta_curves.git)",
  "rand_core 0.6.4",
  "sha2 0.10.6",
  "sha3",
@@ -503,7 +517,7 @@ dependencies = [
  "group",
  "k256",
  "p256",
- "pasta_curves",
+ "pasta_curves 0.5.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "rand_core 0.6.4",
  "subtle",
 ]
@@ -1368,6 +1382,19 @@ dependencies = [
  "rand",
  "static_assertions",
  "subtle",
+]
+
+[[package]]
+name = "pasta_curves"
+version = "0.5.1"
+source = "git+https://github.com/kayabaNerve/pasta_curves.git#a46b5be95cacbff54d06aad8d3bbcba42e05d616"
+dependencies = [
+ "ff",
+ "group",
+ "rand",
+ "static_assertions",
+ "subtle",
+ "zeroize",
 ]
 
 [[package]]

@@ -18,6 +18,8 @@ members = [
   "crypto/dkg",
   "crypto/frost",
 
+  "crypto/bulletproofs-plus",
+
   "coins/monero",
 
   "tests/no-std",

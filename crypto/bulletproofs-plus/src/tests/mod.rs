@@ -1,4 +1,4 @@
-use ciphersuite::{Ciphersuite, Ristretto};
+use ciphersuite::{Ciphersuite, Ristretto, Pallas, Vesta};
 
 use crate::BulletproofsCurve;
 
@@ -13,7 +13,18 @@ impl BulletproofsCurve for Ristretto {
     <Ristretto as Ciphersuite>::generator() *
       <Ristretto as Ciphersuite>::hash_to_F(b"alt_generator", &[]) // TODO
   }
-  fn alt_generators() -> &'static [<Self as Ciphersuite>::G] {
-    todo!()
+}
+
+impl BulletproofsCurve for Pallas {
+  fn alt_generator() -> <Self as Ciphersuite>::G {
+    <Pallas as Ciphersuite>::generator() * <Pallas as Ciphersuite>::hash_to_F(b"alt_generator", &[])
+    // TODO
+  }
+}
+
+impl BulletproofsCurve for Vesta {
+  fn alt_generator() -> <Self as Ciphersuite>::G {
+    <Vesta as Ciphersuite>::generator() * <Vesta as Ciphersuite>::hash_to_F(b"alt_generator", &[])
+    // TODO
   }
 }
