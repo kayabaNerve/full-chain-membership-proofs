@@ -37,8 +37,9 @@ impl<C: BulletproofsCurve> Commitment<C> {
   }
 }
 
-#[derive(Clone, Debug, Zeroize)]
+#[derive(Clone, Debug)]
 pub struct Constraint<C: BulletproofsCurve> {
+  label: &'static str,
   // Each weight (C::F) is bound to a specific variable (usize) to allow post-expansion to valid
   // constraints
   WL: Vec<(usize, C::F)>,
@@ -49,20 +50,20 @@ pub struct Constraint<C: BulletproofsCurve> {
 }
 
 impl<C: BulletproofsCurve> Constraint<C> {
-  pub fn new() -> Self {
-    Self { WL: vec![], WR: vec![], WO: vec![], WV: vec![], c: C::F::ZERO }
+  pub fn new(label: &'static str) -> Self {
+    Self { label, WL: vec![], WR: vec![], WO: vec![], WV: vec![], c: C::F::ZERO }
   }
 
-  pub fn weight(&mut self, variable: ProductReference, weight: C::F) -> &mut Self {
-    let (weights, variable) = match variable {
-      ProductReference::Left(value) => (&mut self.WL, value),
-      ProductReference::Right(value) => (&mut self.WR, value),
-      ProductReference::Output(value) => (&mut self.WO, value),
+  pub fn weight(&mut self, product: ProductReference, weight: C::F) -> &mut Self {
+    let (weights, id) = match product {
+      ProductReference::Left(id, _) => (&mut self.WL, id),
+      ProductReference::Right(id, _) => (&mut self.WR, id),
+      ProductReference::Output(id, _) => (&mut self.WO, id),
     };
     for existing in &*weights {
-      assert!(existing.0 != variable);
+      assert!(existing.0 != id);
     }
-    weights.push((variable, weight));
+    weights.push((id, weight));
     self
   }
   pub fn weight_commitment(&mut self, variable: CommitmentReference, weight: C::F) -> &mut Self {
@@ -83,9 +84,9 @@ impl<C: BulletproofsCurve> Constraint<C> {
 pub struct VariableReference(usize);
 #[derive(Copy, Clone, Debug, Zeroize)]
 pub enum ProductReference {
-  Left(usize),
-  Right(usize),
-  Output(usize),
+  Left(usize, usize),
+  Right(usize, usize),
+  Output(usize, usize),
 }
 #[derive(Copy, Clone, Debug, Zeroize)]
 pub struct CommitmentReference(usize);
@@ -176,6 +177,10 @@ impl<C: BulletproofsCurve> Circuit<C> {
     }
   }
 
+  pub fn prover(&self) -> bool {
+    self.prover
+  }
+
   pub fn add_constant(&mut self, constant: C::F) -> VariableReference {
     // Return the existing constant, if there's already one
     for (i, variable) in self.variables.iter().enumerate() {
@@ -191,7 +196,9 @@ impl<C: BulletproofsCurve> Circuit<C> {
 
     let res = VariableReference(self.variables.len());
     self.variables.push(Variable::Constant(constant));
-    let mut constraint = Constraint::new();
+    let mut constraint = Constraint::new("constant");
+    // Negative as pending_additive_constraints negates its contribution, expecting it to be
+    // left-hand-side balanced, where this is right-hand-side balanced
     constraint.offset(-constant);
     self.pending_additive_constraints.push((constraint, res));
     res
@@ -235,20 +242,24 @@ impl<C: BulletproofsCurve> Circuit<C> {
   ) -> (ProductReference, ProductReference, ProductReference) {
     let left = &self.variables[a.0];
     let right = &self.variables[b.0];
-    debug_assert_eq!(left.value().is_some(), right.value().is_some());
 
-    let res = self.products;
+    let product_id = self.products;
+    let variable_id = self.variables.len();
     self.products += 1;
     self.variables.push(Variable::Product(
       a.0,
       b.0,
-      left.value().map(|left| left * right.value().unwrap()),
+      left.value().and_then(|left| right.value().and_then(|right| Some(left * right))),
     ));
-    (ProductReference::Left(res), ProductReference::Right(res), ProductReference::Output(res))
+    (
+      ProductReference::Left(product_id, variable_id),
+      ProductReference::Right(product_id, variable_id),
+      ProductReference::Output(product_id, variable_id),
+    )
   }
 
   pub fn constrain_equality(&mut self, a: ProductReference, b: ProductReference) {
-    let mut constraint = Constraint::new();
+    let mut constraint = Constraint::new("equality");
     constraint.weight(a, C::F::ONE);
     constraint.weight(b, -C::F::ONE);
     self.constrain(constraint);
@@ -271,7 +282,7 @@ impl<C: BulletproofsCurve> Circuit<C> {
     let b_var = self.product_to_unchecked_variable(b);
     let sum =
       self.add_secret_input(self.unchecked_variable(a_var) + self.unchecked_variable(b_var));
-    let mut constraint = Constraint::new();
+    let mut constraint = Constraint::new("addition");
     constraint.weight(a, C::F::ONE);
     constraint.weight(b, C::F::ONE);
     // We can only add a constraint for this once the sum has been used in a product statement
@@ -293,15 +304,15 @@ impl<C: BulletproofsCurve> Circuit<C> {
   /// variables.
   pub fn product_to_unchecked_variable(&mut self, product: ProductReference) -> VariableReference {
     let variable = match product {
-      ProductReference::Left(variable) => variable,
-      ProductReference::Right(variable) => variable,
-      ProductReference::Output(variable) => variable,
+      ProductReference::Left(_, variable) => variable,
+      ProductReference::Right(_, variable) => variable,
+      ProductReference::Output(_, variable) => variable,
     };
     match self.variables[variable] {
       Variable::Product(left, right, output) => match product {
-        ProductReference::Left(_) => VariableReference(left),
-        ProductReference::Right(_) => VariableReference(right),
-        ProductReference::Output(_) => self.add_secret_input(output),
+        ProductReference::Left(_, _) => VariableReference(left),
+        ProductReference::Right(_, _) => VariableReference(right),
+        ProductReference::Output(_, _) => self.add_secret_input(output),
       },
       _ => panic!("ProductReference to non-product"),
     }
@@ -372,18 +383,20 @@ impl<C: BulletproofsCurve> Circuit<C> {
       // Look for a product using this variable
       let start = self.constraints.len();
       let mut i = 0;
-      for product in &self.variables {
+      for (variable_id, product) in self.variables.iter().enumerate() {
         match product {
           Variable::Product(left, right, _) => {
             if *left == sum.0 {
               // TODO: If this is the second constraint, a more minimal constraint can be used
               // (1 prior, -1 current, instead of 1, 1, -1)
               let mut constraint = constraint.clone();
-              constraint.weight(ProductReference::Left(i), -C::F::ONE);
+              constraint.weight(ProductReference::Left(i, variable_id), -C::F::ONE);
               self.constraints.push(constraint);
-            } else if *right == sum.0 {
+            }
+
+            if *right == sum.0 {
               let mut constraint = constraint.clone();
-              constraint.weight(ProductReference::Right(i), -C::F::ONE);
+              constraint.weight(ProductReference::Right(i, variable_id), -C::F::ONE);
               self.constraints.push(constraint);
             }
 
@@ -405,22 +418,41 @@ impl<C: BulletproofsCurve> Circuit<C> {
     let mut WV = vec![];
     let mut c = vec![];
     for constraint in self.constraints {
+      // WL aL WR aR WO aO == WV v + c
+      let mut eval = C::F::ZERO;
+
       let mut this_wl = vec![C::F::ZERO; n];
       let mut this_wr = vec![C::F::ZERO; n];
       let mut this_wo = vec![C::F::ZERO; n];
       let mut this_wv = vec![C::F::ZERO; V.len()];
 
       for wl in constraint.WL {
+        if self.prover {
+          eval += wl.1 * witness.as_ref().unwrap().aL[wl.0];
+        }
         this_wl[wl.0] = wl.1;
       }
       for wr in constraint.WR {
+        if self.prover {
+          eval += wr.1 * witness.as_ref().unwrap().aR[wr.0];
+        }
         this_wr[wr.0] = wr.1;
       }
       for wo in constraint.WO {
+        if self.prover {
+          eval += wo.1 * (witness.as_ref().unwrap().aL[wo.0] * witness.as_ref().unwrap().aR[wo.0]);
+        }
         this_wo[wo.0] = wo.1;
       }
       for wv in constraint.WV {
+        if self.prover {
+          eval -= wv.1 * witness.as_ref().unwrap().v[wv.0];
+        }
         this_wv[wv.0] = wv.1;
+      }
+
+      if self.prover {
+        assert_eq!(eval, constraint.c, "faulty constraint: {}", constraint.label);
       }
 
       WL.push(ScalarVector(this_wl));
