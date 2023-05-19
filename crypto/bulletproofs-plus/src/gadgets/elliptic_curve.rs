@@ -5,23 +5,12 @@ use crate::{
   arithmetic_circuit::{VariableReference, ProductReference, Constraint, Circuit},
 };
 
-pub trait ShortWeierstrass: BulletproofsCurve {
+pub trait EmbeddedShortWeierstrass: BulletproofsCurve {
   const B: u64;
 }
 
-/*
-#[cfg(feature = "pasta")]
-impl ShortWeierstrass for pasta_curves::pallas::Point {
-  const B: u64 = 5;
-}
-
-#[cfg(feature = "pasta")]
-impl ShortWeierstrass for pasta_curves::vesta::Point {
-  const B: u64 = 5;
-}
-*/
-
-pub trait CurveAddition: BulletproofsCurve {
+/// Perform addition over the curve embedded into the current curve.
+pub trait EmbeddedCurveAddition: BulletproofsCurve {
   /// Takes in an on-curve point { X, Y, Z } and on-curve point { X, Y, 1 }, returning their sum.
   ///
   /// The returned VariableReferences are safe for usage in products, without further constraints,
@@ -35,10 +24,37 @@ pub trait CurveAddition: BulletproofsCurve {
     x2: ProductReference,
     y2: ProductReference,
   ) -> (VariableReference, VariableReference, VariableReference);
+
+  fn normalize(
+    circuit: &mut Circuit<Self>,
+    x: VariableReference,
+    y: VariableReference,
+    z: VariableReference,
+  ) -> (ProductReference, ProductReference) {
+    let z_var = circuit.unchecked_variable(z);
+    let z_inv = z_var.value().map(|z| z.invert().unwrap());
+    let z_inv = circuit.add_secret_input(z_inv);
+    let z_inv_product = circuit.unchecked_product(z, z_inv);
+
+    // Doesn't check z since z is expected to have its checks post-added
+    let mut z_constraint = Constraint::new("z_inv");
+    z_constraint.weight(z_inv_product.2, Self::F::ONE);
+    z_constraint.offset(Self::F::ONE);
+    circuit.constrain(z_constraint);
+
+    // Also assumes x and y have their checks post-added
+    let x_norm = circuit.unchecked_product(x, z_inv);
+    circuit.constrain_equality(z_inv_product.1, x_norm.1);
+
+    let y_norm = circuit.unchecked_product(y, z_inv);
+    circuit.constrain_equality(z_inv_product.1, y_norm.1);
+
+    (x_norm.2, y_norm.2)
+  }
 }
 
 // https:://eprint.iacr.org/2015/1060.pdf
-impl<C: ShortWeierstrass> CurveAddition for C {
+impl<C: EmbeddedShortWeierstrass> EmbeddedCurveAddition for C {
   // Algorithm 8
   fn add(
     circuit: &mut Circuit<C>,
@@ -65,6 +81,7 @@ impl<C: ShortWeierstrass> CurveAddition for C {
 
     // 6
     let t4 = circuit.add(t0, t1);
+
     // Obtain -t4
     // Unchecked since the addition will post-add its constraint, after we perform this product,
     // and because the constant is similarly checked
@@ -87,7 +104,7 @@ impl<C: ShortWeierstrass> CurveAddition for C {
     let t0_ref = circuit.product_to_unchecked_variable(t0);
     let t0_var = circuit.unchecked_variable(t0_ref);
     let new_t0 = circuit.add_secret_input(t0_var.value().map(|t0| t0 * C::F::from(3)));
-    let mut t0_constraint = Constraint::new();
+    let mut t0_constraint = Constraint::new("t0");
     t0_constraint.weight(t0, C::F::from(3));
     // t0_constraint is completed after t0 is used in a product
     let t0 = new_t0;
@@ -103,14 +120,14 @@ impl<C: ShortWeierstrass> CurveAddition for C {
 
     // 16
     let neg_t2 = circuit.product(t2, neg_one);
-    let t1 = circuit.add(t1, t2);
+    let t1 = circuit.add(t1, neg_t2);
 
     // 17
     // Safe due to post-addition of constraints for const/add
     let y3 = circuit.unchecked_product(b3, y3).2;
 
     // 18
-    // t4 is an addition and safe
+    // t4 is an addition result and accordingly safe
     let y3_var = circuit.product_to_unchecked_variable(y3);
     let x3 = circuit.unchecked_product(t4, y3_var);
     circuit.constrain_equality(x3.1, y3);
@@ -122,7 +139,7 @@ impl<C: ShortWeierstrass> CurveAddition for C {
 
     // 20
     let neg_x3 = circuit.product(x3, neg_one);
-    let x3 = circuit.add(t2, x3);
+    let x3 = circuit.add(t2, neg_x3);
 
     // 21
     let new_y3 = circuit.unchecked_product(y3_var, t0);

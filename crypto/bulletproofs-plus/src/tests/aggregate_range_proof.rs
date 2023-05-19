@@ -3,7 +3,7 @@ use rand_core::{RngCore, OsRng};
 use transcript::{Transcript, RecommendedTranscript};
 use ciphersuite::{
   group::{ff::Field, Group},
-  Ciphersuite, Ristretto,
+  Ciphersuite, Ristretto, Pallas, Vesta,
 };
 
 use crate::{
@@ -11,8 +11,7 @@ use crate::{
   aggregate_range_proof::{AggregateRangeStatement, AggregateRangeWitness},
 };
 
-#[test]
-fn test_aggregate_range_proof() {
+fn test_aggregate_range_proof<C: Ciphersuite>() {
   for m in 1 ..= 16 {
     let mut g_bold = PointVector::<Ristretto>::new(RANGE_PROOF_BITS * m);
     let mut h_bold = PointVector::<Ristretto>::new(RANGE_PROOF_BITS * m);
@@ -39,4 +38,19 @@ fn test_aggregate_range_proof() {
     let proof = statement.clone().prove(&mut OsRng, &mut transcript.clone(), witness);
     statement.verify(&mut transcript, proof);
   }
+}
+
+#[test]
+fn test_aggregate_range_proof_ristretto() {
+  test_aggregate_range_proof::<Ristretto>();
+}
+
+#[test]
+fn test_aggregate_range_proof_pallas() {
+  test_aggregate_range_proof::<Pallas>();
+}
+
+#[test]
+fn test_aggregate_range_proof_vesta() {
+  test_aggregate_range_proof::<Vesta>();
 }

@@ -141,6 +141,7 @@ dependencies = [
  "ciphersuite",
  "flexible-transcript",
  "multiexp",
+ "pasta_curves 0.5.1 (git+https://github.com/kayabaNerve/pasta_curves.git)",
  "rand_core 0.6.4",
  "subtle",
  "zeroize",
@@ -1389,6 +1390,7 @@ name = "pasta_curves"
 version = "0.5.1"
 source = "git+https://github.com/kayabaNerve/pasta_curves.git#a46b5be95cacbff54d06aad8d3bbcba42e05d616"
 dependencies = [
+ "blake2b_simd",
  "ff",
  "group",
  "rand",
