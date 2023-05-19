@@ -204,6 +204,19 @@ impl<C: BulletproofsCurve> Circuit<C> {
     a: VariableReference,
     b: VariableReference,
   ) -> ((ProductReference, ProductReference, ProductReference), VariableReference) {
+    for (id, product) in self.products.iter().enumerate() {
+      if (a.0 == product.left) && (b.0 == product.right) {
+        return (
+          (
+            ProductReference::Left { product: id, variable: a.0 },
+            ProductReference::Right { product: id, variable: b.0 },
+            ProductReference::Output { product: id, variable: product.variable },
+          ),
+          VariableReference(product.variable)
+        );
+      }
+    }
+
     let left = &self.variables[a.0];
     let right = &self.variables[b.0];
 
