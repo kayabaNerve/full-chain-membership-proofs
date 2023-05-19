@@ -1,24 +1,17 @@
 use rand_core::{RngCore, OsRng};
 
 use transcript::{Transcript, RecommendedTranscript};
-use ciphersuite::{
-  group::{ff::Field, Group},
-  Ciphersuite, Ristretto,
-};
+use ciphersuite::{group::ff::Field, Ciphersuite, Ristretto};
 
 use crate::{
-  RANGE_PROOF_BITS, PointVector, RangeCommitment,
+  RANGE_PROOF_BITS, RangeCommitment,
   single_range_proof::{SingleRangeStatement, SingleRangeWitness},
+  tests::generators,
 };
 
 #[test]
 fn test_single_range_proof() {
-  let mut g_bold = PointVector::<Ristretto>::new(RANGE_PROOF_BITS);
-  let mut h_bold = PointVector::<Ristretto>::new(RANGE_PROOF_BITS);
-  for i in 0 .. RANGE_PROOF_BITS {
-    g_bold[i] = <Ristretto as Ciphersuite>::G::random(&mut OsRng);
-    h_bold[i] = <Ristretto as Ciphersuite>::G::random(&mut OsRng);
-  }
+  let (g_bold, h_bold, _, _) = generators(RANGE_PROOF_BITS);
 
   let commitment =
     RangeCommitment::new(OsRng.next_u64(), <Ristretto as Ciphersuite>::F::random(&mut OsRng));

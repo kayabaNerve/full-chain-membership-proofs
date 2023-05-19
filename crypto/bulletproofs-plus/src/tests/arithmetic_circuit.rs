@@ -1,29 +1,12 @@
 use rand_core::OsRng;
 
 use transcript::{Transcript, RecommendedTranscript};
-use ciphersuite::{
-  group::{ff::Field, Group},
-  Ciphersuite, Ristretto,
-};
+use ciphersuite::{group::ff::Field, Ciphersuite, Ristretto};
 
 use crate::{
-  PointVector,
   arithmetic_circuit::{Commitment, Constraint, Circuit},
+  tests::generators,
 };
-
-type Generators =
-  (PointVector<Ristretto>, PointVector<Ristretto>, PointVector<Ristretto>, PointVector<Ristretto>);
-
-fn generators(n: usize) -> Generators {
-  let gens = || {
-    let mut res = PointVector::<Ristretto>::new(n);
-    for i in 0 .. n {
-      res[i] = <Ristretto as Ciphersuite>::G::random(&mut OsRng);
-    }
-    res
-  };
-  (gens(), gens(), gens(), gens())
-}
 
 #[test]
 fn test_arithmetic_circuit() {

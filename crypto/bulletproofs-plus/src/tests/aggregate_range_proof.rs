@@ -1,24 +1,17 @@
 use rand_core::{RngCore, OsRng};
 
 use transcript::{Transcript, RecommendedTranscript};
-use ciphersuite::{
-  group::{ff::Field, Group},
-  Ciphersuite, Ristretto, Pallas, Vesta,
-};
+use ciphersuite::{group::ff::Field, Ciphersuite, Ristretto, Pallas, Vesta};
 
 use crate::{
-  RANGE_PROOF_BITS, BulletproofsCurve, PointVector, RangeCommitment,
+  RANGE_PROOF_BITS, BulletproofsCurve, RangeCommitment,
   aggregate_range_proof::{AggregateRangeStatement, AggregateRangeWitness},
+  tests::generators,
 };
 
 fn test_aggregate_range_proof<C: BulletproofsCurve>(runs: usize) {
   for m in 1 ..= runs {
-    let mut g_bold = PointVector::<C>::new(RANGE_PROOF_BITS * m);
-    let mut h_bold = PointVector::<C>::new(RANGE_PROOF_BITS * m);
-    for i in 0 .. (RANGE_PROOF_BITS * m) {
-      g_bold[i] = <C as Ciphersuite>::G::random(&mut OsRng);
-      h_bold[i] = <C as Ciphersuite>::G::random(&mut OsRng);
-    }
+    let (g_bold, h_bold, _, _) = generators(RANGE_PROOF_BITS * m);
 
     let mut commitments = vec![];
     for _ in 0 .. m {

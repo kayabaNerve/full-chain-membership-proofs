@@ -16,11 +16,12 @@ pub trait EmbeddedCurveAddition: BulletproofsCurve {
     circuit: &mut Circuit<Self>,
     x1: VariableReference,
     y1: VariableReference,
-    z1: VariableReference,
     x2: VariableReference,
     y2: VariableReference,
-  ) -> (VariableReference, VariableReference, VariableReference);
+  ) -> (VariableReference, VariableReference);
 
+  // This is cheap to run inside the circuit, cheap enough it's not worth implementing
+  // non-normalized addition.
   fn normalize(
     circuit: &mut Circuit<Self>,
     x: VariableReference,
@@ -49,10 +50,9 @@ impl<C: EmbeddedShortWeierstrass> EmbeddedCurveAddition for C {
     circuit: &mut Circuit<C>,
     x1: VariableReference,
     y1: VariableReference,
-    z1: VariableReference,
     x2: VariableReference,
     y2: VariableReference,
-  ) -> (VariableReference, VariableReference, VariableReference) {
+  ) -> (VariableReference, VariableReference) {
     let b3 = circuit.add_constant(C::F::from(C::B * 3));
 
     // 1
@@ -75,12 +75,12 @@ impl<C: EmbeddedShortWeierstrass> EmbeddedCurveAddition for C {
     // 7
     let t3 = circuit.add(t3, neg_t4);
 
-    // 8
-    let (_, t4) = circuit.product(y2, z1);
+    // 8, yet since z1 is 1, this simplifies
+    let t4 = y2;
     // 9
     let t4 = circuit.add(t4, y1);
-    // 10
-    let (_, y3) = circuit.product(x2, z1);
+    // 10, with the same comment as 8
+    let y3 = x2;
     // 11
     let y3 = circuit.add(y3, x1);
 
@@ -91,8 +91,8 @@ impl<C: EmbeddedShortWeierstrass> EmbeddedCurveAddition for C {
     t0_constraint.weight(t0_prod, C::F::from(3));
     let t0 = new_t0;
 
-    // 14
-    let (_, t2) = circuit.product(b3, z1);
+    // 14 with z1 = 1
+    let t2 = b3;
     // 15
     let z3 = circuit.add(t1, t2);
 
@@ -127,6 +127,6 @@ impl<C: EmbeddedShortWeierstrass> EmbeddedCurveAddition for C {
     // 26
     let z3 = circuit.add(z3, t0);
 
-    (x3, y3, z3)
+    Self::normalize(circuit, x3, y3, z3)
   }
 }

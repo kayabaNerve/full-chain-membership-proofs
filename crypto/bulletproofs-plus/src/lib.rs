@@ -20,7 +20,7 @@ pub mod arithmetic_circuit;
 pub mod gadgets;
 
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;
 
 pub const RANGE_PROOF_BITS: usize = 64;
 
