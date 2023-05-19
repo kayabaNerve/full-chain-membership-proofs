@@ -26,7 +26,7 @@ fn test_point_addition() {
 
   let p1 = <Pallas as Ciphersuite>::G::random(&mut OsRng);
   let p2 = <Pallas as Ciphersuite>::G::random(&mut OsRng);
-  let p1p2 = PallasAffine::from(p1 + p2).coordinates().unwrap();
+  let p1p2 = PallasAffine::from((p1 + p2).double()).coordinates().unwrap();
   let (p1p2_x, p1p2_y) = (*p1p2.x(), *p1p2.y());
 
   let p1 = PallasAffine::from(p1).coordinates().unwrap();
@@ -46,7 +46,12 @@ fn test_point_addition() {
     let p2_x = circuit.add_secret_input(Some(p2.0).filter(|_| prover));
     let p2_y = circuit.add_secret_input(Some(p2.1).filter(|_| prover));
 
+    <Vesta as EmbeddedCurveAddition>::constrain_on_curve(circuit, p1_x, p1_y);
+    <Vesta as EmbeddedCurveAddition>::constrain_on_curve(circuit, p2_x, p2_y);
+
     let (res_x, res_y) = <Vesta as EmbeddedCurveAddition>::add(circuit, p1_x, p1_y, p2_x, p2_y);
+
+    let (res_x, res_y) = <Vesta as EmbeddedCurveAddition>::double(circuit, res_x, res_y);
 
     let mut x_constraint = Constraint::new("x");
     x_constraint

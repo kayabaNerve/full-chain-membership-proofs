@@ -77,8 +77,11 @@ impl<C: BulletproofsCurve> Constraint<C> {
       ProductReference::Right { product: id, variable: _ } => (&mut self.WR, id),
       ProductReference::Output { product: id, variable: _ } => (&mut self.WO, id),
     };
-    for existing in &*weights {
-      assert!(existing.0 != id);
+    for existing in &mut *weights {
+      if existing.0 == id {
+        existing.1 += weight;
+        return self;
+      }
     }
     weights.push((id, weight));
     self
@@ -212,7 +215,7 @@ impl<C: BulletproofsCurve> Circuit<C> {
             ProductReference::Right { product: id, variable: b.0 },
             ProductReference::Output { product: id, variable: product.variable },
           ),
-          VariableReference(product.variable)
+          VariableReference(product.variable),
         );
       }
     }

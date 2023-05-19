@@ -11,7 +11,17 @@ pub trait EmbeddedShortWeierstrass: BulletproofsCurve {
 
 /// Perform addition over the curve embedded into the current curve.
 pub trait EmbeddedCurveAddition: BulletproofsCurve {
-  /// Takes in an on-curve point { X, Y, Z } and on-curve point { X, Y, 1 }, returning their sum.
+  /// Constrains a point to being on curve.
+  fn constrain_on_curve(circuit: &mut Circuit<Self>, x: VariableReference, y: VariableReference);
+
+  /// Doubles an on-curve point.
+  fn double(
+    circuit: &mut Circuit<Self>,
+    x: VariableReference,
+    y: VariableReference,
+  ) -> (VariableReference, VariableReference);
+
+  /// Takes in an on-curve point and another on-curve point, returning their sum.
   fn add(
     circuit: &mut Circuit<Self>,
     x1: VariableReference,
@@ -45,7 +55,66 @@ pub trait EmbeddedCurveAddition: BulletproofsCurve {
 
 // https:://eprint.iacr.org/2015/1060.pdf
 impl<C: EmbeddedShortWeierstrass> EmbeddedCurveAddition for C {
+  fn constrain_on_curve(circuit: &mut Circuit<Self>, x: VariableReference, y: VariableReference) {
+    let ((_, _, y2_prod), _) = circuit.product(y, y);
+    let (_, x2) = circuit.product(x, x);
+    let ((_, _, x3), _) = circuit.product(x2, x);
+
+    let mut constraint = Constraint::new("on-curve");
+    constraint.weight(y2_prod, C::F::ONE);
+    constraint.weight(x3, -C::F::ONE);
+    constraint.rhs_offset(C::F::from(Self::B));
+    circuit.constrain(constraint);
+  }
+
+  fn double(
+    circuit: &mut Circuit<C>,
+    x: VariableReference,
+    y: VariableReference,
+  ) -> (VariableReference, VariableReference) {
+    // 1
+    let (_, t0) = circuit.product(y, y);
+    // 2
+    let z3 = circuit.add(t0, t0);
+    // 3-4
+    let four = circuit.add_constant(C::F::from(4));
+    let (_, z3) = circuit.product(z3, four);
+    // 5, with z fixed to 1
+    let t1 = y;
+    // 6-7, with z fixed to 1
+    let b3 = circuit.add_constant(C::F::from(C::B * 3));
+    let t2 = b3;
+    // 8
+    let (_, x3) = circuit.product(t2, z3);
+    // 9
+    let y3 = circuit.add(t0, t2);
+    // 10
+    let (_, z3) = circuit.product(t1, z3);
+    // 11-12
+    let three = circuit.add_constant(C::F::from(3));
+    let (_, t2) = circuit.product(t2, three);
+    // 13
+    let neg_one = circuit.add_constant(-C::F::ONE);
+    let (_, neg_t2) = circuit.product(t2, neg_one);
+    let t0 = circuit.add(t0, neg_t2);
+    // 14
+    let (_, y3) = circuit.product(t0, y3);
+    // 15
+    let y3 = circuit.add(x3, y3);
+    // 16
+    let (_, t1) = circuit.product(x, y);
+    // 17
+    let (_, x3) = circuit.product(t0, t1);
+    // 18
+    let two = circuit.add_constant(C::F::from(2));
+    let (_, x3) = circuit.product(x3, two);
+
+    Self::normalize(circuit, x3, y3, z3)
+  }
+
   // Algorithm 8
+  // TODO: The Curve Trees PoC peerformed this with just three constraints. Can theirs have its
+  // security proven?
   fn add(
     circuit: &mut Circuit<C>,
     x1: VariableReference,
