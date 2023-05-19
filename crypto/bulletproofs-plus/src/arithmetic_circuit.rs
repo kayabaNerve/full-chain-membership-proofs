@@ -1,5 +1,3 @@
-use std::collections::HashMap;
-
 use rand_core::{RngCore, CryptoRng};
 
 use zeroize::{Zeroize, ZeroizeOnDrop};
@@ -37,6 +35,25 @@ impl<C: BulletproofsCurve> Commitment<C> {
   }
 }
 
+#[derive(Clone, Debug, Zeroize, ZeroizeOnDrop)]
+pub enum Variable<C: BulletproofsCurve> {
+  Constant(C::F),
+  Secret(Option<C::F>),
+  Committed(Option<Commitment<C>>, C::G),
+  Product(usize, Option<C::F>),
+}
+
+#[derive(Copy, Clone, PartialEq, Eq, Debug, Zeroize)]
+pub struct VariableReference(usize);
+#[derive(Copy, Clone, PartialEq, Eq, Debug, Zeroize)]
+pub enum ProductReference {
+  Left { product: usize, variable: usize },
+  Right { product: usize, variable: usize },
+  Output { product: usize, variable: usize },
+}
+#[derive(Copy, Clone, Debug, Zeroize)]
+pub struct CommitmentReference(usize);
+
 #[derive(Clone, Debug)]
 pub struct Constraint<C: BulletproofsCurve> {
   label: &'static str,
@@ -56,9 +73,9 @@ impl<C: BulletproofsCurve> Constraint<C> {
 
   pub fn weight(&mut self, product: ProductReference, weight: C::F) -> &mut Self {
     let (weights, id) = match product {
-      ProductReference::Left(id, _) => (&mut self.WL, id),
-      ProductReference::Right(id, _) => (&mut self.WR, id),
-      ProductReference::Output(id, _) => (&mut self.WO, id),
+      ProductReference::Left { product: id, variable: _ } => (&mut self.WL, id),
+      ProductReference::Right { product: id, variable: _ } => (&mut self.WR, id),
+      ProductReference::Output { product: id, variable: _ } => (&mut self.WO, id),
     };
     for existing in &*weights {
       assert!(existing.0 != id);
@@ -73,34 +90,12 @@ impl<C: BulletproofsCurve> Constraint<C> {
     self.WV.push((variable.0, weight));
     self
   }
-  pub fn offset(&mut self, offset: C::F) -> &mut Self {
+  pub fn rhs_offset(&mut self, offset: C::F) -> &mut Self {
     assert!(bool::from(self.c.is_zero()));
     self.c = offset;
     self
   }
 }
-
-#[derive(Copy, Clone, Debug, Zeroize)]
-pub struct VariableReference(usize);
-#[derive(Copy, Clone, Debug, Zeroize)]
-pub enum ProductReference {
-  Left(usize, usize),
-  Right(usize, usize),
-  Output(usize, usize),
-}
-#[derive(Copy, Clone, Debug, Zeroize)]
-pub struct CommitmentReference(usize);
-
-#[derive(Clone, Debug, Zeroize, ZeroizeOnDrop)]
-pub enum Variable<C: BulletproofsCurve> {
-  Constant(C::F),
-  Secret(Option<C::F>),
-  Public(Option<Commitment<C>>, C::G),
-  Product(usize, usize, Option<C::F>),
-}
-
-#[derive(Clone, Debug, Zeroize, ZeroizeOnDrop)]
-pub struct CheckedVariable(pub VariableReference);
 
 impl<C: BulletproofsCurve> Variable<C> {
   pub fn value(&self) -> Option<C::F> {
@@ -108,13 +103,20 @@ impl<C: BulletproofsCurve> Variable<C> {
       Variable::Constant(value) => Some(*value),
       Variable::Secret(value) => *value,
       // This branch should never be reachable due to usage of CommitmentReference
-      Variable::Public(_commitment, _) => {
+      Variable::Committed(_commitment, _) => {
         // commitment.map(|commitment| commitment.value),
         panic!("requested value of commitment");
       }
-      Variable::Product(_, _, product) => *product,
+      Variable::Product(_, product) => *product,
     }
   }
+}
+
+#[derive(Clone, PartialEq, Eq, Debug, Zeroize)]
+struct Product {
+  left: usize,
+  right: usize,
+  variable: usize,
 }
 
 pub struct Circuit<C: BulletproofsCurve> {
@@ -124,12 +126,13 @@ pub struct Circuit<C: BulletproofsCurve> {
   h_bold2: PointVector<C>,
 
   prover: bool,
-  variables: Vec<Variable<C>>,
-  commitments: usize,
-  products: usize,
-  constraints: Vec<Constraint<C>>,
 
-  queued_constraints: Vec<(Constraint<C>, VariableReference)>,
+  commitments: usize,
+  variables: Vec<Variable<C>>,
+
+  products: Vec<Product>,
+
+  constraints: Vec<Constraint<C>>,
 }
 
 impl<C: BulletproofsCurve> Circuit<C> {
@@ -147,12 +150,13 @@ impl<C: BulletproofsCurve> Circuit<C> {
       h_bold2,
 
       prover,
-      variables: vec![],
-      commitments: 0,
-      products: 0,
-      constraints: vec![],
 
-      queued_constraints: vec![],
+      commitments: 0,
+      variables: vec![],
+
+      products: vec![],
+
+      constraints: vec![],
     }
   }
 
@@ -160,28 +164,143 @@ impl<C: BulletproofsCurve> Circuit<C> {
     self.prover
   }
 
-  // TODO: Optimize this out. The constraint system should natively handle this, without issue
-  pub fn add_constant(&mut self, constant: C::F) -> CheckedVariable {
+  /// Obtain the underlying variable from a reference.
+  ///
+  /// This requires a constraint to be safely used.
+  pub fn unchecked_variable(&self, variable: VariableReference) -> Variable<C> {
+    self.variables[variable.0].clone()
+  }
+
+  pub fn variable_to_product(&self, variable: VariableReference) -> Option<ProductReference> {
+    if let Variable::Product(product, _) = self.variables[variable.0] {
+      return Some(ProductReference::Output { product, variable: variable.0 });
+    }
+
+    for (product_id, product) in self.products.iter().enumerate() {
+      let Product { left: l, right: r, variable: this_variable } = product;
+
+      if !((variable.0 == *l) || (variable.0 == *r)) {
+        continue;
+      }
+
+      if let Variable::Product(var_product_id, _) = self.variables[*this_variable] {
+        assert_eq!(var_product_id, product_id);
+        if variable.0 == *l {
+          return Some(ProductReference::Left { product: product_id, variable: *this_variable });
+        } else {
+          return Some(ProductReference::Right { product: product_id, variable: *this_variable });
+        }
+      } else {
+        panic!("product pointed to non-product variable");
+      }
+    }
+
+    None
+  }
+
+  /// Use a pair of variables in a product relationship.
+  pub fn product(
+    &mut self,
+    a: VariableReference,
+    b: VariableReference,
+  ) -> ((ProductReference, ProductReference, ProductReference), VariableReference) {
+    let left = &self.variables[a.0];
+    let right = &self.variables[b.0];
+
+    let product_id = self.products.len();
+    let variable = VariableReference(self.variables.len());
+    let products = (
+      ProductReference::Left { product: product_id, variable: a.0 },
+      ProductReference::Right { product: product_id, variable: b.0 },
+      ProductReference::Output { product: product_id, variable: variable.0 },
+    );
+
+    self.products.push(Product { left: a.0, right: b.0, variable: variable.0 });
+    self.variables.push(Variable::Product(
+      product_id,
+      Some(()).filter(|_| self.prover).map(|_| left.value().unwrap() * right.value().unwrap()),
+    ));
+
+    // Add consistency constraints with prior variable uses
+    let mut found_l = false;
+    let mut found_r = false;
+
+    let var_ref = |prod| match prod {
+      ProductReference::Left { variable, .. } => variable,
+      ProductReference::Right { variable, .. } => variable,
+      ProductReference::Output { variable, .. } => variable,
+    };
+
+    {
+      let mut try_constraint = |circuit: &mut Circuit<C>,
+                                (e_p, existing_product): (usize, Product),
+                                new: ProductReference| {
+        let Product { left: l, right: r, variable } = existing_product;
+        let new_var = var_ref(new);
+        if (!found_l) && (l == new_var) {
+          let prod = ProductReference::Left { product: e_p, variable };
+          circuit.constrain_equality(prod, new);
+          // Only add a single consistency constraint, as all other uses are assumed to be already
+          // consistent
+          found_l = true;
+        }
+        if (!found_r) && (r == new_var) {
+          let prod = ProductReference::Right { product: e_p, variable };
+          circuit.constrain_equality(prod, new);
+          found_r = true;
+        }
+      };
+
+      // Only iterate over the products before this freshly added product
+      let products_clone =
+        self.products.iter().take(product_id).cloned().enumerate().collect::<Vec<_>>();
+      for product in products_clone {
+        try_constraint(self, product.clone(), products.0);
+        try_constraint(self, product, products.1);
+      }
+    }
+
+    // If this variable is itself an output, form the constraint that way
+    let mut output_consistency = |var: ProductReference| {
+      if let Variable::Product(product, _) = self.variables[var_ref(var)] {
+        self.constrain_equality(ProductReference::Output { product, variable: var_ref(var) }, var);
+      }
+    };
+    if !found_l {
+      output_consistency(products.0);
+    }
+    if !found_r {
+      output_consistency(products.1);
+    }
+
+    (products, variable)
+  }
+
+  // TODO: Optimize this out. We shouldn't need a variable for something native to the constraint
+  pub fn add_constant(&mut self, constant: C::F) -> VariableReference {
     // Return the existing constant, if there's already one
     for (i, variable) in self.variables.iter().enumerate() {
       if let Variable::Constant(value) = variable {
         if *value == constant {
-          return CheckedVariable(VariableReference(i));
+          return VariableReference(i);
         }
       }
     }
 
     let res = VariableReference(self.variables.len());
     self.variables.push(Variable::Constant(constant));
+
+    // Immediately add a product statement for this so we can perform the initial constraint
+    let ((product, _, _), _) = self.product(res, res);
     let mut constraint = Constraint::new("constant");
-    constraint.offset(constant);
-    self.queued_constraints.push((constraint, res));
-    CheckedVariable(res)
+    constraint.weight(product, C::F::ONE);
+    constraint.rhs_offset(constant);
+    self.constraints.push(constraint);
+
+    res
   }
 
   /// Add an input only known to the prover.
-  ///
-  /// This value must be used in a product relationship in order to be used in constraints.
   pub fn add_secret_input(&mut self, value: Option<C::F>) -> VariableReference {
     assert_eq!(self.prover, value.is_some());
 
@@ -203,133 +322,91 @@ impl<C: BulletproofsCurve> Circuit<C> {
 
     let res = CommitmentReference(self.commitments);
     self.commitments += 1;
-    self.variables.push(Variable::Public(commitment, actual));
+    self.variables.push(Variable::Committed(commitment, actual));
     res
   }
 
-  /// Use a pair of variables in a product relationship.
-  ///
-  /// This is unsafe without further constraints on the variables/product.
-  pub fn unchecked_product(
-    &mut self,
-    a: VariableReference,
-    b: VariableReference,
-  ) -> (ProductReference, ProductReference, ProductReference) {
+  /// Create, and constrain, a variable to be the sum of two other variables.
+  pub fn add(&mut self, a: VariableReference, b: VariableReference) -> VariableReference {
     let left = &self.variables[a.0];
     let right = &self.variables[b.0];
 
-    let product_id = self.products;
-    let variable_id = self.variables.len();
-    self.products += 1;
-    self.variables.push(Variable::Product(
-      a.0,
-      b.0,
-      Some(()).filter(|_| self.prover).map(|_| left.value().unwrap() * right.value().unwrap()),
+    if let (Variable::Constant(left), Variable::Constant(right)) = (left, right) {
+      return self.add_constant(*left + right);
+    }
+
+    let res = VariableReference(self.variables.len());
+    self.variables.push(Variable::Secret(
+      Some(()).filter(|_| self.prover).map(|_| left.value().unwrap() + right.value().unwrap()),
     ));
-    (
-      ProductReference::Left(product_id, variable_id),
-      ProductReference::Right(product_id, variable_id),
-      ProductReference::Output(product_id, variable_id),
-    )
+
+    let mut product_refs = vec![self.variable_to_product(a), self.variable_to_product(b)];
+    // Since neither of these have been prior referenced, we have 3 variables needing constraining
+    // That requires two mul statements
+    if product_refs == [None, None] {
+      let ((l, r, _), _) = self.product(a, b);
+      product_refs = vec![Some(l), Some(r)];
+    }
+
+    let other = if product_refs[0].is_none() { a } else { b };
+
+    // Create the second mul statement
+    let ((sum_ref, r, _), _) = self.product(res, other);
+    if product_refs[0].is_none() {
+      product_refs[0] = Some(r);
+    } else if product_refs[1].is_none() {
+      product_refs[1] = Some(r);
+    }
+
+    // Constrain the sum
+    let mut constraint = Constraint::new("sum");
+    constraint.weight(sum_ref, -C::F::ONE);
+    constraint.weight(product_refs[0].unwrap(), C::F::ONE);
+    constraint.weight(product_refs[1].unwrap(), C::F::ONE);
+    self.constrain(constraint);
+
+    res
+  }
+
+  /// Add a constraint.
+  pub fn constrain(&mut self, constraint: Constraint<C>) {
+    self.constraints.push(constraint);
   }
 
   pub fn constrain_equality(&mut self, a: ProductReference, b: ProductReference) {
+    if a == b {
+      return;
+    }
+
     let mut constraint = Constraint::new("equality");
     constraint.weight(a, C::F::ONE);
     constraint.weight(b, -C::F::ONE);
     self.constrain(constraint);
   }
 
-  pub fn product(&mut self, a: ProductReference, b: ProductReference) -> ProductReference {
-    let a_var = self.product_to_unchecked_variable(a);
-    let b_var = self.product_to_unchecked_variable(b);
-    let res = self.unchecked_product(a_var, b_var);
-    self.constrain_equality(res.0, a);
-    self.constrain_equality(res.1, b);
-    res.2
-  }
-
-  /// Create, and constrain, a variable to be the sum of two other variables.
-  pub fn add(&mut self, a: ProductReference, b: ProductReference) -> CheckedVariable {
-    let a_var = self.product_to_unchecked_variable(a);
-    let b_var = self.product_to_unchecked_variable(b);
-
-    let sum = self.add_secret_input(Some(()).filter(|_| self.prover).map(|_| {
-      self.unchecked_variable(a_var).value().unwrap() +
-        self.unchecked_variable(b_var).value().unwrap()
-    }));
-    let mut constraint = Constraint::new("addition");
-    constraint.weight(a, -C::F::ONE);
-    constraint.weight(b, -C::F::ONE);
-    // We can only add a constraint for this once the sum has been used in a product statement
-    // Add it as queued, so once the circuit uses it in one naturally, we can use that
-    self.queued_constraints.push((constraint, sum));
-    CheckedVariable(sum)
-  }
-
-  /// Obtain the underlying variable from a reference.
-  ///
-  /// This requires a constraint to be safely used.
-  pub fn unchecked_variable(&self, variable: VariableReference) -> Variable<C> {
-    self.variables[variable.0].clone()
-  }
-
-  /// Obtain a variable from a product.
-  ///
-  /// This returns the requested variable yet further requires a constraint of equality between the
-  /// variables.
-  pub fn product_to_unchecked_variable(&mut self, product: ProductReference) -> VariableReference {
-    let variable = match product {
-      ProductReference::Left(_, variable) => variable,
-      ProductReference::Right(_, variable) => variable,
-      ProductReference::Output(_, variable) => variable,
-    };
-    match self.variables[variable] {
-      Variable::Product(left, right, output) => match product {
-        ProductReference::Left(_, _) => VariableReference(left),
-        ProductReference::Right(_, _) => VariableReference(right),
-        ProductReference::Output(_, _) => self.add_secret_input(output),
-      },
-      _ => panic!("ProductReference to non-product"),
-    }
-  }
-
-  /// Add a constraint.
-  pub fn constrain(&mut self, constraint: Constraint<C>) {
-    // TODO: Check commitment weights refer to commitments, W{L, R, O} refer to product terms
-    self.constraints.push(constraint);
-  }
-
-  // TODO: This can be significantly optimized
-  fn compile(mut self) -> (ArithmeticCircuitStatement<C>, Option<ArithmeticCircuitWitness<C>>) {
-    // aL, aR, v, gamma
+  // TODO: This can be significantly optimized with post-processing passes
+  fn compile(self) -> (ArithmeticCircuitStatement<C>, Option<ArithmeticCircuitWitness<C>>) {
     let witness = if self.prover {
-      let mut variables = HashMap::new();
-
       let mut aL = vec![];
       let mut aR = vec![];
 
       let mut v = vec![];
       let mut gamma = vec![];
 
-      for (i, variable) in self.variables.iter().enumerate() {
+      for variable in self.variables.iter() {
         match variable {
-          Variable::Constant(value) => {
-            variables.insert(i, *value);
-          }
-          Variable::Secret(value) => {
-            variables.insert(i, value.unwrap());
-          }
-          Variable::Public(value, actual) => {
+          Variable::Constant(_) => {}
+          Variable::Secret(_) => {}
+          Variable::Committed(value, actual) => {
             let value = value.as_ref().unwrap();
             assert_eq!(value.calculate(), *actual);
             v.push(value.value);
             gamma.push(value.mask);
           }
-          Variable::Product(left, right, value) => {
-            aL.push(variables[left]);
-            aR.push(variables[right]);
-            variables.insert(i, value.unwrap());
+          Variable::Product(product_id, _) => {
+            let product = &self.products[*product_id];
+            aL.push(self.variables[product.left].value().unwrap());
+            aR.push(self.variables[product.right].value().unwrap());
           }
         }
       }
@@ -350,37 +427,8 @@ impl<C: BulletproofsCurve> Circuit<C> {
       match variable {
         Variable::Constant(_) => {}
         Variable::Secret(_) => {}
-        Variable::Public(_, actual) => V.push(*actual),
-        Variable::Product(_, _, _) => n += 1,
-      }
-    }
-
-    for (constraint, sum) in self.queued_constraints {
-      // Look for a product using this variable
-      let start = self.constraints.len();
-      let mut i = 0;
-      for (variable_id, product) in self.variables.iter().enumerate() {
-        if let Variable::Product(left, right, _) = product {
-          if *left == sum.0 {
-            // TODO: If this is the second constraint, a more minimal constraint can be used
-            // (1 prior, -1 current, instead of 1, 1, -1)
-            let mut constraint = constraint.clone();
-            constraint.weight(ProductReference::Left(i, variable_id), C::F::ONE);
-            self.constraints.push(constraint);
-          }
-
-          if *right == sum.0 {
-            let mut constraint = constraint.clone();
-            constraint.weight(ProductReference::Right(i, variable_id), C::F::ONE);
-            self.constraints.push(constraint);
-          }
-
-          i += 1;
-        }
-      }
-
-      if start == self.constraints.len() {
-        panic!("unused variable");
+        Variable::Committed(_, actual) => V.push(*actual),
+        Variable::Product(_, _) => n += 1,
       }
     }
 
@@ -390,6 +438,7 @@ impl<C: BulletproofsCurve> Circuit<C> {
     let mut WO = vec![];
     let mut WV = vec![];
     let mut c = vec![];
+
     for constraint in self.constraints {
       // WL aL WR aR WO aO == WV v + c
       let mut eval = C::F::ZERO;

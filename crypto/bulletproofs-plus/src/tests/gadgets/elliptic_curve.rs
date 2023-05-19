@@ -63,23 +63,21 @@ fn test_point_addition() {
     let p2_x = circuit.add_secret_input(Some(p2.0).filter(|_| prover));
     let p2_y = circuit.add_secret_input(Some(p2.1).filter(|_| prover));
 
-    let (p1_x, p1_y, _) = circuit.unchecked_product(p1_x, p1_y);
-    let (p2_x, p2_y, _) = circuit.unchecked_product(p2_x, p2_y);
-    let (p1_z, _, _) = circuit.unchecked_product(p1_z, p1_z);
-
     let (res_x, res_y, res_z) =
       <Vesta as EmbeddedCurveAddition>::add(circuit, p1_x, p1_y, p1_z, p2_x, p2_y);
 
     let (res_x, res_y) = <Vesta as EmbeddedCurveAddition>::normalize(circuit, res_x, res_y, res_z);
 
     let mut x_constraint = Constraint::new("x");
-    x_constraint.weight(res_x, <Vesta as Ciphersuite>::F::ONE);
-    x_constraint.offset(p1p2_x);
+    x_constraint
+      .weight(circuit.variable_to_product(res_x).unwrap(), <Vesta as Ciphersuite>::F::ONE);
+    x_constraint.rhs_offset(p1p2_x);
     circuit.constrain(x_constraint);
 
     let mut y_constraint = Constraint::new("y");
-    y_constraint.weight(res_y, <Vesta as Ciphersuite>::F::ONE);
-    y_constraint.offset(p1p2_y);
+    y_constraint
+      .weight(circuit.variable_to_product(res_y).unwrap(), <Vesta as Ciphersuite>::F::ONE);
+    y_constraint.rhs_offset(p1p2_y);
     circuit.constrain(y_constraint);
   };
 

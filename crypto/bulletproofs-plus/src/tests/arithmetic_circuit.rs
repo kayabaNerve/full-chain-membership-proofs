@@ -63,7 +63,7 @@ fn test_arithmetic_circuit() {
     let z1_com =
       circuit.add_committed_input(x_y_z_z1.as_ref().map(|xyz| xyz.3.clone()), commitments.3);
 
-    let (product_l, product_r, product_o) = circuit.unchecked_product(x_var, y_var);
+    let ((product_l, product_r, product_o), _o_var) = circuit.product(x_var, y_var);
 
     let mut next_constraint = Constraint::new("x_com");
     next_constraint
@@ -87,7 +87,7 @@ fn test_arithmetic_circuit() {
     next_constraint
       .weight(product_o, <Ristretto as Ciphersuite>::F::ONE)
       .weight_commitment(z1_com, <Ristretto as Ciphersuite>::F::ONE)
-      .offset(-<Ristretto as Ciphersuite>::F::ONE);
+      .rhs_offset(-<Ristretto as Ciphersuite>::F::ONE);
     circuit.constrain(next_constraint);
   }
 
