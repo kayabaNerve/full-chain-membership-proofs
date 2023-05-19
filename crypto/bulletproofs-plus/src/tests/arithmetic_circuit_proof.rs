@@ -161,7 +161,7 @@ fn test_multiplication_arithmetic_circuit() {
     <Ristretto as Ciphersuite>::F::ZERO,
     <Ristretto as Ciphersuite>::F::ZERO,
     <Ristretto as Ciphersuite>::F::ZERO,
-    <Ristretto as Ciphersuite>::F::ONE,
+    -<Ristretto as Ciphersuite>::F::ONE,
     <Ristretto as Ciphersuite>::F::ZERO,
   ]);
 

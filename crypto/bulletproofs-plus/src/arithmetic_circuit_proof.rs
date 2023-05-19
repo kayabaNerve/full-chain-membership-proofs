@@ -32,10 +32,10 @@ pub struct ArithmeticCircuitStatement<C: Ciphersuite> {
 
 #[derive(Clone, Debug, Zeroize, ZeroizeOnDrop)]
 pub struct ArithmeticCircuitWitness<C: Ciphersuite> {
-  aL: ScalarVector<C>,
-  aR: ScalarVector<C>,
-  aO: ScalarVector<C>,
-  v: ScalarVector<C>,
+  pub(crate) aL: ScalarVector<C>,
+  pub(crate) aR: ScalarVector<C>,
+  pub(crate) aO: ScalarVector<C>,
+  pub(crate) v: ScalarVector<C>,
   gamma: ScalarVector<C>,
 }
 
@@ -46,7 +46,6 @@ impl<C: BulletproofsCurve> ArithmeticCircuitWitness<C> {
     v: ScalarVector<C>,
     gamma: ScalarVector<C>,
   ) -> Self {
-    assert!(!aL.0.is_empty());
     assert_eq!(aL.len(), aR.len());
     let mut aO = vec![];
     for (l, r) in aL.0.iter().zip(aR.0.iter()) {
@@ -54,7 +53,6 @@ impl<C: BulletproofsCurve> ArithmeticCircuitWitness<C> {
     }
     let aO = ScalarVector(aO);
 
-    assert!(!v.0.is_empty());
     assert_eq!(v.len(), gamma.len());
     ArithmeticCircuitWitness { aL, aR, aO, v, gamma }
   }
@@ -80,12 +78,9 @@ impl<C: BulletproofsCurve> ArithmeticCircuitStatement<C> {
     c: ScalarVector<C>,
   ) -> Self {
     let m = V.len();
-    assert!(m != 0);
 
     let q = WL.length();
-    assert!(q != 0);
     let n = WL.width();
-    assert!(n != 0);
 
     assert_eq!(WR.length(), q);
     assert_eq!(WR.width(), n);
@@ -173,8 +168,6 @@ impl<C: BulletproofsCurve> ArithmeticCircuitStatement<C> {
     let z_q_WV = self.WV.mul_vec(&z_q);
     assert_eq!(z_q_WV.len(), self.V.len());
 
-    // This proof only works if this is -z_q, not z_q, which the author's impl also used.
-    // TODO: Is this actually a typo with the paper?
     (
       y,
       *inv_y_n.last().unwrap(),
@@ -187,7 +180,7 @@ impl<C: BulletproofsCurve> ArithmeticCircuitStatement<C> {
         self.h_bold2.mul_vec(&WO_y_z.sub(C::F::ONE).mul(inv_y_n.last().unwrap())).sum() +
         self.V.mul_vec(&z_q_WV).sum() +
         (C::generator() *
-          (-z_q.inner_product(&self.c) +
+          (z_q.inner_product(&self.c) +
             weighted_inner_product(&WR_y_z, &WL_y_z, &ScalarVector(y_n)))),
     )
   }
@@ -199,7 +192,6 @@ impl<C: BulletproofsCurve> ArithmeticCircuitStatement<C> {
     mut witness: ArithmeticCircuitWitness<C>,
   ) -> ArithmeticCircuitProof<C> {
     let m = self.V.len();
-    debug_assert!(m != 0);
 
     assert_eq!(m, witness.v.len());
     assert_eq!(m, witness.gamma.len());
