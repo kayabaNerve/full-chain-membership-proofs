@@ -2,7 +2,7 @@ use ciphersuite::group::ff::Field;
 
 use crate::{
   BulletproofsCurve,
-  arithmetic_circuit::{VariableReference, CheckedVariable, ProductReference, Constraint, Circuit},
+  arithmetic_circuit::{CheckedVariable, ProductReference, Constraint, Circuit},
 };
 
 pub trait EmbeddedShortWeierstrass: BulletproofsCurve {
@@ -12,10 +12,6 @@ pub trait EmbeddedShortWeierstrass: BulletproofsCurve {
 /// Perform addition over the curve embedded into the current curve.
 pub trait EmbeddedCurveAddition: BulletproofsCurve {
   /// Takes in an on-curve point { X, Y, Z } and on-curve point { X, Y, 1 }, returning their sum.
-  ///
-  /// The returned VariableReferences are safe for usage in products, without further constraints,
-  /// as they will have constraints automatically generated on use.
-  // TODO: Add CheckedVariableReference.
   fn add(
     circuit: &mut Circuit<Self>,
     x1: ProductReference,

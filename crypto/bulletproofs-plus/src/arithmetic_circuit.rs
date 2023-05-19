@@ -164,13 +164,10 @@ impl<C: BulletproofsCurve> Circuit<C> {
   pub fn add_constant(&mut self, constant: C::F) -> CheckedVariable {
     // Return the existing constant, if there's already one
     for (i, variable) in self.variables.iter().enumerate() {
-      match variable {
-        Variable::Constant(value) => {
-          if *value == constant {
-            return CheckedVariable(VariableReference(i));
-          }
+      if let Variable::Constant(value) = variable {
+        if *value == constant {
+          return CheckedVariable(VariableReference(i));
         }
-        _ => {}
       }
     }
 
@@ -363,30 +360,27 @@ impl<C: BulletproofsCurve> Circuit<C> {
       let start = self.constraints.len();
       let mut i = 0;
       for (variable_id, product) in self.variables.iter().enumerate() {
-        match product {
-          Variable::Product(left, right, _) => {
-            if *left == sum.0 {
-              // TODO: If this is the second constraint, a more minimal constraint can be used
-              // (1 prior, -1 current, instead of 1, 1, -1)
-              let mut constraint = constraint.clone();
-              constraint.weight(ProductReference::Left(i, variable_id), C::F::ONE);
-              self.constraints.push(constraint);
-            }
-
-            if *right == sum.0 {
-              let mut constraint = constraint.clone();
-              constraint.weight(ProductReference::Right(i, variable_id), C::F::ONE);
-              self.constraints.push(constraint);
-            }
-
-            i += 1;
+        if let Variable::Product(left, right, _) = product {
+          if *left == sum.0 {
+            // TODO: If this is the second constraint, a more minimal constraint can be used
+            // (1 prior, -1 current, instead of 1, 1, -1)
+            let mut constraint = constraint.clone();
+            constraint.weight(ProductReference::Left(i, variable_id), C::F::ONE);
+            self.constraints.push(constraint);
           }
-          _ => {}
+
+          if *right == sum.0 {
+            let mut constraint = constraint.clone();
+            constraint.weight(ProductReference::Right(i, variable_id), C::F::ONE);
+            self.constraints.push(constraint);
+          }
+
+          i += 1;
         }
       }
 
       if start == self.constraints.len() {
-        panic!("unused additive sum");
+        panic!("unused variable");
       }
     }
 

@@ -28,10 +28,12 @@ impl<C: Ciphersuite> IndexMut<usize> for PointVector<C> {
 }
 
 impl<C: Ciphersuite> PointVector<C> {
+  #[cfg(test)]
   pub(crate) fn new(len: usize) -> Self {
     PointVector(vec![C::G::identity(); len])
   }
 
+  /*
   pub(crate) fn add(&self, point: impl AsRef<C::G>) -> Self {
     let mut res = self.clone();
     for val in res.0.iter_mut() {
@@ -46,6 +48,8 @@ impl<C: Ciphersuite> PointVector<C> {
     }
     res
   }
+  */
+
   pub(crate) fn mul(&self, scalar: impl core::borrow::Borrow<C::F>) -> Self {
     let mut res = self.clone();
     for val in res.0.iter_mut() {
@@ -62,6 +66,8 @@ impl<C: Ciphersuite> PointVector<C> {
     }
     res
   }
+
+  /*
   pub(crate) fn sub_vec(&self, vector: &Self) -> Self {
     assert_eq!(self.len(), vector.len());
     let mut res = self.clone();
@@ -70,6 +76,8 @@ impl<C: Ciphersuite> PointVector<C> {
     }
     res
   }
+  */
+
   pub(crate) fn mul_vec(&self, vector: &ScalarVector<C>) -> Self {
     assert_eq!(self.len(), vector.len());
     let mut res = self.clone();

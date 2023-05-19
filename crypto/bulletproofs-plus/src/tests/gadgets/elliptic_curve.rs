@@ -4,12 +4,12 @@ use transcript::{Transcript, RecommendedTranscript};
 use pasta_curves::arithmetic::CurveAffine;
 use ciphersuite::{
   group::{ff::Field, Group, prime::PrimeCurveAffine},
-  Ciphersuite, Pallas, Vesta,
+  Ciphersuite, Vesta,
 };
 
 use crate::{
   PointVector,
-  arithmetic_circuit::{Commitment, Constraint, Circuit},
+  arithmetic_circuit::{Constraint, Circuit},
   gadgets::elliptic_curve::EmbeddedCurveAddition,
 };
 
