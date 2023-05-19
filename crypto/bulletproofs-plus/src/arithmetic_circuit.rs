@@ -99,6 +99,9 @@ pub enum Variable<C: BulletproofsCurve> {
   Product(usize, usize, Option<C::F>),
 }
 
+#[derive(Clone, Debug, Zeroize, ZeroizeOnDrop)]
+pub struct CheckedVariable(pub VariableReference);
+
 impl<C: BulletproofsCurve> Variable<C> {
   pub fn value(&self) -> Option<C::F> {
     match self {
@@ -110,30 +113,6 @@ impl<C: BulletproofsCurve> Variable<C> {
         panic!("requested value of commitment");
       }
       Variable::Product(_, _, product) => *product,
-    }
-  }
-}
-
-impl<C: BulletproofsCurve> core::ops::Add for Variable<C> {
-  type Output = Option<C::F>;
-
-  fn add(self, other: Variable<C>) -> Self::Output {
-    if let (Some(a), Some(b)) = (self.value(), other.value()) {
-      Some(a + b)
-    } else {
-      None
-    }
-  }
-}
-
-impl<C: BulletproofsCurve> core::ops::Sub for Variable<C> {
-  type Output = Option<C::F>;
-
-  fn sub(self, other: Variable<C>) -> Self::Output {
-    if let (Some(a), Some(b)) = (self.value(), other.value()) {
-      Some(a - b)
-    } else {
-      None
     }
   }
 }
@@ -150,7 +129,7 @@ pub struct Circuit<C: BulletproofsCurve> {
   products: usize,
   constraints: Vec<Constraint<C>>,
 
-  pending_additive_constraints: Vec<(Constraint<C>, VariableReference)>,
+  queued_constraints: Vec<(Constraint<C>, VariableReference)>,
 }
 
 impl<C: BulletproofsCurve> Circuit<C> {
@@ -173,7 +152,7 @@ impl<C: BulletproofsCurve> Circuit<C> {
       products: 0,
       constraints: vec![],
 
-      pending_additive_constraints: vec![],
+      queued_constraints: vec![],
     }
   }
 
@@ -181,13 +160,14 @@ impl<C: BulletproofsCurve> Circuit<C> {
     self.prover
   }
 
-  pub fn add_constant(&mut self, constant: C::F) -> VariableReference {
+  // TODO: Optimize this out. The constraint system should natively handle this, without issue
+  pub fn add_constant(&mut self, constant: C::F) -> CheckedVariable {
     // Return the existing constant, if there's already one
     for (i, variable) in self.variables.iter().enumerate() {
       match variable {
         Variable::Constant(value) => {
           if *value == constant {
-            return VariableReference(i);
+            return CheckedVariable(VariableReference(i));
           }
         }
         _ => {}
@@ -197,11 +177,9 @@ impl<C: BulletproofsCurve> Circuit<C> {
     let res = VariableReference(self.variables.len());
     self.variables.push(Variable::Constant(constant));
     let mut constraint = Constraint::new("constant");
-    // Negative as pending_additive_constraints negates its contribution, expecting it to be
-    // left-hand-side balanced, where this is right-hand-side balanced
-    constraint.offset(-constant);
-    self.pending_additive_constraints.push((constraint, res));
-    res
+    constraint.offset(constant);
+    self.queued_constraints.push((constraint, res));
+    CheckedVariable(res)
   }
 
   /// Add an input only known to the prover.
@@ -249,7 +227,7 @@ impl<C: BulletproofsCurve> Circuit<C> {
     self.variables.push(Variable::Product(
       a.0,
       b.0,
-      left.value().and_then(|left| right.value().and_then(|right| Some(left * right))),
+      Some(()).filter(|_| self.prover).map(|_| left.value().unwrap() * right.value().unwrap()),
     ));
     (
       ProductReference::Left(product_id, variable_id),
@@ -275,20 +253,21 @@ impl<C: BulletproofsCurve> Circuit<C> {
   }
 
   /// Create, and constrain, a variable to be the sum of two other variables.
-  ///
-  /// All usages of this variable in product statements will be appropriately constrained.
-  pub fn add(&mut self, a: ProductReference, b: ProductReference) -> VariableReference {
+  pub fn add(&mut self, a: ProductReference, b: ProductReference) -> CheckedVariable {
     let a_var = self.product_to_unchecked_variable(a);
     let b_var = self.product_to_unchecked_variable(b);
-    let sum =
-      self.add_secret_input(self.unchecked_variable(a_var) + self.unchecked_variable(b_var));
+
+    let sum = self.add_secret_input(Some(()).filter(|_| self.prover).map(|_| {
+      self.unchecked_variable(a_var).value().unwrap() +
+        self.unchecked_variable(b_var).value().unwrap()
+    }));
     let mut constraint = Constraint::new("addition");
-    constraint.weight(a, C::F::ONE);
-    constraint.weight(b, C::F::ONE);
+    constraint.weight(a, -C::F::ONE);
+    constraint.weight(b, -C::F::ONE);
     // We can only add a constraint for this once the sum has been used in a product statement
-    // Add it as pending, so once the circuit uses it in one naturally, we can use that
-    self.pending_additive_constraints.push((constraint, sum));
-    sum
+    // Add it as queued, so once the circuit uses it in one naturally, we can use that
+    self.queued_constraints.push((constraint, sum));
+    CheckedVariable(sum)
   }
 
   /// Obtain the underlying variable from a reference.
@@ -379,7 +358,7 @@ impl<C: BulletproofsCurve> Circuit<C> {
       }
     }
 
-    for (constraint, sum) in self.pending_additive_constraints {
+    for (constraint, sum) in self.queued_constraints {
       // Look for a product using this variable
       let start = self.constraints.len();
       let mut i = 0;
@@ -390,13 +369,13 @@ impl<C: BulletproofsCurve> Circuit<C> {
               // TODO: If this is the second constraint, a more minimal constraint can be used
               // (1 prior, -1 current, instead of 1, 1, -1)
               let mut constraint = constraint.clone();
-              constraint.weight(ProductReference::Left(i, variable_id), -C::F::ONE);
+              constraint.weight(ProductReference::Left(i, variable_id), C::F::ONE);
               self.constraints.push(constraint);
             }
 
             if *right == sum.0 {
               let mut constraint = constraint.clone();
-              constraint.weight(ProductReference::Right(i, variable_id), -C::F::ONE);
+              constraint.weight(ProductReference::Right(i, variable_id), C::F::ONE);
               self.constraints.push(constraint);
             }
 
