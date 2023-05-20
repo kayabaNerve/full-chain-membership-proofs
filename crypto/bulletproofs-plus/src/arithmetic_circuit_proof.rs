@@ -139,6 +139,7 @@ impl<C: BulletproofsCurve> ArithmeticCircuitStatement<C> {
 
     let q = self.c.len();
     let n = self.WL.width();
+    assert!(n != 0);
 
     let z2 = z * z;
     let mut z_q = vec![z];

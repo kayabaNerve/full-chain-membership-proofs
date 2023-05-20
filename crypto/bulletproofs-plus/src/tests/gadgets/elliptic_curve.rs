@@ -21,7 +21,7 @@ use crate::{
 };
 
 #[test]
-fn test_point_addition() {
+fn test_elliptic_curve_gadget() {
   type PallasAffine = pasta_curves::pallas::Affine;
 
   let (g_bold1, g_bold2, h_bold1, h_bold2) = generators(64 * 256);

@@ -24,10 +24,14 @@ fn test_zero_arithmetic_circuit() {
   let aL = zero_vec();
   let aR = zero_vec();
 
-  let WL = ScalarMatrix(vec![zero_vec()]);
-  let WR = ScalarMatrix(vec![zero_vec()]);
-  let WO = ScalarMatrix(vec![zero_vec()]);
-  let WV = ScalarMatrix(vec![zero_vec()]);
+  let mut WL = ScalarMatrix::new(1);
+  WL.push(vec![(0, <Ristretto as Ciphersuite>::F::ZERO)]);
+  let mut WR = ScalarMatrix::new(1);
+  WR.push(vec![(0, <Ristretto as Ciphersuite>::F::ZERO)]);
+  let mut WO = ScalarMatrix::new(1);
+  WO.push(vec![(0, <Ristretto as Ciphersuite>::F::ZERO)]);
+  let mut WV = ScalarMatrix::new(1);
+  WV.push(vec![(0, <Ristretto as Ciphersuite>::F::ZERO)]);
   let c = zero_vec();
 
   let statement = ArithmeticCircuitStatement::<Ristretto>::new(
@@ -84,63 +88,37 @@ fn test_multiplication_arithmetic_circuit() {
   let aL = ScalarVector::<Ristretto>(vec![x]);
   let aR = ScalarVector::<Ristretto>(vec![y]);
 
-  let WL = ScalarMatrix(vec![
-    ScalarVector(vec![<Ristretto as Ciphersuite>::F::ONE]),
-    ScalarVector(vec![<Ristretto as Ciphersuite>::F::ZERO]),
-    ScalarVector(vec![<Ristretto as Ciphersuite>::F::ZERO]),
-    ScalarVector(vec![<Ristretto as Ciphersuite>::F::ZERO]),
-    ScalarVector(vec![<Ristretto as Ciphersuite>::F::ZERO]),
-  ]);
-  let WR = ScalarMatrix(vec![
-    ScalarVector(vec![<Ristretto as Ciphersuite>::F::ZERO]),
-    ScalarVector(vec![<Ristretto as Ciphersuite>::F::ONE]),
-    ScalarVector(vec![<Ristretto as Ciphersuite>::F::ZERO]),
-    ScalarVector(vec![<Ristretto as Ciphersuite>::F::ZERO]),
-    ScalarVector(vec![<Ristretto as Ciphersuite>::F::ONE]),
-  ]);
-  let WO = ScalarMatrix(vec![
-    ScalarVector(vec![<Ristretto as Ciphersuite>::F::ZERO]),
-    ScalarVector(vec![<Ristretto as Ciphersuite>::F::ZERO]),
-    ScalarVector(vec![<Ristretto as Ciphersuite>::F::ONE]),
-    ScalarVector(vec![<Ristretto as Ciphersuite>::F::ONE]),
-    ScalarVector(vec![<Ristretto as Ciphersuite>::F::ZERO]),
-  ]);
-  let WV = ScalarMatrix(vec![
-    // Constrain inputs
-    ScalarVector(vec![
-      <Ristretto as Ciphersuite>::F::ONE,
-      <Ristretto as Ciphersuite>::F::ZERO,
-      <Ristretto as Ciphersuite>::F::ZERO,
-      <Ristretto as Ciphersuite>::F::ZERO,
-    ]),
-    ScalarVector(vec![
-      <Ristretto as Ciphersuite>::F::ZERO,
-      <Ristretto as Ciphersuite>::F::ONE,
-      <Ristretto as Ciphersuite>::F::ZERO,
-      <Ristretto as Ciphersuite>::F::ZERO,
-    ]),
-    // Confirm the multiplication
-    ScalarVector(vec![
-      <Ristretto as Ciphersuite>::F::ZERO,
-      <Ristretto as Ciphersuite>::F::ZERO,
-      <Ristretto as Ciphersuite>::F::ONE,
-      <Ristretto as Ciphersuite>::F::ZERO,
-    ]),
-    // Verify the next commitment is output + 1
-    ScalarVector(vec![
-      <Ristretto as Ciphersuite>::F::ZERO,
-      <Ristretto as Ciphersuite>::F::ZERO,
-      <Ristretto as Ciphersuite>::F::ZERO,
-      <Ristretto as Ciphersuite>::F::ONE,
-    ]),
-    // Verify y is 2x
-    ScalarVector(vec![
-      <Ristretto as Ciphersuite>::F::from(2u64),
-      <Ristretto as Ciphersuite>::F::ZERO,
-      <Ristretto as Ciphersuite>::F::ZERO,
-      <Ristretto as Ciphersuite>::F::ZERO,
-    ]),
-  ]);
+  let mut WL = ScalarMatrix::new(n);
+  WL.push(vec![(0, <Ristretto as Ciphersuite>::F::ONE)]);
+  while WL.length() < q {
+    WL.push(vec![]);
+  }
+
+  let mut WR = ScalarMatrix::new(n);
+  WR.push(vec![]);
+  WR.push(vec![(0, <Ristretto as Ciphersuite>::F::ONE)]);
+  WR.push(vec![]);
+  WR.push(vec![]);
+  WR.push(vec![(0, <Ristretto as Ciphersuite>::F::ONE)]);
+
+  let mut WO = ScalarMatrix::new(n);
+  WO.push(vec![]);
+  WO.push(vec![]);
+  WO.push(vec![(0, <Ristretto as Ciphersuite>::F::ONE)]);
+  WO.push(vec![(0, <Ristretto as Ciphersuite>::F::ONE)]);
+  WO.push(vec![]);
+
+  let mut WV = ScalarMatrix::new(V.0.len());
+  // Constrain inputs
+  WV.push(vec![(0, <Ristretto as Ciphersuite>::F::ONE)]);
+  WV.push(vec![(1, <Ristretto as Ciphersuite>::F::ONE)]);
+  // Confirm the multiplication
+  WV.push(vec![(2, <Ristretto as Ciphersuite>::F::ONE)]);
+  // Verify the next commitment is output + 1
+  WV.push(vec![(3, <Ristretto as Ciphersuite>::F::ONE)]);
+  // Verify y is 2x
+  WV.push(vec![(0, <Ristretto as Ciphersuite>::F::ONE.double())]);
+
   let c = ScalarVector::<Ristretto>(vec![
     <Ristretto as Ciphersuite>::F::ZERO,
     <Ristretto as Ciphersuite>::F::ZERO,

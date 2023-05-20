@@ -449,54 +449,54 @@ impl<C: BulletproofsCurve> Circuit<C> {
     }
 
     // WL, WR, WO, WV, c
-    let mut WL = vec![];
-    let mut WR = vec![];
-    let mut WO = vec![];
-    let mut WV = vec![];
+    let mut WL = ScalarMatrix::new(n);
+    let mut WR = ScalarMatrix::new(n);
+    let mut WO = ScalarMatrix::new(n);
+    let mut WV = ScalarMatrix::new(V.len());
     let mut c = vec![];
 
     for constraint in self.constraints {
       // WL aL WR aR WO aO == WV v + c
       let mut eval = C::F::ZERO;
 
-      let mut this_wl = vec![C::F::ZERO; n];
-      let mut this_wr = vec![C::F::ZERO; n];
-      let mut this_wo = vec![C::F::ZERO; n];
-      let mut this_wv = vec![C::F::ZERO; V.len()];
+      let mut this_wl = vec![];
+      let mut this_wr = vec![];
+      let mut this_wo = vec![];
+      let mut this_wv = vec![];
 
       for wl in constraint.WL {
         if self.prover {
           eval += wl.1 * witness.as_ref().unwrap().aL[wl.0];
         }
-        this_wl[wl.0] = wl.1;
+        this_wl.push(wl);
       }
       for wr in constraint.WR {
         if self.prover {
           eval += wr.1 * witness.as_ref().unwrap().aR[wr.0];
         }
-        this_wr[wr.0] = wr.1;
+        this_wr.push(wr);
       }
       for wo in constraint.WO {
         if self.prover {
           eval += wo.1 * (witness.as_ref().unwrap().aL[wo.0] * witness.as_ref().unwrap().aR[wo.0]);
         }
-        this_wo[wo.0] = wo.1;
+        this_wo.push(wo);
       }
       for wv in constraint.WV {
         if self.prover {
           eval -= wv.1 * witness.as_ref().unwrap().v[wv.0];
         }
-        this_wv[wv.0] = wv.1;
+        this_wv.push(wv);
       }
 
       if self.prover {
         assert_eq!(eval, constraint.c, "faulty constraint: {}", constraint.label);
       }
 
-      WL.push(ScalarVector(this_wl));
-      WR.push(ScalarVector(this_wr));
-      WO.push(ScalarVector(this_wo));
-      WV.push(ScalarVector(this_wv));
+      WL.push(this_wl);
+      WR.push(this_wr);
+      WO.push(this_wo);
+      WV.push(this_wv);
       c.push(constraint.c);
     }
 
@@ -507,10 +507,10 @@ impl<C: BulletproofsCurve> Circuit<C> {
         self.h_bold1,
         self.h_bold2,
         PointVector(V),
-        ScalarMatrix(WL),
-        ScalarMatrix(WR),
-        ScalarMatrix(WO),
-        ScalarMatrix(WV),
+        WL,
+        WR,
+        WO,
+        WV,
         ScalarVector(c),
       ),
       witness,
