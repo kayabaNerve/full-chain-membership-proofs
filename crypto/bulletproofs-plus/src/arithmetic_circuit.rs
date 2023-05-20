@@ -187,7 +187,7 @@ impl<C: BulletproofsCurve> Circuit<C> {
       }
 
       if let Variable::Product(var_product_id, _) = self.variables[*this_variable] {
-        assert_eq!(var_product_id, product_id);
+        debug_assert_eq!(var_product_id, product_id);
         if variable.0 == *l {
           return Some(ProductReference::Left { product: product_id, variable: *this_variable });
         } else {
@@ -220,6 +220,9 @@ impl<C: BulletproofsCurve> Circuit<C> {
       }
     }
 
+    let existing_a_use = self.variable_to_product(a);
+    let existing_b_use = self.variable_to_product(b);
+
     let left = &self.variables[a.0];
     let right = &self.variables[b.0];
 
@@ -238,55 +241,11 @@ impl<C: BulletproofsCurve> Circuit<C> {
     ));
 
     // Add consistency constraints with prior variable uses
-    let mut found_l = false;
-    let mut found_r = false;
-
-    let var_ref = |prod| match prod {
-      ProductReference::Left { variable, .. } => variable,
-      ProductReference::Right { variable, .. } => variable,
-      ProductReference::Output { variable, .. } => variable,
-    };
-
-    {
-      let mut try_constraint = |circuit: &mut Circuit<C>,
-                                (e_p, existing_product): (usize, Product),
-                                new: ProductReference| {
-        let Product { left: l, right: r, variable } = existing_product;
-        let new_var = var_ref(new);
-        if (!found_l) && (l == new_var) {
-          let prod = ProductReference::Left { product: e_p, variable };
-          circuit.constrain_equality(prod, new);
-          // Only add a single consistency constraint, as all other uses are assumed to be already
-          // consistent
-          found_l = true;
-        }
-        if (!found_r) && (r == new_var) {
-          let prod = ProductReference::Right { product: e_p, variable };
-          circuit.constrain_equality(prod, new);
-          found_r = true;
-        }
-      };
-
-      // Only iterate over the products before this freshly added product
-      let products_clone =
-        self.products.iter().take(product_id).cloned().enumerate().collect::<Vec<_>>();
-      for product in products_clone {
-        try_constraint(self, product.clone(), products.0);
-        try_constraint(self, product, products.1);
-      }
+    if let Some(existing) = existing_a_use {
+      self.constrain_equality(products.0, existing);
     }
-
-    // If this variable is itself an output, form the constraint that way
-    let mut output_consistency = |var: ProductReference| {
-      if let Variable::Product(product, _) = self.variables[var_ref(var)] {
-        self.constrain_equality(ProductReference::Output { product, variable: var_ref(var) }, var);
-      }
-    };
-    if !found_l {
-      output_consistency(products.0);
-    }
-    if !found_r {
-      output_consistency(products.1);
+    if let Some(existing) = existing_b_use {
+      self.constrain_equality(products.1, existing);
     }
 
     (products, variable)
@@ -400,8 +359,218 @@ impl<C: BulletproofsCurve> Circuit<C> {
     self.constrain(constraint);
   }
 
+  fn remove_unused_products(&mut self) {
+    let mut key = self.products.len() - 1;
+    'unused_product: while key != 0 {
+      if key == self.products.len() {
+        key -= 1;
+      }
+
+      // Check if this product never had its output used
+      for constraint in &self.constraints {
+        for (i, _) in &constraint.WO {
+          if *i == key {
+            key -= 1;
+            continue 'unused_product;
+          }
+        }
+      }
+
+      // Since this product's output was never used, its only utility is to allow the included
+      // variables to be used in constraints
+
+      // Check if other products can be used for that purpose
+      {
+        let has_other_product = |variable| {
+          for (i, product) in self.products.iter().enumerate() {
+            if key == i {
+              continue;
+            }
+
+            if (product.left == variable) ||
+              (product.right == variable) ||
+              (product.variable == variable)
+            {
+              return true;
+            }
+          }
+          false
+        };
+        if !(has_other_product(self.products[key].left) &&
+          has_other_product(self.products[key].right))
+        {
+          key -= 1;
+          continue;
+        }
+      }
+
+      // Since this product is unused, and these variables can have their constraints moved to
+      // other products, remove this product
+      let removed = self.products.remove(key);
+
+      let to_decrement_threshold = {
+        // Find the variable for this product
+        let mut i = 0;
+        while match self.variables[i] {
+          Variable::Product(product, _) => product != key,
+          _ => true,
+        } {
+          i += 1;
+        }
+
+        // Remove it, marking the threshold
+        match self.variables.remove(i) {
+          Variable::Product(product, _) => debug_assert_eq!(key, product),
+          _ => panic!("removed non-product variable"),
+        }
+        let to_decrement_threshold = i;
+
+        // Shift down variables
+        while i < self.variables.len() {
+          match self.variables[i] {
+            Variable::Constant(..) => {}
+            Variable::Secret(..) => {}
+            Variable::Committed(..) => {}
+            Variable::Product(ref mut product, _) => {
+              debug_assert!(*product > key);
+              *product -= 1;
+            }
+          }
+
+          i += 1;
+        }
+        to_decrement_threshold
+      };
+
+      // Get the variables which should be moved to
+      let find_distinct_product = |variable| {
+        debug_assert!(variable < to_decrement_threshold);
+
+        for (i, product) in self.products.iter().enumerate() {
+          if product.left == variable {
+            return ProductReference::Left { product: i, variable };
+          }
+          if product.right == variable {
+            return ProductReference::Right { product: i, variable };
+          }
+          if product.variable == variable {
+            return ProductReference::Output { product: i, variable };
+          }
+        }
+        panic!("couldn't find distinct product");
+      };
+      let move_to_left = find_distinct_product(removed.left);
+      let move_to_right = find_distinct_product(removed.right);
+
+      // Shift down products
+      for product in self.products.iter_mut().skip(key) {
+        if (product.left == to_decrement_threshold) || (product.right == to_decrement_threshold) {
+          panic!("product used unused product output");
+        }
+
+        if product.left > to_decrement_threshold {
+          product.left -= 1;
+        }
+        if product.right > to_decrement_threshold {
+          product.right -= 1;
+        }
+        if product.variable > to_decrement_threshold {
+          product.variable -= 1;
+        }
+      }
+
+      // Shift down constraints
+      for constraint in self.constraints.iter_mut() {
+        let mut to_remove = vec![];
+        let mut weights = vec![];
+        for (i, (product_l, weight)) in constraint.WL.clone().drain(..).enumerate() {
+          if product_l == key {
+            weights.push((move_to_left, weight));
+            to_remove.push(i);
+          } else if product_l > key {
+            constraint.WL[i].0 -= 1;
+          }
+        }
+        assert!(to_remove.len() <= 1);
+        for i in to_remove.drain(..) {
+          constraint.WL.remove(i);
+        }
+
+        for (i, (product_r, weight)) in constraint.WR.clone().drain(..).enumerate() {
+          if product_r == key {
+            weights.push((move_to_right, weight));
+            to_remove.push(i);
+          } else if product_r > key {
+            constraint.WR[i].0 -= 1;
+          }
+        }
+        assert!(to_remove.len() <= 1);
+        for i in to_remove.drain(..) {
+          constraint.WR.remove(i);
+        }
+        for weight in weights.drain(..) {
+          constraint.weight(weight.0, weight.1);
+        }
+
+        for (product_o, _) in constraint.WO.iter_mut() {
+          if *product_o == key {
+            panic!("unused output was used in constraint");
+          }
+          if *product_o > key {
+            *product_o -= 1;
+          }
+        }
+      }
+    }
+  }
+
+  fn remove_empty_constraints(&mut self) {
+    let mut offset = 0;
+    // TODO: Optimize out this clone
+    'constraint: for (i, constraint) in self.constraints.clone().iter().enumerate() {
+      let i = i - offset;
+
+      for w in &constraint.WL {
+        if w.1 != C::F::ZERO {
+          continue 'constraint;
+        }
+      }
+      for w in &constraint.WR {
+        if w.1 != C::F::ZERO {
+          continue 'constraint;
+        }
+      }
+      for w in &constraint.WO {
+        if w.1 != C::F::ZERO {
+          continue 'constraint;
+        }
+      }
+      for w in &constraint.WV {
+        if w.1 != C::F::ZERO {
+          continue 'constraint;
+        }
+      }
+      assert_eq!(constraint.c, C::F::ZERO, "constraint was empty yet had rhs offset");
+
+      self.constraints.remove(i);
+      offset += 1;
+    }
+  }
+
   // TODO: This can be significantly optimized with post-processing passes
-  fn compile(self) -> (ArithmeticCircuitStatement<C>, Option<ArithmeticCircuitWitness<C>>) {
+  // TODO: Don't run this on every single prove/verify. It should only be run once at compile time
+  fn compile(mut self) -> (ArithmeticCircuitStatement<C>, Option<ArithmeticCircuitWitness<C>>) {
+    // Only runs once as we so far don't have value from multiple runs
+    for _ in 0 .. 1 {
+      // Remove unused products
+      self.remove_unused_products();
+
+      // Remove empty constraints
+      self.remove_empty_constraints();
+
+      // TODO: Remove duplicate contraints
+    }
+
     let witness = if self.prover {
       let mut aL = vec![];
       let mut aR = vec![];
