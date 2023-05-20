@@ -39,10 +39,10 @@ fn test_aggregate_range_proof_ristretto() {
 // Uses less runs for pallas/vesta due to performance under debug
 #[test]
 fn test_aggregate_range_proof_pallas() {
-  test_aggregate_range_proof::<Pallas>(4);
+  test_aggregate_range_proof::<Pallas>(16);
 }
 
 #[test]
 fn test_aggregate_range_proof_vesta() {
-  test_aggregate_range_proof::<Vesta>(4);
+  test_aggregate_range_proof::<Vesta>(16);
 }

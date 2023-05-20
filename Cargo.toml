@@ -30,6 +30,7 @@ members = [
 [profile.dev.package]
 subtle = { opt-level = 3 }
 curve25519-dalek = { opt-level = 3 }
+pasta_curves = { opt-level = 3 }
 
 ff = { opt-level = 3 }
 group = { opt-level = 3 }

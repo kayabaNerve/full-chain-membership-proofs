@@ -4,6 +4,7 @@ use zeroize::{Zeroize, ZeroizeOnDrop};
 
 use transcript::Transcript;
 
+use multiexp::multiexp;
 use ciphersuite::{
   group::{ff::Field, GroupEncoding},
   Ciphersuite,
@@ -200,7 +201,7 @@ impl<C: BulletproofsCurve> ArithmeticCircuitStatement<C> {
     for (commitment, (value, gamma)) in
       self.V.0.iter().zip(witness.v.0.iter().zip(witness.gamma.0.iter()))
     {
-      assert_eq!(*commitment, (C::generator() * value) + (C::alt_generator() * gamma));
+      assert_eq!(*commitment, multiexp(&[(*value, C::generator()), (*gamma, C::alt_generator())]));
     }
 
     // aL * aR = aO doesn't need checking since we generate aO ourselves on witness creation

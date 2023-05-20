@@ -4,8 +4,9 @@ use zeroize::{Zeroize, ZeroizeOnDrop};
 
 use transcript::Transcript;
 
+use multiexp::{multiexp, multiexp_vartime};
 use ciphersuite::{
-  group::{ff::Field, GroupEncoding},
+  group::{ff::Field, Group, GroupEncoding},
   Ciphersuite,
 };
 
@@ -117,7 +118,7 @@ impl<C: BulletproofsCurve> WipStatement<C> {
     let h_bold = h_bold1.mul(e).add_vec(&h_bold2.mul(inv_e));
     let e_square = e.square();
     let inv_e_square = inv_e.square();
-    P += (L * e_square) + (R * inv_e_square);
+    P += multiexp_vartime(&[(e_square, L), (inv_e_square, R)]);
 
     Self::transcript_round(transcript, &g_bold, &h_bold, P);
 
@@ -139,13 +140,18 @@ impl<C: BulletproofsCurve> WipStatement<C> {
     }
 
     // Check P has the expected relationship
-    assert_eq!(
-      self.g_bold.mul_vec(&witness.a).sum() +
-        self.h_bold.mul_vec(&witness.b).sum() +
-        (C::generator() * weighted_inner_product(&witness.a, &witness.b, &y_vec)) +
-        (C::alt_generator() * witness.alpha),
-      self.P,
-    );
+    let mut P_terms = witness
+      .a
+      .0
+      .iter()
+      .copied()
+      .zip(self.g_bold.0.iter().copied())
+      .chain(witness.b.0.iter().copied().zip(self.h_bold.0.iter().copied()))
+      .collect::<Vec<_>>();
+    P_terms.push((weighted_inner_product(&witness.a, &witness.b, &y_vec), C::generator()));
+    P_terms.push((witness.alpha, C::alt_generator()));
+    assert_eq!(multiexp(&P_terms), self.P);
+    P_terms.zeroize();
 
     self.initial_transcript(transcript);
 
@@ -192,21 +198,31 @@ impl<C: BulletproofsCurve> WipStatement<C> {
 
       let y_inv_n_hat = y_n_hat.invert().unwrap();
 
-      // TODO: Use a multiexp here
-      #[rustfmt::skip]
-      let L = g_bold2.mul_vec(&a1.mul(y_inv_n_hat)).sum() +
-        h_bold1.mul_vec(&b2).sum() +
-        (C::generator() * c_l) +
-        (C::alt_generator() * d_l);
+      let mut L_terms = a1
+        .mul(y_inv_n_hat)
+        .0
+        .drain(..)
+        .zip(g_bold2.0.iter().copied())
+        .chain(b2.0.iter().copied().zip(h_bold1.0.iter().copied()))
+        .collect::<Vec<_>>();
+      L_terms.push((c_l, C::generator()));
+      L_terms.push((d_l, C::alt_generator()));
+      let L = multiexp(&L_terms);
       L_vec.push(L);
+      L_terms.zeroize();
 
-      // TODO: Use a multiexp here too
-      #[rustfmt::skip]
-      let R = g_bold1.mul_vec(&a2.mul(y_n_hat)).sum() +
-        h_bold2.mul_vec(&b1).sum() +
-        (C::generator() * c_r) +
-        (C::alt_generator() * d_r);
+      let mut R_terms = a2
+        .mul(y_n_hat)
+        .0
+        .drain(..)
+        .zip(g_bold1.0.iter().copied())
+        .chain(b1.0.iter().copied().zip(h_bold2.0.iter().copied()))
+        .collect::<Vec<_>>();
+      R_terms.push((c_r, C::generator()));
+      R_terms.push((d_r, C::alt_generator()));
+      let R = multiexp(&R_terms);
       R_vec.push(R);
+      R_terms.zeroize();
 
       let (e, inv_e, e_square, inv_e_square, P_hat);
       (e, inv_e, e_square, inv_e_square, g_bold, h_bold, P_hat) =
@@ -216,7 +232,7 @@ impl<C: BulletproofsCurve> WipStatement<C> {
       debug_assert_eq!(e.square(), e_square);
       debug_assert_eq!(e_square.invert().unwrap(), inv_e_square);
 
-      debug_assert_eq!(P_hat, (L * e_square) + P + (R * inv_e_square));
+      debug_assert_eq!(P_hat, P + multiexp_vartime(&[(e_square, L), (inv_e_square, R)]));
       P = P_hat;
 
       a = a1.mul(e).add_vec(&a2.mul(y_n_hat * inv_e));
@@ -226,11 +242,18 @@ impl<C: BulletproofsCurve> WipStatement<C> {
       debug_assert_eq!(g_bold.len(), a.len());
       debug_assert_eq!(g_bold.len(), h_bold.len());
       debug_assert_eq!(g_bold.len(), b.len());
-      let alt_P = g_bold.mul_vec(&a).sum() +
-        h_bold.mul_vec(&b).sum() +
-        (C::generator() * weighted_inner_product(&a, &b, &y_vec)) +
-        (C::alt_generator() * alpha);
-      debug_assert_eq!(alt_P, P);
+
+      let mut alt_P_terms = a
+        .0
+        .iter()
+        .copied()
+        .zip(g_bold.0.iter().copied())
+        .chain(b.0.iter().copied().zip(h_bold.0.iter().copied()))
+        .collect::<Vec<_>>();
+      alt_P_terms.push((weighted_inner_product(&a, &b, &y_vec), C::generator()));
+      alt_P_terms.push((alpha, C::alt_generator()));
+      debug_assert_eq!(multiexp(&alt_P_terms), P);
+      alt_P_terms.zeroize();
     }
 
     // n == 1 case from figure 1
@@ -246,14 +269,19 @@ impl<C: BulletproofsCurve> WipStatement<C> {
     let long_n = C::F::random(&mut *rng);
 
     let ry = r * y;
-    // TODO: Use a multiexp here
-    #[rustfmt::skip]
-    let A = (g_bold[0] * r) +
-      (h_bold[0] * s) +
-      (C::generator() * ((ry * b[0]) + (s * y * a[0]))) +
-      (C::alt_generator() * delta);
-    // TODO: Use a multiexp here too
-    let B = (C::generator() * (ry * s)) + (C::alt_generator() * long_n);
+
+    let mut A_terms = vec![
+      (r, g_bold[0]),
+      (s, h_bold[0]),
+      ((ry * b[0]) + (s * y * a[0]), C::generator()),
+      (delta, C::alt_generator()),
+    ];
+    let A = multiexp(&A_terms);
+    A_terms.zeroize();
+
+    let mut B_terms = vec![(ry * s, C::generator()), (long_n, C::alt_generator())];
+    let B = multiexp(&B_terms);
+    B_terms.zeroize();
 
     let e = Self::transcript_A_B(transcript, A, B);
 
@@ -307,12 +335,16 @@ impl<C: BulletproofsCurve> WipStatement<C> {
     assert_eq!(h_bold.len(), 1);
 
     let e = Self::transcript_A_B(transcript, proof.A, proof.B);
-    assert_eq!(
-      (P * e.square()) + (proof.A * e) + proof.B,
-      (g_bold[0] * (proof.r_answer * e)) +
-        (h_bold[0] * (proof.s_answer * e)) +
-        (C::generator() * (proof.r_answer * y * proof.s_answer)) +
-        (C::alt_generator() * proof.delta_answer)
-    );
+    assert!(bool::from(
+      (multiexp_vartime(&[
+        (-e.square(), P),
+        (-e, proof.A),
+        (proof.r_answer * e, g_bold[0]),
+        (proof.s_answer * e, h_bold[0]),
+        (proof.r_answer * y * proof.s_answer, C::generator()),
+        (proof.delta_answer, C::alt_generator()),
+      ]) - proof.B)
+        .is_identity()
+    ));
   }
 }
