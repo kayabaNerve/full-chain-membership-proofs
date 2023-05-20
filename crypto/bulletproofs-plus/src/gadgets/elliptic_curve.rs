@@ -1,4 +1,6 @@
-use ciphersuite::group::ff::Field;
+use subtle::{Choice, ConstantTimeEq, ConditionallySelectable};
+
+use ciphersuite::group::ff::{Field, PrimeField};
 
 use crate::{
   BulletproofsCurve,
@@ -28,6 +30,18 @@ pub trait EmbeddedCurveAddition: BulletproofsCurve {
     y1: VariableReference,
     x2: VariableReference,
     y2: VariableReference,
+  ) -> (VariableReference, VariableReference);
+
+  // start is the point to perform addition onto.
+  // fixed_generator is the fixed generator to perform multiplication against, and its doublings.
+  // scalar is the little-endian bit decomposition.
+  fn scalar_mul_generator(
+    circuit: &mut Circuit<Self>,
+    start_x: VariableReference,
+    start_y: VariableReference,
+    fixed_generator_x: &[Self::F],
+    fixed_generator_y: &[Self::F],
+    scalar: &[Option<Choice>],
   ) -> (VariableReference, VariableReference);
 
   // This is cheap to run inside the circuit, cheap enough it's not worth implementing
@@ -197,5 +211,85 @@ impl<C: EmbeddedShortWeierstrass> EmbeddedCurveAddition for C {
     let z3 = circuit.add(z3, t0);
 
     Self::normalize(circuit, x3, y3, z3)
+  }
+
+  fn scalar_mul_generator(
+    circuit: &mut Circuit<Self>,
+    start_x: VariableReference,
+    start_y: VariableReference,
+    fixed_generator_x: &[C::F],
+    fixed_generator_y: &[C::F],
+    scalar: &[Option<Choice>],
+  ) -> (VariableReference, VariableReference) {
+    assert_eq!(fixed_generator_x.len(), usize::try_from(C::F::CAPACITY).unwrap());
+    assert_eq!(fixed_generator_y.len(), usize::try_from(C::F::CAPACITY).unwrap());
+    assert_eq!(scalar.len(), usize::try_from(C::F::CAPACITY).unwrap());
+
+    let (mut curr_x, mut curr_y) = (start_x, start_y);
+    for (i, bit) in scalar.iter().enumerate() {
+      let bit = bit.map(|bit| C::F::from(u64::from(bit.unwrap_u8())));
+
+      let l = circuit.add_secret_input(bit);
+      let r = circuit.add_secret_input(bit.map(|bit| bit - C::F::ONE));
+
+      // Verify this is in fact a valid bit
+      // TODO: Can this be reduced to a single constraint?
+      {
+        let ((l_prod, r_prod, o_prod), _) = circuit.product(l, r);
+
+        // Force the output to be 0, meaning one of factors has to be 0
+        let mut bit_product = Constraint::new("bit_product");
+        bit_product.weight(o_prod, C::F::ONE);
+        circuit.constrain(bit_product);
+
+        // l + -r = 1
+        // One must be 0
+        // If l is 0, the only solution for r is -1
+        // If r is 0, the only solution for l is 1
+        let mut l_minus_one = Constraint::new("l_minus_one");
+        l_minus_one.weight(l_prod, C::F::ONE);
+        l_minus_one.weight(r_prod, -C::F::ONE);
+        l_minus_one.rhs_offset(C::F::ONE);
+        circuit.constrain(l_minus_one);
+      }
+
+      let (gen_x, gen_y) =
+        (circuit.add_constant(fixed_generator_x[i]), circuit.add_constant(fixed_generator_y[i]));
+
+      let (res_x, res_y) = Self::add(circuit, curr_x, curr_y, gen_x, gen_y);
+
+      let mut choose = |bit: VariableReference, bit_minus_one, curr, res| {
+        let curr_var = circuit.unchecked_variable(curr).value();
+        let res_var = circuit.unchecked_variable(res).value();
+        let chosen = Some(()).filter(|_| circuit.prover()).map(|_| {
+          C::F::conditional_select(
+            &curr_var.unwrap(),
+            &res_var.unwrap(),
+            circuit.unchecked_variable(bit).value().unwrap().ct_eq(&C::F::ONE),
+          )
+        });
+
+        let chosen = circuit.add_secret_input(chosen);
+
+        // TODO: Merge these product statemC::F:ents
+        let ((chosen_prod, _, _), _) = circuit.product(chosen, chosen);
+
+        // (l * res) + (-r * curr)
+        // If bit is 0, curr. If bit is 1, res.
+        let ((_, _, lo), _) = circuit.product(bit, res);
+        let ((_, _, ro), _) = circuit.product(bit_minus_one, curr);
+        let mut chosen_constraint = Constraint::new("chosen");
+        chosen_constraint.weight(lo, C::F::ONE);
+        chosen_constraint.weight(ro, -C::F::ONE);
+        chosen_constraint.weight(chosen_prod, -C::F::ONE);
+        circuit.constrain(chosen_constraint);
+
+        chosen
+      };
+      curr_x = choose(l, r, curr_x, res_x);
+      curr_y = choose(l, r, curr_y, res_y);
+    }
+
+    (curr_x, curr_y)
   }
 }
