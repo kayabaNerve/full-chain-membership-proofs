@@ -19,6 +19,7 @@ members = [
   "crypto/frost",
 
   "crypto/bulletproofs-plus",
+  "crypto/curve-trees",
 
   "coins/monero",
 

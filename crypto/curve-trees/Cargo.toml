@@ -1,9 +1,9 @@
 [package]
-name = "bulletproofs-plus"
+name = "curve-trees"
 version = "0.1.0"
-description = "Bulletproofs+ implementation"
+description = "Curve Trees Implementation"
 license = "MIT"
-repository = "https://github.com/kayabaNerve/serai/tree/snarks/crypto/bulletproofs-plus"
+repository = "https://github.com/kayabaNerve/serai/tree/snarks/crypto/curve-trees"
 authors = ["Luke Parker <lukeparker5132@gmail.com>"]
 keywords = ["ciphersuite", "ff", "group"]
 edition = "2021"
@@ -22,6 +22,8 @@ transcript = { package = "flexible-transcript", path = "../transcript", version 
 
 multiexp = { path = "../multiexp", default-features = false }
 ciphersuite = { path = "../ciphersuite", default-features = false }
+
+bulletproofs-plus = { path = "../bulletproofs-plus", default-features = false }
 
 [dev-dependencies]
 rand_core = { version = "0.6", features = ["getrandom"] }

@@ -37,7 +37,7 @@ impl<C: Ciphersuite> WipWitness<C> {
   }
 }
 
-#[derive(Clone, Debug, Zeroize)]
+#[derive(Clone, PartialEq, Eq, Debug, Zeroize)]
 pub struct WipProof<C: Ciphersuite> {
   L: Vec<C::G>,
   R: Vec<C::G>,

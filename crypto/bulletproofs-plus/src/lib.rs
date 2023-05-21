@@ -5,11 +5,11 @@ use zeroize::{Zeroize, ZeroizeOnDrop};
 use ciphersuite::{group::ff::Field, Ciphersuite};
 
 mod scalar_vector;
-pub(crate) use scalar_vector::{ScalarVector, weighted_inner_product};
+pub use scalar_vector::{ScalarVector, weighted_inner_product};
 mod scalar_matrix;
-pub(crate) use scalar_matrix::ScalarMatrix;
+pub use scalar_matrix::ScalarMatrix;
 mod point_vector;
-pub(crate) use point_vector::PointVector;
+pub use point_vector::PointVector;
 
 pub mod weighted_inner_product;
 pub mod single_range_proof;

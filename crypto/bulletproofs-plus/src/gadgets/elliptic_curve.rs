@@ -130,8 +130,8 @@ impl<C: EmbeddedShortWeierstrass> EmbeddedCurveAddition for C {
   }
 
   // Algorithm 8
-  // TODO: The Curve Trees PoC peerformed this with just three constraints. Can theirs have its
-  // security proven?
+  // Curve Trees performed this with just three constraints (A.4).
+  // Its incomplete, yet can its security be proven?
   // Regardless, this should be able to have its amount of constraints roughly halved re: additions
   fn add(
     circuit: &mut Circuit<C>,

@@ -12,7 +12,7 @@ use ciphersuite::{
 use crate::ScalarVector;
 
 #[derive(Clone, PartialEq, Eq, Debug, Zeroize, ZeroizeOnDrop)]
-pub struct PointVector<C: Ciphersuite>(pub(crate) Vec<C::G>);
+pub struct PointVector<C: Ciphersuite>(pub Vec<C::G>);
 
 impl<C: Ciphersuite> Index<usize> for PointVector<C> {
   type Output = C::G;
@@ -95,7 +95,7 @@ impl<C: Ciphersuite> PointVector<C> {
     self.0.len()
   }
 
-  pub(crate) fn split(mut self) -> (Self, Self) {
+  pub fn split(mut self) -> (Self, Self) {
     assert!(self.len() > 1);
     // Make sure the left-side is the heavy one
     let mut r = self.0.split_off((self.0.len() / 2) + (self.0.len() % 2));

@@ -13,7 +13,7 @@ use ciphersuite::{
 };
 
 #[derive(Clone, PartialEq, Eq, Debug, Zeroize, ZeroizeOnDrop)]
-pub struct ScalarVector<C: Ciphersuite>(pub(crate) Vec<C::F>);
+pub struct ScalarVector<C: Ciphersuite>(pub Vec<C::F>);
 
 impl<C: Ciphersuite> Index<usize> for ScalarVector<C> {
   type Output = C::F;
@@ -106,7 +106,7 @@ impl<C: Ciphersuite> ScalarVector<C> {
     self.0.len()
   }
 
-  pub(crate) fn split(mut self) -> (Self, Self) {
+  pub fn split(mut self) -> (Self, Self) {
     assert!(self.len() > 1);
     // Make sure the left-side is the heavy one
     let mut r = self.0.split_off((self.0.len() / 2) + (self.0.len() % 2));
@@ -124,7 +124,7 @@ impl<C: Ciphersuite> ScalarVector<C> {
   }
 }
 
-pub(crate) fn weighted_inner_product<C: Ciphersuite>(
+pub fn weighted_inner_product<C: Ciphersuite>(
   a: &ScalarVector<C>,
   b: &ScalarVector<C>,
   y: &ScalarVector<C>,
