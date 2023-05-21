@@ -11,7 +11,7 @@ use ciphersuite::{
 };
 
 use crate::{
-  BulletproofsCurve, ScalarVector, ScalarMatrix, PointVector,
+  ScalarVector, ScalarMatrix, PointVector,
   weighted_inner_product::{WipStatement, WipWitness, WipProof},
   weighted_inner_product,
 };
@@ -19,6 +19,8 @@ use crate::{
 // Figure 4
 #[derive(Clone, Debug, Zeroize)]
 pub struct ArithmeticCircuitStatement<C: Ciphersuite> {
+  g: C::G,
+  h: C::G,
   g_bold1: PointVector<C>,
   g_bold2: PointVector<C>,
   h_bold1: PointVector<C>,
@@ -40,7 +42,7 @@ pub struct ArithmeticCircuitWitness<C: Ciphersuite> {
   gamma: ScalarVector<C>,
 }
 
-impl<C: BulletproofsCurve> ArithmeticCircuitWitness<C> {
+impl<C: Ciphersuite> ArithmeticCircuitWitness<C> {
   pub fn new(
     aL: ScalarVector<C>,
     aR: ScalarVector<C>,
@@ -65,8 +67,10 @@ pub struct ArithmeticCircuitProof<C: Ciphersuite> {
   wip: WipProof<C>,
 }
 
-impl<C: BulletproofsCurve> ArithmeticCircuitStatement<C> {
+impl<C: Ciphersuite> ArithmeticCircuitStatement<C> {
   pub fn new(
+    g: C::G,
+    h: C::G,
     mut g_bold1: PointVector<C>,
     mut g_bold2: PointVector<C>,
     mut h_bold1: PointVector<C>,
@@ -101,7 +105,7 @@ impl<C: BulletproofsCurve> ArithmeticCircuitStatement<C> {
     h_bold2.0.truncate(n);
     assert_eq!(h_bold2.len(), n);
 
-    Self { g_bold1, g_bold2, h_bold1, h_bold2, V, WL, WR, WO, WV, c }
+    Self { g, h, g_bold1, g_bold2, h_bold1, h_bold2, V, WL, WR, WO, WV, c }
   }
 
   fn initial_transcript<T: Transcript>(&self, transcript: &mut T) {
@@ -181,7 +185,7 @@ impl<C: BulletproofsCurve> ArithmeticCircuitStatement<C> {
         self.h_bold1.mul_vec(&WL_y_z).sum() +
         self.h_bold2.mul_vec(&WO_y_z.sub(C::F::ONE).mul(inv_y_n.last().unwrap())).sum() +
         self.V.mul_vec(&z_q_WV).sum() +
-        (C::generator() *
+        (self.g *
           (z_q.inner_product(&self.c) +
             weighted_inner_product(&WR_y_z, &WL_y_z, &ScalarVector(y_n)))),
     )
@@ -201,7 +205,7 @@ impl<C: BulletproofsCurve> ArithmeticCircuitStatement<C> {
     for (commitment, (value, gamma)) in
       self.V.0.iter().zip(witness.v.0.iter().zip(witness.gamma.0.iter()))
     {
-      assert_eq!(*commitment, multiexp(&[(*value, C::generator()), (*gamma, C::alt_generator())]));
+      assert_eq!(*commitment, multiexp(&[(*value, self.g), (*gamma, self.h)]));
     }
 
     // aL * aR = aO doesn't need checking since we generate aO ourselves on witness creation
@@ -215,7 +219,7 @@ impl<C: BulletproofsCurve> ArithmeticCircuitStatement<C> {
     let A = self.g_bold1.mul_vec(&witness.aL).sum() +
       self.g_bold2.mul_vec(&witness.aO).sum() +
       self.h_bold1.mul_vec(&witness.aR).sum() +
-      (C::alt_generator() * alpha);
+      (self.h * alpha);
     let (y, inv_y_n, z_q_WV, WL_y_z, WR_y_z, WO_y_z, A_hat) = self.compute_A_hat(transcript, A);
 
     let mut aL = witness.aL.add_vec(&WR_y_z);
@@ -229,7 +233,7 @@ impl<C: BulletproofsCurve> ArithmeticCircuitStatement<C> {
 
     ArithmeticCircuitProof {
       A,
-      wip: WipStatement::new(self.g_bold1, self.h_bold1, A_hat).prove(
+      wip: WipStatement::new(self.g, self.h, self.g_bold1, self.h_bold1, A_hat).prove(
         rng,
         transcript,
         WipWitness::new(aL, aR, alpha),
@@ -245,6 +249,7 @@ impl<C: BulletproofsCurve> ArithmeticCircuitStatement<C> {
     let (y, _, _, _, _, _, A_hat) = self.compute_A_hat(transcript, proof.A);
     self.g_bold1.0.append(&mut self.g_bold2.0);
     self.h_bold1.0.append(&mut self.h_bold2.0);
-    (WipStatement::new(self.g_bold1, self.h_bold1, A_hat)).verify(transcript, proof.wip, y);
+    (WipStatement::new(self.g, self.h, self.g_bold1, self.h_bold1, A_hat))
+      .verify(transcript, proof.wip, y);
   }
 }

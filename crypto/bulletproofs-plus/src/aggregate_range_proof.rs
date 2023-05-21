@@ -10,7 +10,7 @@ use ciphersuite::{
 };
 
 use crate::{
-  RANGE_PROOF_BITS, BulletproofsCurve, ScalarVector, PointVector, RangeCommitment,
+  RANGE_PROOF_BITS, ScalarVector, PointVector, RangeCommitment,
   weighted_inner_product::{WipStatement, WipWitness, WipProof},
   u64_decompose,
 };
@@ -20,6 +20,8 @@ const N: usize = RANGE_PROOF_BITS;
 // Figure 3
 #[derive(Clone, Debug, Zeroize)]
 pub struct AggregateRangeStatement<C: Ciphersuite> {
+  g: C::G,
+  h: C::G,
   g_bold: PointVector<C>,
   h_bold: PointVector<C>,
   V: PointVector<C>,
@@ -31,7 +33,7 @@ pub struct AggregateRangeWitness<C: Ciphersuite> {
   gammas: Vec<C::F>,
 }
 
-impl<C: BulletproofsCurve> AggregateRangeWitness<C> {
+impl<C: Ciphersuite> AggregateRangeWitness<C> {
   pub fn new(commitments: &[RangeCommitment<C>]) -> Self {
     let mut values = vec![];
     let mut gammas = vec![];
@@ -49,14 +51,20 @@ pub struct AggregateRangeProof<C: Ciphersuite> {
   wip: WipProof<C>,
 }
 
-impl<C: BulletproofsCurve> AggregateRangeStatement<C> {
-  pub fn new(g_bold: PointVector<C>, h_bold: PointVector<C>, V: Vec<C::G>) -> Self {
+impl<C: Ciphersuite> AggregateRangeStatement<C> {
+  pub fn new(
+    g: C::G,
+    h: C::G,
+    g_bold: PointVector<C>,
+    h_bold: PointVector<C>,
+    V: Vec<C::G>,
+  ) -> Self {
     assert!(!V.is_empty());
 
     assert_eq!(g_bold.len(), V.len() * N);
     assert_eq!(g_bold.len(), h_bold.len());
 
-    Self { g_bold, h_bold, V: PointVector(V) }
+    Self { g, h, g_bold, h_bold, V: PointVector(V) }
   }
 
   fn initial_transcript<T: Transcript>(&self, transcript: &mut T) {
@@ -143,7 +151,7 @@ impl<C: BulletproofsCurve> AggregateRangeStatement<C> {
       A + self.g_bold.mul_vec(&ScalarVector(vec![-z; mn])).sum() +
         self.h_bold.mul_vec(&d_descending_y.add_vec(&z_vec)).sum() +
         (commitment_accum * y_mn_plus_one) +
-        (C::generator() * ((y_pows * z) - (d.sum() * y_mn_plus_one * z) - (y_pows * z.square()))),
+        (self.g * ((y_pows * z) - (d.sum() * y_mn_plus_one * z) - (y_pows * z.square()))),
     )
   }
 
@@ -158,7 +166,7 @@ impl<C: BulletproofsCurve> AggregateRangeStatement<C> {
     for (commitment, (value, gamma)) in
       self.V.0.iter().zip(witness.values.iter().zip(witness.gammas.iter()))
     {
-      assert_eq!(RangeCommitment::<C>::new(*value, *gamma).calculate(), *commitment);
+      assert_eq!(RangeCommitment::<C>::new(*value, *gamma).calculate(self.g, self.h), *commitment);
     }
 
     self.initial_transcript(transcript);
@@ -178,9 +186,7 @@ impl<C: BulletproofsCurve> AggregateRangeStatement<C> {
     let a_r = a_l.sub(C::F::ONE);
 
     let alpha = C::F::random(&mut *rng);
-    let A = self.g_bold.mul_vec(&a_l).sum() +
-      self.h_bold.mul_vec(&a_r).sum() +
-      (C::alt_generator() * alpha);
+    let A = self.g_bold.mul_vec(&a_l).sum() + self.h_bold.mul_vec(&a_r).sum() + (self.h * alpha);
 
     let (y, d_descending_y, y_mn_plus_one, z_vec, z_pow, A_hat) = self.compute_A_hat(transcript, A);
 
@@ -193,7 +199,7 @@ impl<C: BulletproofsCurve> AggregateRangeStatement<C> {
 
     AggregateRangeProof {
       A,
-      wip: WipStatement::new(self.g_bold, self.h_bold, A_hat).prove(
+      wip: WipStatement::new(self.g, self.h, self.g_bold, self.h_bold, A_hat).prove(
         rng,
         transcript,
         WipWitness::new(a_l, a_r, alpha),
@@ -207,6 +213,7 @@ impl<C: BulletproofsCurve> AggregateRangeStatement<C> {
     self.initial_transcript(transcript);
 
     let (y, _, _, _, _, A_hat) = self.compute_A_hat(transcript, proof.A);
-    (WipStatement::new(self.g_bold, self.h_bold, A_hat)).verify(transcript, proof.wip, y);
+    (WipStatement::new(self.g, self.h, self.g_bold, self.h_bold, A_hat))
+      .verify(transcript, proof.wip, y);
   }
 }

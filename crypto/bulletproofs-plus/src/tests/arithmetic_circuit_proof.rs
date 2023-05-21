@@ -4,19 +4,18 @@ use transcript::{Transcript, RecommendedTranscript};
 use ciphersuite::{group::ff::Field, Ciphersuite, Ristretto};
 
 use crate::{
-  BulletproofsCurve, ScalarVector, ScalarMatrix, PointVector,
+  ScalarVector, ScalarMatrix, PointVector,
   arithmetic_circuit_proof::{ArithmeticCircuitStatement, ArithmeticCircuitWitness},
   tests::generators,
 };
 
 #[test]
 fn test_zero_arithmetic_circuit() {
-  let (g_bold1, g_bold2, h_bold1, h_bold2) = generators(1);
+  let (g, h, g_bold1, g_bold2, h_bold1, h_bold2) = generators(1);
 
   let value = <Ristretto as Ciphersuite>::F::random(&mut OsRng);
   let gamma = <Ristretto as Ciphersuite>::F::random(&mut OsRng);
-  let commitment =
-    (<Ristretto as Ciphersuite>::generator() * value) + (Ristretto::alt_generator() * gamma);
+  let commitment = (g * value) + (h * gamma);
   let V = PointVector(vec![commitment]);
 
   let zero_vec = || ScalarVector::<Ristretto>(vec![<Ristretto as Ciphersuite>::F::ZERO]);
@@ -35,7 +34,7 @@ fn test_zero_arithmetic_circuit() {
   let c = zero_vec();
 
   let statement = ArithmeticCircuitStatement::<Ristretto>::new(
-    g_bold1, g_bold2, h_bold1, h_bold2, V, WL, WR, WO, WV, c,
+    g, h, g_bold1, g_bold2, h_bold1, h_bold2, V, WL, WR, WO, WV, c,
   );
   let witness = ArithmeticCircuitWitness::<Ristretto>::new(
     aL,
@@ -61,11 +60,9 @@ fn test_multiplication_arithmetic_circuit() {
   // x * y = z
   // z + 1 = z1
 
-  let (g_bold1, g_bold2, h_bold1, h_bold2) = generators(n);
+  let (g, h, g_bold1, g_bold2, h_bold1, h_bold2) = generators(n);
 
-  let commit = |value, gamma| {
-    (<Ristretto as Ciphersuite>::generator() * value) + (Ristretto::alt_generator() * gamma)
-  };
+  let commit = |value, gamma| (g * value) + (h * gamma);
 
   let x = <Ristretto as Ciphersuite>::F::random(&mut OsRng);
   let x_mask = <Ristretto as Ciphersuite>::F::random(&mut OsRng);
@@ -128,7 +125,7 @@ fn test_multiplication_arithmetic_circuit() {
   ]);
 
   let statement = ArithmeticCircuitStatement::<Ristretto>::new(
-    g_bold1, g_bold2, h_bold1, h_bold2, V, WL, WR, WO, WV, c,
+    g, h, g_bold1, g_bold2, h_bold1, h_bold2, V, WL, WR, WO, WV, c,
   );
   let witness = ArithmeticCircuitWitness::<Ristretto>::new(
     aL,

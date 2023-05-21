@@ -10,7 +10,7 @@ use ciphersuite::{
 };
 
 use crate::{
-  RANGE_PROOF_BITS, BulletproofsCurve, ScalarVector, PointVector, RangeCommitment,
+  RANGE_PROOF_BITS, ScalarVector, PointVector, RangeCommitment,
   weighted_inner_product::{WipStatement, WipWitness, WipProof},
   u64_decompose,
 };
@@ -18,6 +18,8 @@ use crate::{
 // Figure 2
 #[derive(Clone, Debug, Zeroize)]
 pub struct SingleRangeStatement<C: Ciphersuite> {
+  g: C::G,
+  h: C::G,
   g_bold: PointVector<C>,
   h_bold: PointVector<C>,
   V: C::G,
@@ -29,7 +31,7 @@ pub struct SingleRangeWitness<C: Ciphersuite> {
   gamma: C::F,
 }
 
-impl<C: BulletproofsCurve> SingleRangeWitness<C> {
+impl<C: Ciphersuite> SingleRangeWitness<C> {
   pub fn new(commitment: RangeCommitment<C>) -> Self {
     SingleRangeWitness { value: commitment.value, gamma: commitment.mask }
   }
@@ -41,12 +43,12 @@ pub struct SingleRangeProof<C: Ciphersuite> {
   wip: WipProof<C>,
 }
 
-impl<C: BulletproofsCurve> SingleRangeStatement<C> {
-  pub fn new(g_bold: PointVector<C>, h_bold: PointVector<C>, V: C::G) -> Self {
+impl<C: Ciphersuite> SingleRangeStatement<C> {
+  pub fn new(g: C::G, h: C::G, g_bold: PointVector<C>, h_bold: PointVector<C>, V: C::G) -> Self {
     assert_eq!(g_bold.len(), RANGE_PROOF_BITS);
     assert_eq!(g_bold.len(), h_bold.len());
 
-    Self { g_bold, h_bold, V }
+    Self { g, h, g_bold, h_bold, V }
   }
 
   fn initial_transcript<T: Transcript>(&self, transcript: &mut T) {
@@ -72,6 +74,7 @@ impl<C: BulletproofsCurve> SingleRangeStatement<C> {
 
   fn A_hat<T: Transcript>(
     transcript: &mut T,
+    g: C::G,
     g_bold: &PointVector<C>,
     h_bold: &PointVector<C>,
     V: C::G,
@@ -111,8 +114,7 @@ impl<C: BulletproofsCurve> SingleRangeStatement<C> {
       A + g_bold.mul_vec(&ScalarVector(vec![-z; RANGE_PROOF_BITS])).sum() +
         h_bold.mul_vec(&two_descending_y.add_vec(&z_vec)).sum() +
         (V * y_n_plus_one) +
-        (C::generator() *
-          ((y_pows * z) - (two_pows.sum() * y_n_plus_one * z) - (y_pows * z.square()))),
+        (g * ((y_pows * z) - (two_pows.sum() * y_n_plus_one * z) - (y_pows * z.square()))),
     )
   }
 
@@ -122,7 +124,10 @@ impl<C: BulletproofsCurve> SingleRangeStatement<C> {
     transcript: &mut T,
     witness: SingleRangeWitness<C>,
   ) -> SingleRangeProof<C> {
-    assert_eq!(RangeCommitment::<C>::new(witness.value, witness.gamma).calculate(), self.V);
+    assert_eq!(
+      RangeCommitment::<C>::new(witness.value, witness.gamma).calculate(self.g, self.h),
+      self.V
+    );
 
     self.initial_transcript(transcript);
 
@@ -135,10 +140,10 @@ impl<C: BulletproofsCurve> SingleRangeStatement<C> {
     let a_r = a_l.sub(C::F::ONE);
     debug_assert!(bool::from(a_l.inner_product(&a_r).is_zero()));
 
-    let Self { g_bold, h_bold, V } = self;
-    let A = g_bold.mul_vec(&a_l).sum() + h_bold.mul_vec(&a_r).sum() + (C::alt_generator() * alpha);
+    let Self { g, h, g_bold, h_bold, V } = self;
+    let A = g_bold.mul_vec(&a_l).sum() + h_bold.mul_vec(&a_r).sum() + (self.h * alpha);
     let (y, two_descending_y, y_n_plus_one, z_vec, A_hat) =
-      Self::A_hat(transcript, &g_bold, &h_bold, V, A);
+      Self::A_hat(transcript, g, &g_bold, &h_bold, V, A);
 
     let a_l = a_l.sub_vec(&z_vec);
     let a_r = a_r.add_vec(&two_descending_y).add_vec(&z_vec);
@@ -146,7 +151,7 @@ impl<C: BulletproofsCurve> SingleRangeStatement<C> {
 
     SingleRangeProof {
       A,
-      wip: WipStatement::new(g_bold, h_bold, A_hat).prove(
+      wip: WipStatement::new(g, h, g_bold, h_bold, A_hat).prove(
         rng,
         transcript,
         WipWitness::new(a_l, a_r, alpha),
@@ -159,8 +164,8 @@ impl<C: BulletproofsCurve> SingleRangeStatement<C> {
   pub fn verify<T: Transcript>(self, transcript: &mut T, proof: SingleRangeProof<C>) {
     self.initial_transcript(transcript);
 
-    let Self { g_bold, h_bold, V } = self;
-    let (y, _, _, _, A_hat) = Self::A_hat(transcript, &g_bold, &h_bold, V, proof.A);
-    (WipStatement::new(g_bold, h_bold, A_hat)).verify(transcript, proof.wip, y);
+    let Self { g, h, g_bold, h_bold, V } = self;
+    let (y, _, _, _, A_hat) = Self::A_hat(transcript, g, &g_bold, &h_bold, V, proof.A);
+    (WipStatement::new(g, h, g_bold, h_bold, A_hat)).verify(transcript, proof.wip, y);
   }
 }

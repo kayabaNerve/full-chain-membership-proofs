@@ -24,10 +24,6 @@ pub(crate) mod tests;
 
 pub const RANGE_PROOF_BITS: usize = 64;
 
-pub trait BulletproofsCurve: Ciphersuite {
-  fn alt_generator() -> <Self as Ciphersuite>::G;
-}
-
 #[allow(non_snake_case)]
 #[derive(Clone, PartialEq, Eq, Debug, Zeroize, ZeroizeOnDrop)]
 pub struct RangeCommitment<C: Ciphersuite> {
@@ -35,7 +31,7 @@ pub struct RangeCommitment<C: Ciphersuite> {
   pub mask: C::F,
 }
 
-impl<C: BulletproofsCurve> RangeCommitment<C> {
+impl<C: Ciphersuite> RangeCommitment<C> {
   pub fn zero() -> Self {
     RangeCommitment { value: 0, mask: C::F::ZERO }
   }
@@ -45,13 +41,13 @@ impl<C: BulletproofsCurve> RangeCommitment<C> {
   }
 
   /// Calculate a Pedersen commitment, as a point, from the transparent structure.
-  pub fn calculate(&self) -> C::G {
-    (C::generator() * C::F::from(self.value)) + (C::alt_generator() * self.mask)
+  pub fn calculate(&self, g: C::G, h: C::G) -> C::G {
+    (g * C::F::from(self.value)) + (h * self.mask)
   }
 }
 
 // Returns the little-endian decomposition.
-fn u64_decompose<C: BulletproofsCurve>(value: u64) -> ScalarVector<C> {
+fn u64_decompose<C: Ciphersuite>(value: u64) -> ScalarVector<C> {
   let mut bits = ScalarVector::<C>::new(64);
   for bit in 0 .. 64 {
     bits[bit] = C::F::from((value & (1u64 << bit)) >> bit);

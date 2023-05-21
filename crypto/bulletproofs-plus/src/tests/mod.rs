@@ -1,8 +1,8 @@
 use rand_core::OsRng;
 
-use ciphersuite::{group::Group, Ciphersuite, Ristretto, Pallas, Vesta};
+use ciphersuite::{group::Group, Ciphersuite, Pallas, Vesta};
 
-use crate::{BulletproofsCurve, PointVector, gadgets::elliptic_curve::EmbeddedShortWeierstrass};
+use crate::{PointVector, gadgets::elliptic_curve::EmbeddedShortWeierstrass};
 
 mod weighted_inner_product;
 mod single_range_proof;
@@ -11,9 +11,16 @@ mod arithmetic_circuit_proof;
 mod arithmetic_circuit;
 mod gadgets;
 
-pub type Generators<C> = (PointVector<C>, PointVector<C>, PointVector<C>, PointVector<C>);
+pub type Generators<C> = (
+  <C as Ciphersuite>::G,
+  <C as Ciphersuite>::G,
+  PointVector<C>,
+  PointVector<C>,
+  PointVector<C>,
+  PointVector<C>,
+);
 
-pub fn generators<C: BulletproofsCurve>(n: usize) -> Generators<C> {
+pub fn generators<C: Ciphersuite>(n: usize) -> Generators<C> {
   let gens = || {
     let mut res = PointVector::<C>::new(n);
     for i in 0 .. n {
@@ -21,29 +28,7 @@ pub fn generators<C: BulletproofsCurve>(n: usize) -> Generators<C> {
     }
     res
   };
-  (gens(), gens(), gens(), gens())
-}
-
-// TODO: All of these suites use insecure alternate generators
-// Even though they're only here for tests, they should still be proper
-
-impl BulletproofsCurve for Ristretto {
-  fn alt_generator() -> <Self as Ciphersuite>::G {
-    <Ristretto as Ciphersuite>::generator() *
-      <Ristretto as Ciphersuite>::hash_to_F(b"alt_generator", &[])
-  }
-}
-
-impl BulletproofsCurve for Pallas {
-  fn alt_generator() -> <Self as Ciphersuite>::G {
-    <Pallas as Ciphersuite>::generator() * <Pallas as Ciphersuite>::hash_to_F(b"alt_generator", &[])
-  }
-}
-
-impl BulletproofsCurve for Vesta {
-  fn alt_generator() -> <Self as Ciphersuite>::G {
-    <Vesta as Ciphersuite>::generator() * <Vesta as Ciphersuite>::hash_to_F(b"alt_generator", &[])
-  }
+  (C::G::random(&mut OsRng), C::G::random(&mut OsRng), gens(), gens(), gens(), gens())
 }
 
 impl EmbeddedShortWeierstrass for Pallas {

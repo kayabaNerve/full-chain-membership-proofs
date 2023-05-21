@@ -1,11 +1,8 @@
 use subtle::{Choice, ConditionallySelectable};
 
-use ciphersuite::group::ff::Field;
+use ciphersuite::{group::ff::Field, Ciphersuite};
 
-use crate::{
-  BulletproofsCurve,
-  arithmetic_circuit::{VariableReference, Constraint, Circuit},
-};
+use crate::arithmetic_circuit::{VariableReference, Constraint, Circuit};
 
 #[derive(Clone, Copy, Debug)]
 pub struct Bit {
@@ -15,7 +12,7 @@ pub struct Bit {
 }
 
 impl Bit {
-  pub fn new<C: BulletproofsCurve>(circuit: &mut Circuit<C>, choice: Option<Choice>) -> Bit {
+  pub fn new<C: Ciphersuite>(circuit: &mut Circuit<C>, choice: Option<Choice>) -> Bit {
     let bit = choice.map(|choice| C::F::from(u64::from(choice.unwrap_u8())));
 
     let l = circuit.add_secret_input(bit);
@@ -45,7 +42,7 @@ impl Bit {
     Bit { value: choice, variable: l, minus_one: r }
   }
 
-  pub fn select<C: BulletproofsCurve>(
+  pub fn select<C: Ciphersuite>(
     &self,
     circuit: &mut Circuit<C>,
     if_false: VariableReference,

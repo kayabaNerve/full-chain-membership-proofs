@@ -4,14 +4,14 @@ use transcript::{Transcript, RecommendedTranscript};
 use ciphersuite::{group::ff::Field, Ciphersuite, Ristretto, Pallas, Vesta};
 
 use crate::{
-  RANGE_PROOF_BITS, BulletproofsCurve, RangeCommitment,
+  RANGE_PROOF_BITS, RangeCommitment,
   aggregate_range_proof::{AggregateRangeStatement, AggregateRangeWitness},
   tests::generators,
 };
 
-fn test_aggregate_range_proof<C: BulletproofsCurve>(runs: usize) {
+fn test_aggregate_range_proof<C: Ciphersuite>(runs: usize) {
   for m in 1 ..= runs {
-    let (g_bold, h_bold, _, _) = generators(RANGE_PROOF_BITS * m);
+    let (g, h, g_bold, h_bold, _, _) = generators(RANGE_PROOF_BITS * m);
 
     let mut commitments = vec![];
     for _ in 0 .. m {
@@ -19,9 +19,11 @@ fn test_aggregate_range_proof<C: BulletproofsCurve>(runs: usize) {
         .push(RangeCommitment::new(OsRng.next_u64(), <C as Ciphersuite>::F::random(&mut OsRng)));
     }
     let statement = AggregateRangeStatement::<C>::new(
+      g,
+      h,
       g_bold,
       h_bold,
-      commitments.iter().map(RangeCommitment::calculate).collect(),
+      commitments.iter().map(|com| com.calculate(g, h)).collect(),
     );
     let witness = AggregateRangeWitness::<C>::new(&commitments);
 

@@ -10,7 +10,7 @@ use crate::{
 
 #[test]
 fn test_arithmetic_circuit() {
-  let (g_bold1, g_bold2, h_bold1, h_bold2) = generators(128);
+  let (g, h, g_bold1, g_bold2, h_bold1, h_bold2) = generators(128);
 
   // Basic circuit for:
   // Commitmnts x, y, z, z1
@@ -82,15 +82,19 @@ fn test_arithmetic_circuit() {
   let mut transcript = RecommendedTranscript::new(b"Arithmetic Circuit Test");
 
   let mut circuit =
-    Circuit::new(g_bold1.clone(), g_bold2.clone(), h_bold1.clone(), h_bold2.clone(), true);
+    Circuit::new(g, h, g_bold1.clone(), g_bold2.clone(), h_bold1.clone(), h_bold2.clone(), true);
   gadget(
     &mut circuit,
     Some((x.clone(), y.clone(), z.clone(), z1.clone())),
-    (x.calculate(), y.calculate(), z.calculate(), z1.calculate()),
+    (x.calculate(g, h), y.calculate(g, h), z.calculate(g, h), z1.calculate(g, h)),
   );
   let proof = circuit.prove(&mut OsRng, &mut transcript.clone());
 
-  let mut circuit = Circuit::new(g_bold1, g_bold2, h_bold1, h_bold2, false);
-  gadget(&mut circuit, None, (x.calculate(), y.calculate(), z.calculate(), z1.calculate()));
+  let mut circuit = Circuit::new(g, h, g_bold1, g_bold2, h_bold1, h_bold2, false);
+  gadget(
+    &mut circuit,
+    None,
+    (x.calculate(g, h), y.calculate(g, h), z.calculate(g, h), z1.calculate(g, h)),
+  );
   circuit.verify(&mut transcript, proof);
 }

@@ -10,11 +10,13 @@ use ciphersuite::{
   Ciphersuite,
 };
 
-use crate::{BulletproofsCurve, ScalarVector, PointVector, weighted_inner_product};
+use crate::{ScalarVector, PointVector, weighted_inner_product};
 
 // Figure 1
 #[derive(Clone, Debug, Zeroize)]
 pub struct WipStatement<C: Ciphersuite> {
+  g: C::G,
+  h: C::G,
   g_bold: PointVector<C>,
   h_bold: PointVector<C>,
   P: C::G,
@@ -27,7 +29,7 @@ pub struct WipWitness<C: Ciphersuite> {
   alpha: C::F,
 }
 
-impl<C: BulletproofsCurve> WipWitness<C> {
+impl<C: Ciphersuite> WipWitness<C> {
   pub fn new(a: ScalarVector<C>, b: ScalarVector<C>, alpha: C::F) -> Self {
     assert!(!a.0.is_empty());
     assert_eq!(a.len(), b.len());
@@ -46,18 +48,18 @@ pub struct WipProof<C: Ciphersuite> {
   delta_answer: C::F,
 }
 
-impl<C: BulletproofsCurve> WipStatement<C> {
-  pub fn new(g_bold: PointVector<C>, h_bold: PointVector<C>, P: C::G) -> Self {
+impl<C: Ciphersuite> WipStatement<C> {
+  pub fn new(g: C::G, h: C::G, g_bold: PointVector<C>, h_bold: PointVector<C>, P: C::G) -> Self {
     assert!(!g_bold.0.is_empty());
     assert_eq!(g_bold.len(), h_bold.len());
 
-    Self { g_bold, h_bold, P }
+    Self { g, h, g_bold, h_bold, P }
   }
 
   fn initial_transcript<T: Transcript>(&self, transcript: &mut T) {
     transcript.domain_separate(b"weighted_inner_product");
-    transcript.append_message(b"generator", C::generator().to_bytes());
-    transcript.append_message(b"alt_generator", C::alt_generator().to_bytes());
+    transcript.append_message(b"generator", self.g.to_bytes());
+    transcript.append_message(b"alt_generator", self.h.to_bytes());
     self.g_bold.transcript(transcript, b"g_bold");
     self.h_bold.transcript(transcript, b"h_bold");
     transcript.append_message(b"P", self.P.to_bytes());
@@ -148,14 +150,14 @@ impl<C: BulletproofsCurve> WipStatement<C> {
       .zip(self.g_bold.0.iter().copied())
       .chain(witness.b.0.iter().copied().zip(self.h_bold.0.iter().copied()))
       .collect::<Vec<_>>();
-    P_terms.push((weighted_inner_product(&witness.a, &witness.b, &y_vec), C::generator()));
-    P_terms.push((witness.alpha, C::alt_generator()));
+    P_terms.push((weighted_inner_product(&witness.a, &witness.b, &y_vec), self.g));
+    P_terms.push((witness.alpha, self.h));
     assert_eq!(multiexp(&P_terms), self.P);
     P_terms.zeroize();
 
     self.initial_transcript(transcript);
 
-    let WipStatement { mut g_bold, mut h_bold, mut P } = self;
+    let WipStatement { g: _, h: _, mut g_bold, mut h_bold, mut P } = self;
     assert_eq!(g_bold.len(), h_bold.len());
 
     let mut a = witness.a.clone();
@@ -205,8 +207,8 @@ impl<C: BulletproofsCurve> WipStatement<C> {
         .zip(g_bold2.0.iter().copied())
         .chain(b2.0.iter().copied().zip(h_bold1.0.iter().copied()))
         .collect::<Vec<_>>();
-      L_terms.push((c_l, C::generator()));
-      L_terms.push((d_l, C::alt_generator()));
+      L_terms.push((c_l, self.g));
+      L_terms.push((d_l, self.h));
       let L = multiexp(&L_terms);
       L_vec.push(L);
       L_terms.zeroize();
@@ -218,8 +220,8 @@ impl<C: BulletproofsCurve> WipStatement<C> {
         .zip(g_bold1.0.iter().copied())
         .chain(b1.0.iter().copied().zip(h_bold2.0.iter().copied()))
         .collect::<Vec<_>>();
-      R_terms.push((c_r, C::generator()));
-      R_terms.push((d_r, C::alt_generator()));
+      R_terms.push((c_r, self.g));
+      R_terms.push((d_r, self.h));
       let R = multiexp(&R_terms);
       R_vec.push(R);
       R_terms.zeroize();
@@ -250,8 +252,8 @@ impl<C: BulletproofsCurve> WipStatement<C> {
         .zip(g_bold.0.iter().copied())
         .chain(b.0.iter().copied().zip(h_bold.0.iter().copied()))
         .collect::<Vec<_>>();
-      alt_P_terms.push((weighted_inner_product(&a, &b, &y_vec), C::generator()));
-      alt_P_terms.push((alpha, C::alt_generator()));
+      alt_P_terms.push((weighted_inner_product(&a, &b, &y_vec), self.g));
+      alt_P_terms.push((alpha, self.h));
       debug_assert_eq!(multiexp(&alt_P_terms), P);
       alt_P_terms.zeroize();
     }
@@ -270,16 +272,12 @@ impl<C: BulletproofsCurve> WipStatement<C> {
 
     let ry = r * y;
 
-    let mut A_terms = vec![
-      (r, g_bold[0]),
-      (s, h_bold[0]),
-      ((ry * b[0]) + (s * y * a[0]), C::generator()),
-      (delta, C::alt_generator()),
-    ];
+    let mut A_terms =
+      vec![(r, g_bold[0]), (s, h_bold[0]), ((ry * b[0]) + (s * y * a[0]), self.g), (delta, self.h)];
     let A = multiexp(&A_terms);
     A_terms.zeroize();
 
-    let mut B_terms = vec![(ry * s, C::generator()), (long_n, C::alt_generator())];
+    let mut B_terms = vec![(ry * s, self.g), (long_n, self.h)];
     let B = multiexp(&B_terms);
     B_terms.zeroize();
 
@@ -296,7 +294,7 @@ impl<C: BulletproofsCurve> WipStatement<C> {
   pub fn verify<T: Transcript>(self, transcript: &mut T, proof: WipProof<C>, y: C::F) {
     self.initial_transcript(transcript);
 
-    let WipStatement { mut g_bold, mut h_bold, mut P } = self;
+    let WipStatement { g: _, h: _, mut g_bold, mut h_bold, mut P } = self;
 
     assert!(!g_bold.0.is_empty());
     assert_eq!(g_bold.len(), h_bold.len());
@@ -341,8 +339,8 @@ impl<C: BulletproofsCurve> WipStatement<C> {
         (-e, proof.A),
         (proof.r_answer * e, g_bold[0]),
         (proof.s_answer * e, h_bold[0]),
-        (proof.r_answer * y * proof.s_answer, C::generator()),
-        (proof.delta_answer, C::alt_generator()),
+        (proof.r_answer * y * proof.s_answer, self.g),
+        (proof.delta_answer, self.h),
       ]) - proof.B)
         .is_identity()
     ));

@@ -4,19 +4,18 @@ use zeroize::{Zeroize, ZeroizeOnDrop};
 
 use transcript::Transcript;
 
-use ciphersuite::group::ff::Field;
+use ciphersuite::{group::ff::Field, Ciphersuite};
 
-#[rustfmt::skip]
-use crate::{BulletproofsCurve, ScalarVector, ScalarMatrix, PointVector, arithmetic_circuit_proof::*};
+use crate::{ScalarVector, ScalarMatrix, PointVector, arithmetic_circuit_proof::*};
 
 #[allow(non_snake_case)]
 #[derive(Clone, PartialEq, Eq, Debug, Zeroize, ZeroizeOnDrop)]
-pub struct Commitment<C: BulletproofsCurve> {
+pub struct Commitment<C: Ciphersuite> {
   pub value: C::F,
   pub mask: C::F,
 }
 
-impl<C: BulletproofsCurve> Commitment<C> {
+impl<C: Ciphersuite> Commitment<C> {
   pub fn zero() -> Self {
     Commitment { value: C::F::ZERO, mask: C::F::ZERO }
   }
@@ -30,13 +29,13 @@ impl<C: BulletproofsCurve> Commitment<C> {
   }
 
   /// Calculate a Pedersen commitment, as a point, from the transparent structure.
-  pub fn calculate(&self) -> C::G {
-    (C::generator() * self.value) + (C::alt_generator() * self.mask)
+  pub fn calculate(&self, g: C::G, h: C::G) -> C::G {
+    (g * self.value) + (h * self.mask)
   }
 }
 
 #[derive(Clone, Debug, Zeroize, ZeroizeOnDrop)]
-pub enum Variable<C: BulletproofsCurve> {
+pub enum Variable<C: Ciphersuite> {
   Constant(C::F),
   Secret(Option<C::F>),
   Committed(Option<Commitment<C>>, C::G),
@@ -55,7 +54,7 @@ pub enum ProductReference {
 pub struct CommitmentReference(usize);
 
 #[derive(Clone, Debug)]
-pub struct Constraint<C: BulletproofsCurve> {
+pub struct Constraint<C: Ciphersuite> {
   label: &'static str,
   // Each weight (C::F) is bound to a specific variable (usize) to allow post-expansion to valid
   // constraints
@@ -66,7 +65,7 @@ pub struct Constraint<C: BulletproofsCurve> {
   c: C::F,
 }
 
-impl<C: BulletproofsCurve> Constraint<C> {
+impl<C: Ciphersuite> Constraint<C> {
   pub fn new(label: &'static str) -> Self {
     Self { label, WL: vec![], WR: vec![], WO: vec![], WV: vec![], c: C::F::ZERO }
   }
@@ -100,7 +99,7 @@ impl<C: BulletproofsCurve> Constraint<C> {
   }
 }
 
-impl<C: BulletproofsCurve> Variable<C> {
+impl<C: Ciphersuite> Variable<C> {
   pub fn value(&self) -> Option<C::F> {
     match self {
       Variable::Constant(value) => Some(*value),
@@ -122,7 +121,9 @@ struct Product {
   variable: usize,
 }
 
-pub struct Circuit<C: BulletproofsCurve> {
+pub struct Circuit<C: Ciphersuite> {
+  g: C::G,
+  h: C::G,
   g_bold1: PointVector<C>,
   g_bold2: PointVector<C>,
   h_bold1: PointVector<C>,
@@ -138,8 +139,10 @@ pub struct Circuit<C: BulletproofsCurve> {
   constraints: Vec<Constraint<C>>,
 }
 
-impl<C: BulletproofsCurve> Circuit<C> {
+impl<C: Ciphersuite> Circuit<C> {
   pub fn new(
+    g: C::G,
+    h: C::G,
     g_bold1: PointVector<C>,
     g_bold2: PointVector<C>,
     h_bold1: PointVector<C>,
@@ -147,6 +150,8 @@ impl<C: BulletproofsCurve> Circuit<C> {
     prover: bool,
   ) -> Self {
     Self {
+      g,
+      h,
       g_bold1,
       g_bold2,
       h_bold1,
@@ -292,7 +297,7 @@ impl<C: BulletproofsCurve> Circuit<C> {
   ) -> CommitmentReference {
     assert_eq!(self.prover, commitment.is_some());
     if let Some(commitment) = commitment.clone() {
-      assert_eq!(commitment.calculate(), actual);
+      assert_eq!(commitment.calculate(self.g, self.h), actual);
     }
 
     let res = CommitmentReference(self.commitments);
@@ -587,7 +592,7 @@ impl<C: BulletproofsCurve> Circuit<C> {
           Variable::Secret(_) => {}
           Variable::Committed(value, actual) => {
             let value = value.as_ref().unwrap();
-            assert_eq!(value.calculate(), *actual);
+            assert_eq!(value.calculate(self.g, self.h), *actual);
             v.push(value.value);
             gamma.push(value.mask);
           }
@@ -674,6 +679,8 @@ impl<C: BulletproofsCurve> Circuit<C> {
 
     (
       ArithmeticCircuitStatement::new(
+        self.g,
+        self.h,
         self.g_bold1,
         self.g_bold2,
         self.h_bold1,

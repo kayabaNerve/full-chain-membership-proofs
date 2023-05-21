@@ -1,19 +1,21 @@
 use subtle::Choice;
 
-use ciphersuite::group::ff::{Field, PrimeField};
+use ciphersuite::{
+  group::ff::{Field, PrimeField},
+  Ciphersuite,
+};
 
 use crate::{
-  BulletproofsCurve,
   arithmetic_circuit::{VariableReference, Constraint, Circuit},
   gadgets::bit::Bit,
 };
 
-pub trait EmbeddedShortWeierstrass: BulletproofsCurve {
+pub trait EmbeddedShortWeierstrass: Ciphersuite {
   const B: u64;
 }
 
 /// Perform addition over the curve embedded into the current curve.
-pub trait EmbeddedCurveAddition: BulletproofsCurve {
+pub trait EmbeddedCurveAddition: Ciphersuite {
   /// Constrains a point to being on curve.
   fn constrain_on_curve(circuit: &mut Circuit<Self>, x: VariableReference, y: VariableReference);
 
