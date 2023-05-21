@@ -1,49 +1,53 @@
 use ciphersuite::{group::Group, Ciphersuite};
 
-use crate::pedersen_hash_vartime;
+use crate::{CurveCycle, pedersen_hash::pedersen_hash_vartime};
 
 #[derive(Clone, PartialEq, Eq, Debug)]
-enum Child<C1: Ciphersuite, C2: Ciphersuite> {
-  Leaf(C1::G),
-  Node(Node<C1, C2>),
+enum Child<C: CurveCycle> {
+  Leaf(<C::C1 as Ciphersuite>::G),
+  Node(Node<C>),
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum Hash<C1: Ciphersuite, C2: Ciphersuite> {
-  Even(C1::G),
-  Odd(C2::G),
+pub enum Hash<C: CurveCycle> {
+  Even(<C::C1 as Ciphersuite>::G),
+  Odd(<C::C2 as Ciphersuite>::G),
 }
 
 #[derive(Clone, PartialEq, Eq, Debug)]
-struct Node<C1: Ciphersuite, C2: Ciphersuite> {
-  hash: Hash<C1, C2>,
+struct Node<C: CurveCycle> {
+  hash: Hash<C>,
   dirty: bool,
-  children: Vec<Child<C1, C2>>,
+  children: Vec<Child<C>>,
 }
 
 // Structured as having all of its branches filled out, even ones not in use, yet only active
 // leaves
 // When the tree reaches capacity, it has a parent node added, growing its capacity
 #[derive(Clone, PartialEq, Eq, Debug)]
-pub struct Tree<C1: Ciphersuite, C2: Ciphersuite> {
+pub struct Tree<C: CurveCycle> {
   width: usize,
-  odd_generators: Vec<Vec<C1::G>>,
-  even_generators: Vec<Vec<C2::G>>,
+  odd_generators: Vec<Vec<<C::C1 as Ciphersuite>::G>>,
+  even_generators: Vec<Vec<<C::C2 as Ciphersuite>::G>>,
 
-  node: Node<C1, C2>,
+  node: Node<C>,
 }
 
-impl<C1: Ciphersuite, C2: Ciphersuite> Node<C1, C2> {
+impl<C: CurveCycle> Node<C> {
   fn new(even: bool) -> Self {
     Self {
-      hash: if even { Hash::Even(C1::G::identity()) } else { Hash::Odd(C2::G::identity()) },
+      hash: if even {
+        Hash::Even(<C::C1 as Ciphersuite>::G::identity())
+      } else {
+        Hash::Odd(<C::C2 as Ciphersuite>::G::identity())
+      },
       dirty: false,
       children: vec![],
     }
   }
 }
 
-fn depth<C1: Ciphersuite, C2: Ciphersuite>(node: &Node<C1, C2>) -> usize {
+fn depth<C: CurveCycle>(node: &Node<C>) -> usize {
   let children = &node.children;
   if children.is_empty() {
     return 0;
@@ -55,11 +59,11 @@ fn depth<C1: Ciphersuite, C2: Ciphersuite>(node: &Node<C1, C2>) -> usize {
   }
 }
 
-impl<C1: Ciphersuite, C2: Ciphersuite> Tree<C1, C2> {
+impl<C: CurveCycle> Tree<C> {
   pub fn new(
     width: usize,
-    odd_generators: Vec<Vec<C1::G>>,
-    even_generators: Vec<Vec<C2::G>>,
+    odd_generators: Vec<Vec<<C::C1 as Ciphersuite>::G>>,
+    even_generators: Vec<Vec<<C::C2 as Ciphersuite>::G>>,
   ) -> Self {
     assert!(width >= 2);
     for gens in &odd_generators {
@@ -75,17 +79,17 @@ impl<C1: Ciphersuite, C2: Ciphersuite> Tree<C1, C2> {
     depth(&self.node)
   }
 
-  pub fn root(&self) -> Hash<C1, C2> {
+  pub fn root(&self) -> Hash<C> {
     assert!(!self.node.dirty);
     self.node.hash
   }
 
-  pub fn add_leaves(&mut self, leaves: &[C1::G]) {
+  pub fn add_leaves(&mut self, leaves: &[<C::C1 as Ciphersuite>::G]) {
     // TODO: This is O(n). Optimize by having each branch track if it's full
-    fn add_to_node<C1: Ciphersuite, C2: Ciphersuite>(
+    fn add_to_node<C: CurveCycle>(
       width: usize,
-      node: &mut Node<C1, C2>,
-      leaf: C1::G,
+      node: &mut Node<C>,
+      leaf: <C::C1 as Ciphersuite>::G,
     ) -> bool {
       if node.children.len() < width {
         node.dirty = true;
@@ -115,10 +119,10 @@ impl<C1: Ciphersuite, C2: Ciphersuite> Tree<C1, C2> {
         let mut sibling = self.node.clone();
 
         // Reset every field in the clone, removing all leaves
-        fn clear<C1: Ciphersuite, C2: Ciphersuite>(node: &mut Node<C1, C2>) {
+        fn clear<C: CurveCycle>(node: &mut Node<C>) {
           match node.hash {
-            Hash::Even(_) => node.hash = Hash::Even(C1::G::identity()),
-            Hash::Odd(_) => node.hash = Hash::Odd(C2::G::identity()),
+            Hash::Even(_) => node.hash = Hash::Even(<C::C1 as Ciphersuite>::G::identity()),
+            Hash::Odd(_) => node.hash = Hash::Odd(<C::C2 as Ciphersuite>::G::identity()),
           }
           node.dirty = false;
 
@@ -150,9 +154,9 @@ impl<C1: Ciphersuite, C2: Ciphersuite> Tree<C1, C2> {
 
         self.node = Node {
           hash: if currently_even {
-            Hash::Odd(C2::G::identity())
+            Hash::Odd(<C::C2 as Ciphersuite>::G::identity())
           } else {
-            Hash::Even(C1::G::identity())
+            Hash::Even(<C::C1 as Ciphersuite>::G::identity())
           },
           dirty: true,
           children,
@@ -160,10 +164,10 @@ impl<C1: Ciphersuite, C2: Ciphersuite> Tree<C1, C2> {
       }
     }
 
-    fn clean<C1: Ciphersuite, C2: Ciphersuite>(
-      odd_generators: &[Vec<C1::G>],
-      even_generators: &[Vec<C2::G>],
-      node: &mut Node<C1, C2>,
+    fn clean<C: CurveCycle>(
+      odd_generators: &[Vec<<C::C1 as Ciphersuite>::G>],
+      even_generators: &[Vec<<C::C2 as Ciphersuite>::G>],
+      node: &mut Node<C>,
     ) {
       if !node.dirty {
         return;
@@ -180,23 +184,19 @@ impl<C1: Ciphersuite, C2: Ciphersuite> Tree<C1, C2> {
         }
       }
 
-      fn to_xy<C1: Ciphersuite, C2: Ciphersuite>(point: C1::G) -> (C2::F, C2::F) {
-        todo!()
-      }
-
       let mut even_elems = vec![];
       let mut odd_elems = vec![];
       for hash in child_hashes {
         match hash {
           Hash::Even(hash) => {
             assert!(matches!(node.hash, Hash::Odd(_)));
-            let (x, y) = to_xy::<C1, C2>(hash);
+            let (x, y) = C::c1_coords(hash);
             even_elems.push(x);
             even_elems.push(y);
           }
           Hash::Odd(hash) => {
             assert!(matches!(node.hash, Hash::Even(_)));
-            let (x, y) = to_xy::<C2, C1>(hash);
+            let (x, y) = C::c2_coords(hash);
             odd_elems.push(x);
             odd_elems.push(y);
           }
@@ -207,14 +207,14 @@ impl<C1: Ciphersuite, C2: Ciphersuite> Tree<C1, C2> {
       match &mut node.hash {
         Hash::Even(ref mut hash) => {
           assert!(even_elems.is_empty());
-          *hash = pedersen_hash_vartime::<C1>(
+          *hash = pedersen_hash_vartime::<C::C1>(
             &odd_elems,
             &odd_generators[(this_node_depth - 1) / 2][.. (odd_elems.len() * 2)],
           );
         }
         Hash::Odd(ref mut hash) => {
           assert!(odd_elems.is_empty());
-          *hash = pedersen_hash_vartime::<C2>(
+          *hash = pedersen_hash_vartime::<C::C2>(
             &even_elems,
             &even_generators[this_node_depth / 2][.. (even_elems.len() * 2)],
           );
