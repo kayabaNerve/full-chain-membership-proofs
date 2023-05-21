@@ -569,6 +569,9 @@ impl<C: BulletproofsCurve> Circuit<C> {
       self.remove_empty_constraints();
 
       // TODO: Remove duplicate contraints
+
+      // TODO: For a = (x * y) + z, where the x y product only has value to the calculation of a,
+      // generate a single constraint for the legitimacy of a
     }
 
     let witness = if self.prover {

@@ -216,9 +216,6 @@ impl<C: EmbeddedShortWeierstrass> EmbeddedCurveAddition for C {
   }
 
   // TODO: Use a table to improve the performance of this
-  // A half MB table, 32 windows, 8-bits each, with 8192 entries would reduce constraints by ~6x
-  // That does require add_constant to not itself generate constraints
-  // Until then, a much more conservative 4-bit window would still offer ~4x benefits
   fn scalar_mul_generator(
     circuit: &mut Circuit<Self>,
     start_x: VariableReference,
