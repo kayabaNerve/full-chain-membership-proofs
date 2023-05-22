@@ -1,4 +1,9 @@
-use ciphersuite::{group::Group, Ciphersuite};
+use std::collections::HashMap;
+
+use ciphersuite::{
+  group::{Group, GroupEncoding},
+  Ciphersuite,
+};
 
 use crate::{CurveCycle, pedersen_hash::pedersen_hash_vartime};
 
@@ -32,6 +37,11 @@ pub struct Tree<C: CurveCycle> {
   even_generators: Vec<Vec<<C::C1 as Ciphersuite>::G>>,
 
   node: Node<C>,
+
+  // Map of leaf to path, where path is:
+  // 1) Short. All missing path elements (due to tree growth) are implicitly the left-most.
+  // 2) Only to the bottom branch, not to the leaf on the bottom branch.
+  paths: HashMap<Vec<u8>, Vec<Vec<usize>>>,
 }
 
 impl<C: CurveCycle> Node<C> {
@@ -98,7 +108,7 @@ impl<C: CurveCycle> Tree<C> {
       }
     }
 
-    Tree { width, odd_generators, even_generators, node: Node::new(false) }
+    Tree { width, odd_generators, even_generators, node: Node::new(false), paths: HashMap::new() }
   }
 
   pub fn depth(&self) -> usize {
@@ -131,9 +141,9 @@ impl<C: CurveCycle> Tree<C> {
       width: usize,
       node: &mut Node<C>,
       leaf: <C::C1 as Ciphersuite>::G,
-    ) -> (bool, bool) {
+    ) -> (bool, Option<Vec<usize>>) {
       if node.full {
-        return (true, false);
+        return (true, None);
       }
 
       // If this node has room, add it
@@ -141,31 +151,32 @@ impl<C: CurveCycle> Tree<C> {
         node.dirty = true;
         node.children.push(Child::Leaf(leaf));
         node.full = node.children.len() == width;
-        return (node.full, true);
+        return (node.full, Some(vec![]));
       }
 
       for (c, child) in node.children.iter_mut().enumerate() {
         match child {
           Child::Leaf(_) => panic!("full leaf wasn't flagged as full"),
           Child::Node(ref mut child) => {
-            let (full_child, success) = add_to_node(width, child, leaf);
-            if success {
+            let (full_child, path) = add_to_node(width, child, leaf);
+            if let Some(mut path) = path {
               if full_child {
                 node.full = c == (width - 1);
               }
               node.dirty = true;
-              return (node.full, true);
+              path.push(c);
+              return (node.full, Some(path));
             }
           }
         }
       }
 
-      (node.full, false)
+      (node.full, None)
     }
 
     for leaf in leaves {
-      let (full, success) = add_to_node(self.width, &mut self.node, *leaf);
-      if !success {
+      let (full, mut path) = add_to_node(self.width, &mut self.node, *leaf);
+      if path.is_none() {
         assert!(full);
 
         // Clone the current tree for its structure
@@ -204,7 +215,10 @@ impl<C: CurveCycle> Tree<C> {
         match children[1] {
           Child::Leaf(_) => panic!("leaf on newly grown tree's top node"),
           Child::Node(ref mut next) => {
-            assert_eq!(add_to_node(self.width, next, *leaf), (false, true));
+            let (full, mut new_path) = add_to_node(self.width, next, *leaf);
+            assert!(!full);
+            new_path.as_mut().unwrap().push(1);
+            path = new_path;
           }
         }
 
@@ -219,6 +233,8 @@ impl<C: CurveCycle> Tree<C> {
           children,
         };
       }
+
+      self.paths.entry(leaf.to_bytes().as_ref().to_vec()).or_insert(vec![]).push(path.unwrap());
     }
 
     fn clean<C: CurveCycle>(
@@ -285,5 +301,66 @@ impl<C: CurveCycle> Tree<C> {
       node.dirty = false;
     }
     clean(&self.odd_generators, &self.even_generators, &mut self.node);
+  }
+
+  // Return the complimentary preimages for the specified leaf.
+  pub fn membership(&self, leaf: <C::C1 as Ciphersuite>::G) -> Option<Vec<Vec<Vec<Hash<C>>>>> {
+    self.paths.get(leaf.to_bytes().as_ref()).cloned().map(|paths| {
+      let mut res = vec![];
+      for mut path in paths {
+        // The path length should be the depth - 1
+        // If the tree has since grown, the path will be short, yet the missing elements will
+        // always be the left-most ones
+        while path.len() < (self.depth() - 1) {
+          path.push(0);
+        }
+
+        let mut these_preimages = vec![];
+        let mut curr = &self.node;
+        while let Some(child) = path.pop() {
+          // Get the hashes of all children for this node
+          let mut preimages = vec![];
+          for child in &curr.children {
+            match child {
+              Child::Leaf(_) => panic!("path has elements yet no further children exist"),
+              Child::Node(node) => preimages.push(node.hash),
+            }
+          }
+
+          // Update curr
+          curr = match &curr.children[child] {
+            Child::Leaf(_) => unreachable!(),
+            Child::Node(node) => node,
+          };
+
+          these_preimages.push(preimages);
+        }
+
+        let mut preimages = vec![];
+        for child in &curr.children {
+          match child {
+            Child::Leaf(leaf) => preimages.push(Hash::Even(*leaf)),
+            Child::Node(_) => panic!("path is out of elements yet node has further children"),
+          }
+        }
+
+        {
+          let mut found = false;
+          for preimage in &preimages {
+            if *preimage == Hash::Even(leaf) {
+              found = true;
+              break;
+            }
+          }
+          assert!(found);
+        }
+
+        these_preimages.push(preimages);
+
+        these_preimages.reverse();
+        res.push(these_preimages);
+      }
+      res
+    })
   }
 }

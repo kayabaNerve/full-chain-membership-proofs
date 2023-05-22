@@ -9,6 +9,60 @@ use crate::{
   pedersen_hash::pedersen_hash_vartime,
 };
 
+fn check_path(tree: &Tree<Pasta>, leaf: <<Pasta as CurveCycle>::C1 as Ciphersuite>::G) {
+  let mut path = tree.membership(leaf).unwrap();
+  assert_eq!(path.len(), 1);
+  let path = path.swap_remove(0);
+
+  let mut depth = 1;
+  let mut curr = Hash::Even(leaf);
+  for preimages in path {
+    {
+      let mut found = false;
+      for preimage in &preimages {
+        if *preimage == curr {
+          found = true;
+          break;
+        }
+      }
+      assert!(found);
+    }
+
+    let mut even = vec![];
+    let mut odd = vec![];
+    for preimage in preimages {
+      match preimage {
+        Hash::Even(hash) => {
+          let (x, y) = Pasta::c1_coords(hash);
+          even.push(x);
+          even.push(y);
+        }
+        Hash::Odd(hash) => {
+          let (x, y) = Pasta::c2_coords(hash);
+          odd.push(x);
+          odd.push(y);
+        }
+      }
+    }
+    assert!(even.is_empty() ^ odd.is_empty());
+
+    if !even.is_empty() {
+      curr = Hash::Odd(pedersen_hash_vartime::<<Pasta as CurveCycle>::C2>(
+        &even,
+        &tree.odd_generators(depth).unwrap()[.. even.len()],
+      ));
+    } else {
+      curr = Hash::Even(pedersen_hash_vartime::<<Pasta as CurveCycle>::C1>(
+        &odd,
+        &tree.even_generators(depth).unwrap()[.. odd.len()],
+      ));
+    }
+    depth += 1;
+  }
+
+  assert_eq!(curr, tree.root());
+}
+
 #[test]
 fn test_tree() {
   for width in 2 ..= 4usize {
@@ -43,7 +97,8 @@ fn test_tree() {
     }
 
     for i in 0 .. max {
-      tree.add_leaves(&[items[usize::try_from(i).unwrap()]]);
+      let new_leaf = items[usize::try_from(i).unwrap()];
+      tree.add_leaves(&[new_leaf]);
 
       let i = i + 1;
       let mut pow = 1;
@@ -108,6 +163,12 @@ fn test_tree() {
       }
       assert!(even.is_empty());
       assert!(odd.is_empty());
+
+      check_path(&tree, new_leaf);
+    }
+
+    for leaf in items {
+      check_path(&tree, leaf);
     }
   }
 }
