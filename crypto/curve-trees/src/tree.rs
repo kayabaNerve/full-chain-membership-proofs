@@ -27,8 +27,8 @@ struct Node<C: CurveCycle> {
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct Tree<C: CurveCycle> {
   width: usize,
-  odd_generators: Vec<Vec<<C::C1 as Ciphersuite>::G>>,
-  even_generators: Vec<Vec<<C::C2 as Ciphersuite>::G>>,
+  odd_generators: Vec<Vec<<C::C2 as Ciphersuite>::G>>,
+  even_generators: Vec<Vec<<C::C1 as Ciphersuite>::G>>,
 
   node: Node<C>,
 }
@@ -60,18 +60,42 @@ fn depth<C: CurveCycle>(node: &Node<C>) -> usize {
 }
 
 impl<C: CurveCycle> Tree<C> {
-  pub fn new(
-    width: usize,
-    odd_generators: Vec<Vec<<C::C1 as Ciphersuite>::G>>,
-    even_generators: Vec<Vec<<C::C2 as Ciphersuite>::G>>,
-  ) -> Self {
+  pub fn new(width: usize, max_size: u64) -> Self {
     assert!(width >= 2);
-    for gens in &odd_generators {
-      assert_eq!(gens.len(), width * 2);
+
+    let width_u64 = u64::try_from(width).unwrap();
+    let mut pow = 1;
+    while width_u64.pow(pow) < max_size {
+      pow += 1;
     }
-    for gens in &even_generators {
-      assert_eq!(gens.len(), width * 2);
+
+    // pow now represents the amount of layers we need generators for
+    // TODO: Table these?
+    let mut odd_generators = vec![];
+    let mut even_generators = vec![];
+    for l in 1 ..= pow {
+      let l_bytes = l.to_le_bytes();
+      if (l % 2) == 1 {
+        let mut next_gens = vec![];
+        for i in 0 .. (width_u64 * 2) {
+          next_gens.push(C::c2_hash_to_curve(
+            "Curve Tree, Odd Generator",
+            &[l_bytes.as_ref(), i.to_le_bytes().as_ref()].concat(),
+          ));
+        }
+        odd_generators.push(next_gens);
+      } else {
+        let mut next_gens = vec![];
+        for i in 0 .. (width_u64 * 2) {
+          next_gens.push(C::c1_hash_to_curve(
+            "Curve Tree, Even Generator",
+            &[l_bytes.as_ref(), i.to_le_bytes().as_ref()].concat(),
+          ));
+        }
+        even_generators.push(next_gens);
+      }
     }
+
     Tree { width, odd_generators, even_generators, node: Node::new(false) }
   }
 
@@ -82,6 +106,22 @@ impl<C: CurveCycle> Tree<C> {
   pub fn root(&self) -> Hash<C> {
     assert!(!self.node.dirty);
     self.node.hash
+  }
+
+  pub fn even_generators(&self, layer: usize) -> Option<&[<C::C1 as Ciphersuite>::G]> {
+    if (layer % 2) != 0 {
+      return None;
+    }
+    if layer < 2 {
+      return None;
+    }
+    self.even_generators.get((layer - 2) / 2).map(AsRef::as_ref)
+  }
+  pub fn odd_generators(&self, layer: usize) -> Option<&[<C::C2 as Ciphersuite>::G]> {
+    if (layer % 2) != 1 {
+      return None;
+    }
+    self.odd_generators.get(layer / 2).map(AsRef::as_ref)
   }
 
   pub fn add_leaves(&mut self, leaves: &[<C::C1 as Ciphersuite>::G]) {
@@ -149,7 +189,10 @@ impl<C: CurveCycle> Tree<C> {
         children.insert(0, Child::Node(self.node.clone()));
         match children[1] {
           Child::Leaf(_) => panic!("leaf on newly grown tree's top node"),
-          Child::Node(ref mut next) => assert!(add_to_node(self.width, next, *leaf)),
+          Child::Node(ref mut next) => {
+            assert!(add_to_node(self.width, next, *leaf));
+            next.dirty = true;
+          }
         }
 
         self.node = Node {
@@ -163,10 +206,11 @@ impl<C: CurveCycle> Tree<C> {
         };
       }
     }
+    self.node.dirty = true;
 
     fn clean<C: CurveCycle>(
-      odd_generators: &[Vec<<C::C1 as Ciphersuite>::G>],
-      even_generators: &[Vec<<C::C2 as Ciphersuite>::G>],
+      odd_generators: &[Vec<<C::C2 as Ciphersuite>::G>],
+      even_generators: &[Vec<<C::C1 as Ciphersuite>::G>],
       node: &mut Node<C>,
     ) {
       if !node.dirty {
@@ -190,6 +234,7 @@ impl<C: CurveCycle> Tree<C> {
         match hash {
           Hash::Even(hash) => {
             assert!(matches!(node.hash, Hash::Odd(_)));
+            // TODO: The curve trees paper describes a single coordinate optimization
             let (x, y) = C::c1_coords(hash);
             even_elems.push(x);
             even_elems.push(y);
@@ -207,16 +252,20 @@ impl<C: CurveCycle> Tree<C> {
       match &mut node.hash {
         Hash::Even(ref mut hash) => {
           assert!(even_elems.is_empty());
+          assert_eq!(this_node_depth % 2, 0);
           *hash = pedersen_hash_vartime::<C::C1>(
             &odd_elems,
-            &odd_generators[(this_node_depth - 1) / 2][.. (odd_elems.len() * 2)],
+            // Even generators are 2, 4, 6
+            &even_generators[(this_node_depth - 2) / 2][.. odd_elems.len()],
           );
         }
         Hash::Odd(ref mut hash) => {
           assert!(odd_elems.is_empty());
+          assert_eq!(this_node_depth % 2, 1);
           *hash = pedersen_hash_vartime::<C::C2>(
             &even_elems,
-            &even_generators[this_node_depth / 2][.. (even_elems.len() * 2)],
+            // Truncating division
+            &odd_generators[this_node_depth / 2][.. even_elems.len()],
           );
         }
       }
