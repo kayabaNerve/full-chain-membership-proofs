@@ -8,7 +8,7 @@ pub mod tree;
 #[cfg(test)]
 pub mod tests;
 
-pub trait CurveCycle: Clone + Copy + PartialEq + Eq {
+pub trait CurveCycle: Clone + Copy + PartialEq + Eq + core::fmt::Debug {
   type C1: Ciphersuite;
   type C2: Ciphersuite;
 

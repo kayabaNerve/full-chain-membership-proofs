@@ -17,6 +17,7 @@ pub enum Hash<C: CurveCycle> {
 #[derive(Clone, PartialEq, Eq, Debug)]
 struct Node<C: CurveCycle> {
   hash: Hash<C>,
+  full: bool,
   dirty: bool,
   children: Vec<Child<C>>,
 }
@@ -41,6 +42,7 @@ impl<C: CurveCycle> Node<C> {
       } else {
         Hash::Odd(<C::C2 as Ciphersuite>::G::identity())
       },
+      full: false,
       dirty: false,
       children: vec![],
     }
@@ -125,36 +127,47 @@ impl<C: CurveCycle> Tree<C> {
   }
 
   pub fn add_leaves(&mut self, leaves: &[<C::C1 as Ciphersuite>::G]) {
-    // TODO: This is O(n). Optimize by having each branch track if it's full
     fn add_to_node<C: CurveCycle>(
       width: usize,
       node: &mut Node<C>,
       leaf: <C::C1 as Ciphersuite>::G,
-    ) -> bool {
+    ) -> (bool, bool) {
+      if node.full {
+        return (true, false);
+      }
+
+      // If this node has room, add it
       if node.children.len() < width {
         node.dirty = true;
         node.children.push(Child::Leaf(leaf));
-        return true;
+        node.full = node.children.len() == width;
+        return (node.full, true);
       }
 
-      for child in node.children.iter_mut() {
+      for (c, child) in node.children.iter_mut().enumerate() {
         match child {
-          // No room left on this branch
-          Child::Leaf(_) => return false,
-          Child::Node(ref mut node) => {
-            if add_to_node(width, node, leaf) {
+          Child::Leaf(_) => panic!("full leaf wasn't flagged as full"),
+          Child::Node(ref mut child) => {
+            let (full_child, success) = add_to_node(width, child, leaf);
+            if success {
+              if full_child {
+                node.full = c == (width - 1);
+              }
               node.dirty = true;
-              return true;
+              return (node.full, true);
             }
           }
         }
       }
 
-      false
+      (node.full, false)
     }
 
     for leaf in leaves {
-      if !add_to_node(self.width, &mut self.node, *leaf) {
+      let (full, success) = add_to_node(self.width, &mut self.node, *leaf);
+      if !success {
+        assert!(full);
+
         // Clone the current tree for its structure
         let mut sibling = self.node.clone();
 
@@ -164,6 +177,7 @@ impl<C: CurveCycle> Tree<C> {
             Hash::Even(_) => node.hash = Hash::Even(<C::C1 as Ciphersuite>::G::identity()),
             Hash::Odd(_) => node.hash = Hash::Odd(<C::C2 as Ciphersuite>::G::identity()),
           }
+          node.full = false;
           node.dirty = false;
 
           match &node.children[0] {
@@ -190,8 +204,7 @@ impl<C: CurveCycle> Tree<C> {
         match children[1] {
           Child::Leaf(_) => panic!("leaf on newly grown tree's top node"),
           Child::Node(ref mut next) => {
-            assert!(add_to_node(self.width, next, *leaf));
-            next.dirty = true;
+            assert_eq!(add_to_node(self.width, next, *leaf), (false, true));
           }
         }
 
@@ -201,12 +214,12 @@ impl<C: CurveCycle> Tree<C> {
           } else {
             Hash::Even(<C::C1 as Ciphersuite>::G::identity())
           },
+          full: false,
           dirty: true,
           children,
         };
       }
     }
-    self.node.dirty = true;
 
     fn clean<C: CurveCycle>(
       odd_generators: &[Vec<<C::C2 as Ciphersuite>::G>],
