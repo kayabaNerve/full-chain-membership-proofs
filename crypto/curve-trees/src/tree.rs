@@ -41,7 +41,7 @@ pub struct Tree<C: CurveCycle> {
   // Map of leaf to path, where path is:
   // 1) Short. All missing path elements (due to tree growth) are implicitly the left-most.
   // 2) Only to the bottom branch, not to the leaf on the bottom branch.
-  paths: HashMap<Vec<u8>, Vec<Vec<usize>>>,
+  paths: HashMap<Vec<u8>, Vec<usize>>,
 }
 
 impl<C: CurveCycle> Node<C> {
@@ -175,6 +175,13 @@ impl<C: CurveCycle> Tree<C> {
     }
 
     for leaf in leaves {
+      // Only allow leaves to be added once
+      // While leaves may legitimately appear multiple times, any one insertion allows proving
+      // membership
+      if self.paths.contains_key(leaf.to_bytes().as_ref()) {
+        continue;
+      }
+
       let (full, mut path) = add_to_node(self.width, &mut self.node, *leaf);
       if path.is_none() {
         assert!(full);
@@ -234,7 +241,7 @@ impl<C: CurveCycle> Tree<C> {
         };
       }
 
-      self.paths.entry(leaf.to_bytes().as_ref().to_vec()).or_insert(vec![]).push(path.unwrap());
+      self.paths.insert(leaf.to_bytes().as_ref().to_vec(), path.unwrap());
     }
 
     fn clean<C: CurveCycle>(
@@ -304,63 +311,59 @@ impl<C: CurveCycle> Tree<C> {
   }
 
   // Return the complimentary preimages for the specified leaf.
-  pub fn membership(&self, leaf: <C::C1 as Ciphersuite>::G) -> Option<Vec<Vec<Vec<Hash<C>>>>> {
-    self.paths.get(leaf.to_bytes().as_ref()).cloned().map(|paths| {
-      let mut res = vec![];
-      for mut path in paths {
-        // The path length should be the depth - 1
-        // If the tree has since grown, the path will be short, yet the missing elements will
-        // always be the left-most ones
-        while path.len() < (self.depth() - 1) {
-          path.push(0);
+  pub fn membership(&self, leaf: <C::C1 as Ciphersuite>::G) -> Option<Vec<Vec<Hash<C>>>> {
+    let mut path = self.paths.get(leaf.to_bytes().as_ref()).cloned()?;
+
+    // The path length should be the depth - 1
+    // If the tree has since grown, the path will be short, yet the missing elements will
+    // always be the left-most ones
+    while path.len() < (self.depth() - 1) {
+      path.push(0);
+    }
+
+    let mut res = vec![];
+    let mut curr = &self.node;
+    while let Some(child) = path.pop() {
+      // Get the hashes of all children for this node
+      let mut preimages = vec![];
+      for child in &curr.children {
+        match child {
+          Child::Leaf(_) => panic!("path has elements yet no further children exist"),
+          Child::Node(node) => preimages.push(node.hash),
         }
-
-        let mut these_preimages = vec![];
-        let mut curr = &self.node;
-        while let Some(child) = path.pop() {
-          // Get the hashes of all children for this node
-          let mut preimages = vec![];
-          for child in &curr.children {
-            match child {
-              Child::Leaf(_) => panic!("path has elements yet no further children exist"),
-              Child::Node(node) => preimages.push(node.hash),
-            }
-          }
-
-          // Update curr
-          curr = match &curr.children[child] {
-            Child::Leaf(_) => unreachable!(),
-            Child::Node(node) => node,
-          };
-
-          these_preimages.push(preimages);
-        }
-
-        let mut preimages = vec![];
-        for child in &curr.children {
-          match child {
-            Child::Leaf(leaf) => preimages.push(Hash::Even(*leaf)),
-            Child::Node(_) => panic!("path is out of elements yet node has further children"),
-          }
-        }
-
-        {
-          let mut found = false;
-          for preimage in &preimages {
-            if *preimage == Hash::Even(leaf) {
-              found = true;
-              break;
-            }
-          }
-          assert!(found);
-        }
-
-        these_preimages.push(preimages);
-
-        these_preimages.reverse();
-        res.push(these_preimages);
       }
-      res
-    })
+
+      // Update curr
+      curr = match &curr.children[child] {
+        Child::Leaf(_) => unreachable!(),
+        Child::Node(node) => node,
+      };
+
+      res.push(preimages);
+    }
+
+    let mut preimages = vec![];
+    for child in &curr.children {
+      match child {
+        Child::Leaf(leaf) => preimages.push(Hash::Even(*leaf)),
+        Child::Node(_) => panic!("path is out of elements yet node has further children"),
+      }
+    }
+
+    {
+      let mut found = false;
+      for preimage in &preimages {
+        if *preimage == Hash::Even(leaf) {
+          found = true;
+          break;
+        }
+      }
+      assert!(found);
+    }
+
+    res.push(preimages);
+
+    res.reverse();
+    Some(res)
   }
 }

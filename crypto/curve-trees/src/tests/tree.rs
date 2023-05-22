@@ -10,9 +10,7 @@ use crate::{
 };
 
 fn check_path(tree: &Tree<Pasta>, leaf: <<Pasta as CurveCycle>::C1 as Ciphersuite>::G) {
-  let mut path = tree.membership(leaf).unwrap();
-  assert_eq!(path.len(), 1);
-  let path = path.swap_remove(0);
+  let path = tree.membership(leaf).unwrap();
 
   let mut depth = 1;
   let mut curr = Hash::Even(leaf);
