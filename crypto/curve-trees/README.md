@@ -19,6 +19,9 @@ modifications.
      two, and doesn't archive no longer needed left hand nodes.
   3) A pop algorithm, so reorgs can be successfully handled.
 
+- This library uses asserts instead of `Result`. It also has extraneous asserts
+  which should be moved to debug.
+
 ## Notes
 
 - The paper describes Pedersen hashes as native to Bulletproofs. While they are,

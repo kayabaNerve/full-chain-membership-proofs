@@ -35,3 +35,6 @@ One of the noted optimizations is to compile-once, instead of compiling per
 instance. If the constraints are largely hand-written, these post-processing
 passes (and their complexity) can be removed. This decision will need to be made
 when the rest of the library is sufficiently optimized to enable evaluation.
+
+This library uses asserts instead of `Result`. It also has extraneous asserts
+which should be moved to debug.

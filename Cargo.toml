@@ -8,7 +8,6 @@ members = [
   "crypto/ff-group-tests",
   "crypto/dalek-ff-group",
   "crypto/ed448",
-  "crypto/tevone",
   "crypto/ciphersuite",
 
   "crypto/multiexp",
@@ -18,6 +17,8 @@ members = [
   "crypto/dkg",
   "crypto/frost",
 
+  "crypto/tevone",
+  "crypto/copz-dleq",
   "crypto/bulletproofs-plus",
   "crypto/curve-trees",
 

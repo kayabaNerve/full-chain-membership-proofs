@@ -2,6 +2,8 @@
 
 use zeroize::{Zeroize, ZeroizeOnDrop};
 
+use rand_core::{RngCore, CryptoRng};
+
 use ciphersuite::{group::ff::Field, Ciphersuite};
 
 mod scalar_vector;
@@ -38,6 +40,10 @@ impl<C: Ciphersuite> RangeCommitment<C> {
 
   pub fn new(value: u64, mask: C::F) -> Self {
     RangeCommitment { value, mask }
+  }
+
+  pub fn masking<R: RngCore + CryptoRng>(rng: &mut R, value: u64) -> Self {
+    RangeCommitment { value, mask: C::F::random(rng) }
   }
 
   /// Calculate a Pedersen commitment, as a point, from the transparent structure.

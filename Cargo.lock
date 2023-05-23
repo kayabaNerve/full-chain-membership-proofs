@@ -248,6 +248,20 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "13418e745008f7349ec7e449155f419a61b92b58a99cc3616942b926825ec76b"
 
 [[package]]
+name = "copz-dleq"
+version = "0.1.0"
+dependencies = [
+ "bulletproofs-plus",
+ "ciphersuite",
+ "crypto-bigint",
+ "flexible-transcript",
+ "multiexp",
+ "rand_core 0.6.4",
+ "subtle",
+ "zeroize",
+]
+
+[[package]]
 name = "core-foundation"
 version = "0.9.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"

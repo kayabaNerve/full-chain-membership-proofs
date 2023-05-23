@@ -1,0 +1,35 @@
+[package]
+name = "copz-dleq"
+version = "0.1.0"
+description = "COPZ's DLEq Proof"
+license = "MIT"
+repository = "https://github.com/kayabaNerve/serai/tree/snarks/crypto/copz-dleq"
+authors = ["Luke Parker <lukeparker5132@gmail.com>"]
+keywords = ["ciphersuite", "ff", "group"]
+edition = "2021"
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
+
+[dependencies]
+rand_core = { version = "0.6", default-features = false }
+
+zeroize = { version = "^1.5", default-features = false, features = ["zeroize_derive"] }
+subtle = { version = "^2.4", default-features = false }
+
+transcript = { package = "flexible-transcript", path = "../transcript", version = "0.3" }
+
+crypto-bigint = { version = "0.5", default-features = false, features = ["zeroize", "rand_core"] }
+
+multiexp = { path = "../multiexp", default-features = false }
+ciphersuite = { path = "../ciphersuite", default-features = false }
+
+bulletproofs-plus = { path = "../bulletproofs-plus", default-features = false }
+
+[dev-dependencies]
+rand_core = { version = "0.6", features = ["getrandom"] }
+
+transcript = { package = "flexible-transcript", path = "../transcript", features = ["recommended"] }
+
+ciphersuite = { path = "../ciphersuite", features = ["secp256k1", "ristretto"] }
