@@ -1,19 +1,8 @@
 use zeroize::Zeroize;
 
-use rand_core::{RngCore, CryptoRng};
-
-use transcript::Transcript;
-
 use multiexp::{multiexp, multiexp_vartime};
-use ciphersuite::{
-  group::{ff::Field, Group, GroupEncoding},
-  Ciphersuite,
-};
 
-use bulletproofs_plus::{
-  ScalarVector, PointVector,
-  weighted_inner_product::{WipStatement, WipWitness, WipProof},
-};
+use ciphersuite::Ciphersuite;
 
 pub fn pedersen_hash<C: Ciphersuite>(words: &[C::F], generators: &[C::G]) -> C::G {
   assert_eq!(words.len(), generators.len());
@@ -30,6 +19,39 @@ pub fn pedersen_hash_vartime<C: Ciphersuite>(words: &[C::F], generators: &[C::G]
   terms.zeroize();
   res
 }
+
+// The following code is an application of the BP+ WIP to prove knowledge of a preimage for a
+// blinded Pedersen hash. Its safety, given using identity for G, is questionable at best, yet
+// assumed unsafe.
+//
+// A less questionable proof would set G to another generator, and then provide xG with a DLog PoK.
+// xG, if honest, would provide the Pedersen hash. Else, it'd provide the Pedersen hash with some
+// G component with a known discrete log. This is likely fine in most applications, certainly here,
+// yet may not be.
+//
+// An accurate proof would set b = 0, and do two proofs with distinct Hi and G variables. Only if
+// the Pedersen hash is well formed will both proofs prove for the same inner product.
+//
+// This been commmented for use of the "Generalized Bulletproof" scheme. If that does not work out,
+// this, modified to one of the schemes above as necessary, can be used as a fallback.
+
+/*
+use zeroize::Zeroize;
+
+use rand_core::{RngCore, CryptoRng};
+
+use transcript::Transcript;
+
+use multiexp::{multiexp, multiexp_vartime};
+use ciphersuite::{
+  group::{ff::Field, Group, GroupEncoding},
+  Ciphersuite,
+};
+
+use bulletproofs_plus::{
+  ScalarVector, PointVector,
+  weighted_inner_product::{WipStatement, WipWitness, WipProof},
+};
 
 /// Proves there's a known preimage for a blinded Pedersen hash.
 #[derive(Clone, PartialEq, Eq, Debug)]
@@ -94,3 +116,4 @@ impl<C: Ciphersuite> PedersenHashStatement<C> {
       .verify(transcript, proof.0, y);
   }
 }
+*/
