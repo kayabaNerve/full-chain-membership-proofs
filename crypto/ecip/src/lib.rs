@@ -438,8 +438,14 @@ impl<C: Ecip> Divisor<C> {
       let (b, b_div) = div;
 
       let c = Self::initial(a, b);
-      let part = a_div.add(&b_div, &modulus).add(&c, &modulus).sub(&Self::initial(a, -a), &modulus);
-      res = (a + b, part.sub(&Self::initial(b, -b), &modulus));
+      res = (
+        a + b,
+        a_div
+          .add(&b_div, &modulus)
+          .add(&c, &modulus)
+          .sub(&Self::initial(a, -a), &modulus)
+          .sub(&Self::initial(b, -b), &modulus),
+      );
     }
 
     let Divisor { numerator, denominator } = res.1;

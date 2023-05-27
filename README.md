@@ -1,6 +1,6 @@
 # Curve Trees
 
-This branch hots a curve trees proof of concept, built with the explicit goal
+This branch hosts a curve trees proof of concept, built with the explicit goal
 of being transformed into an deployable library.
 
 The crypto libraries are largely copied from Serai. Unique to this effort are:
