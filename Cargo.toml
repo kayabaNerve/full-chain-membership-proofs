@@ -19,6 +19,7 @@ members = [
 
   "crypto/tevone",
   "crypto/copz-dleq",
+  "crypto/ecip",
   "crypto/bulletproofs-plus",
   "crypto/curve-trees",
 

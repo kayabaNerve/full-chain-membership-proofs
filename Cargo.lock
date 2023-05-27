@@ -464,6 +464,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "ecip"
+version = "0.1.0"
+dependencies = [
+ "ciphersuite",
+ "flexible-transcript",
+ "multiexp",
+ "pasta_curves 0.5.1 (git+https://github.com/kayabaNerve/pasta_curves.git)",
+ "rand_core 0.6.4",
+ "subtle",
+ "zeroize",
+]
+
+[[package]]
 name = "either"
 version = "1.8.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
