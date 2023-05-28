@@ -18,6 +18,9 @@ pub trait Ecip: Ciphersuite {
   const B: u64;
 
   fn to_xy(point: Self::G) -> (Self::FieldElement, Self::FieldElement);
+  /// Panics if off-curve.
+  // This isn't used in-lib, yet is helpful to users
+  fn from_xy(x: Self::FieldElement, y: Self::FieldElement) -> Self::G;
 }
 
 #[derive(Clone, PartialEq, Eq, Debug)]
@@ -462,11 +465,11 @@ impl<C: Ecip> Divisor<C> {
   }
 }
 
-#[cfg(feature = "pasta")]
+#[cfg(any(test, feature = "pasta"))]
 mod pasta {
   use pasta_curves::arithmetic::{Coordinates, CurveAffine};
   use ciphersuite::{
-    group::{ff::Field, Group, Curve},
+    group::{ff::Field, Curve},
     Ciphersuite, Pallas, Vesta,
   };
 
@@ -477,6 +480,10 @@ mod pasta {
 
     const A: u64 = 0;
     const B: u64 = 5;
+
+    fn from_xy(x: Self::FieldElement, y: Self::FieldElement) -> Self::G {
+      pasta_curves::pallas::Affine::from_xy(x, y).unwrap().into()
+    }
 
     fn to_xy(
       point: <Pallas as Ciphersuite>::G,
@@ -492,6 +499,10 @@ mod pasta {
 
     const A: u64 = 0;
     const B: u64 = 5;
+
+    fn from_xy(x: Self::FieldElement, y: Self::FieldElement) -> Self::G {
+      pasta_curves::vesta::Affine::from_xy(x, y).unwrap().into()
+    }
 
     fn to_xy(
       point: <Vesta as Ciphersuite>::G,

@@ -1,28 +1,11 @@
 use rand_core::OsRng;
 
-use pasta_curves::arithmetic::{Coordinates, CurveAffine};
 use ciphersuite::{
-  group::{ff::Field, Group, Curve},
+  group::{ff::Field, Group},
   Ciphersuite, Pallas, Vesta,
 };
 
 use crate::{Ecip, Poly, Divisor};
-
-#[cfg(not(feature = "pasta"))]
-impl Ecip for Pallas {
-  type FieldElement = <Vesta as Ciphersuite>::F;
-
-  const A: u64 = 0;
-  const B: u64 = 5;
-
-  fn to_xy(
-    point: <Pallas as Ciphersuite>::G,
-  ) -> (<Vesta as Ciphersuite>::F, <Vesta as Ciphersuite>::F) {
-    Option::<Coordinates<_>>::from(point.to_affine().coordinates())
-      .map(|coords| (*coords.x(), *coords.y()))
-      .unwrap_or((<Vesta as Ciphersuite>::F::ZERO, <Vesta as Ciphersuite>::F::ZERO))
-  }
-}
 
 #[test]
 fn test_poly() {
