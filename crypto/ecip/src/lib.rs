@@ -353,11 +353,10 @@ pub struct Divisor<C: Ecip> {
 }
 
 impl<C: Ecip> Divisor<C> {
-  fn initial(a: C::G, b: C::G) -> Self {
-    // TODO: Following edge cases
-    assert!(a != C::G::identity());
-    assert!(b != C::G::identity());
-    assert!(a != b);
+  fn initial(a: C::G, mut b: C::G) -> Self {
+    if a == b {
+      b = -a.double();
+    }
 
     let (ax, ay) = C::to_xy(a);
     let (bx, by) = C::to_xy(b);
@@ -417,6 +416,10 @@ impl<C: Ecip> Divisor<C> {
     let mut iter = points.iter().copied();
     while let Some(a) = iter.next() {
       let b = iter.next().unwrap();
+
+      assert!(a != C::G::identity());
+      assert!(b != C::G::identity());
+
       divs.push((a + b, Self::initial(a, b)));
     }
 
@@ -456,5 +459,46 @@ impl<C: Ecip> Divisor<C> {
     assert_eq!(*res.x_coefficients.last().unwrap(), C::FieldElement::ONE);
 
     res
+  }
+}
+
+#[cfg(feature = "pasta")]
+mod pasta {
+  use pasta_curves::arithmetic::{Coordinates, CurveAffine};
+  use ciphersuite::{
+    group::{ff::Field, Group, Curve},
+    Ciphersuite, Pallas, Vesta,
+  };
+
+  use crate::Ecip;
+
+  impl Ecip for Pallas {
+    type FieldElement = <Vesta as Ciphersuite>::F;
+
+    const A: u64 = 0;
+    const B: u64 = 5;
+
+    fn to_xy(
+      point: <Pallas as Ciphersuite>::G,
+    ) -> (<Vesta as Ciphersuite>::F, <Vesta as Ciphersuite>::F) {
+      Option::<Coordinates<_>>::from(point.to_affine().coordinates())
+        .map(|coords| (*coords.x(), *coords.y()))
+        .unwrap_or((<Vesta as Ciphersuite>::F::ZERO, <Vesta as Ciphersuite>::F::ZERO))
+    }
+  }
+
+  impl Ecip for Vesta {
+    type FieldElement = <Pallas as Ciphersuite>::F;
+
+    const A: u64 = 0;
+    const B: u64 = 5;
+
+    fn to_xy(
+      point: <Vesta as Ciphersuite>::G,
+    ) -> (<Pallas as Ciphersuite>::F, <Pallas as Ciphersuite>::F) {
+      Option::<Coordinates<_>>::from(point.to_affine().coordinates())
+        .map(|coords| (*coords.x(), *coords.y()))
+        .unwrap_or((<Pallas as Ciphersuite>::F::ZERO, <Pallas as Ciphersuite>::F::ZERO))
+    }
   }
 }

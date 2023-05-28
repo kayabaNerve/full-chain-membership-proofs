@@ -8,6 +8,7 @@ use ciphersuite::{
 
 use crate::{Ecip, Poly, Divisor};
 
+#[cfg(not(feature = "pasta"))]
 impl Ecip for Pallas {
   type FieldElement = <Vesta as Ciphersuite>::F;
 
@@ -108,4 +109,24 @@ fn test_divisor() {
     }
     assert_eq!(divisor.eval(x, y) * divisor.eval(x, -y), rhs);
   }
+}
+
+#[test]
+fn test_same_point() {
+  let mut points = vec![<Pallas as Ciphersuite>::G::random(&mut OsRng)];
+  points.push(points[0]);
+  // Pad so there's an even number of points
+  points.push(<Pallas as Ciphersuite>::G::random(&mut OsRng));
+  points.push(-points.iter().sum::<<Pallas as Ciphersuite>::G>());
+
+  let divisor = Divisor::<Pallas>::new(&points);
+
+  let challenge = <Pallas as Ciphersuite>::G::random(&mut OsRng);
+  let (x, y) = Pallas::to_xy(challenge);
+
+  let mut rhs = <Vesta as Ciphersuite>::F::ONE;
+  for point in points {
+    rhs *= x - Pallas::to_xy(point).0;
+  }
+  assert_eq!(divisor.eval(x, y) * divisor.eval(x, -y), rhs);
 }
