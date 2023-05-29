@@ -1,48 +1,36 @@
 use rand_core::OsRng;
 
-use subtle::Choice;
-
 use transcript::{Transcript, RecommendedTranscript};
 use pasta_curves::arithmetic::CurveAffine;
 use ciphersuite::{
   group::{
     ff::{Field, PrimeField, PrimeFieldBits},
-    Group,
-    prime::PrimeCurveAffine,
+    Group, Curve,
   },
   Ciphersuite, Pallas, Vesta,
 };
 
 use crate::{
-  arithmetic_circuit::{Constraint, Circuit},
-  gadgets::elliptic_curve::EmbeddedCurveAddition,
+  arithmetic_circuit::Circuit,
+  gadgets::{bit::Bit, elliptic_curve::EmbeddedCurveAddition},
   tests::generators,
 };
 
 #[test]
-fn test_elliptic_curve_gadget() {
-  type PallasAffine = pasta_curves::pallas::Affine;
-
+fn test_incomplete_addition() {
   let (g, h, g_bold1, g_bold2, h_bold1, h_bold2) = generators(64 * 256);
-
-  // Pasta generators are x: -1, y: 2
-  let generator = (-<Vesta as Ciphersuite>::F::ONE, <Vesta as Ciphersuite>::F::ONE.double());
-  let gen_coords = PallasAffine::generator().coordinates().unwrap();
-  assert_eq!((generator.0, generator.1), (*gen_coords.x(), *gen_coords.y()));
-
-  let alt_generator = <Pallas as Ciphersuite>::G::random(&mut OsRng);
 
   let p1 = <Pallas as Ciphersuite>::G::random(&mut OsRng);
   let p2 = <Pallas as Ciphersuite>::G::random(&mut OsRng);
   let p3 = p1 + p2;
 
-  let p1 = PallasAffine::from(p1).coordinates().unwrap();
+  let p1 = p1.to_affine().coordinates().unwrap();
   let p1 = (*p1.x(), *p1.y());
 
-  let p2 = PallasAffine::from(p2).coordinates().unwrap();
+  let p2 = p2.to_affine().coordinates().unwrap();
   let p2 = (*p2.x(), *p2.y());
 
-  let p3 = PallasAffine::from(p3).coordinates().unwrap();
+  let p3 = p3.to_affine().coordinates().unwrap();
   let p3 = (*p3.x(), *p3.y());
 
   let mut transcript = RecommendedTranscript::new(b"Point Addition Circuit Test");
@@ -74,69 +62,6 @@ fn test_elliptic_curve_gadget() {
     );
   };
 
-  /*
-  // Pick a blind within the capacity
-  let mut blind = <Pallas as Ciphersuite>::F::random(&mut OsRng);
-  while *blind.to_le_bits().iter().last().unwrap() {
-    blind = <Pallas as Ciphersuite>::F::random(&mut OsRng);
-  }
-  let mut blind_bits = vec![];
-  let mut alt_generators = vec![alt_generator];
-  for b in blind.to_le_bits().iter().take(<Pallas as Ciphersuite>::F::CAPACITY.try_into().unwrap())
-  {
-    blind_bits.push(Choice::from(u8::from(*b)));
-    alt_generators.push(alt_generators.last().unwrap().double());
-  }
-  alt_generators.pop();
-  let alt_generators_x = alt_generators
-    .iter()
-    .map(|alt| *PallasAffine::from(*alt).coordinates().unwrap().x())
-    .collect::<Vec<_>>();
-  let alt_generators_y = alt_generators
-    .iter()
-    .map(|alt| *PallasAffine::from(*alt).coordinates().unwrap().y())
-    .collect::<Vec<_>>();
-
-  let mut p1p2 = (p1 + p2).double();
-  p1p2 += alt_generator * blind;
-  let p1p2 = PallasAffine::from(p1p2).coordinates().unwrap();
-  let (p1p2_x, p1p2_y) = (*p1p2.x(), *p1p2.y());
-
-  let gadget = |circuit: &mut Circuit<Vesta>| {
-    <Vesta as EmbeddedCurveAddition>::constrain_on_curve(circuit, p1_x, p1_y);
-    <Vesta as EmbeddedCurveAddition>::constrain_on_curve(circuit, p2_x, p2_y);
-
-    let (res_x, res_y) = <Vesta as EmbeddedCurveAddition>::add(circuit, p1_x, p1_y, p2_x, p2_y);
-
-    let (res_x, res_y) = <Vesta as EmbeddedCurveAddition>::double(circuit, res_x, res_y);
-
-    let prover_bits = blind_bits.clone().drain(..).map(Some).collect::<Vec<_>>();
-    let verifier_bits = vec![None; <Pallas as Ciphersuite>::F::CAPACITY.try_into().unwrap()];
-    let blind_bits = if circuit.prover() { &prover_bits } else { &verifier_bits };
-
-    let (res_x, res_y) = <Vesta as EmbeddedCurveAddition>::scalar_mul_generator(
-      circuit,
-      res_x,
-      res_y,
-      &alt_generators_x,
-      &alt_generators_y,
-      blind_bits,
-    );
-
-    let mut x_constraint = Constraint::new("x");
-    x_constraint
-      .weight(circuit.variable_to_product(res_x).unwrap(), <Vesta as Ciphersuite>::F::ONE);
-    x_constraint.rhs_offset(p1p2_x);
-    circuit.constrain(x_constraint);
-
-    let mut y_constraint = Constraint::new("y");
-    y_constraint
-      .weight(circuit.variable_to_product(res_y).unwrap(), <Vesta as Ciphersuite>::F::ONE);
-    y_constraint.rhs_offset(p1p2_y);
-    circuit.constrain(y_constraint);
-  };
-  */
-
   let mut circuit =
     Circuit::new(g, h, g_bold1.clone(), g_bold2.clone(), h_bold1.clone(), h_bold2.clone(), true);
   gadget(&mut circuit);
@@ -145,4 +70,99 @@ fn test_elliptic_curve_gadget() {
   let mut circuit = Circuit::new(g, h, g_bold1, g_bold2, h_bold1, h_bold2, false);
   gadget(&mut circuit);
   circuit.verify(&mut transcript, proof);
+}
+
+#[test]
+fn test_dlog_pok() {
+  let (g, h, g_bold1, g_bold2, h_bold1, h_bold2) = generators(64 * 256);
+
+  let transcript = RecommendedTranscript::new(b"Point DLog PoK Circuit Test");
+
+  let gadget = |circuit: &mut Circuit<Vesta>, point: (_, _), dlog: Vec<u8>| {
+    let prover = circuit.prover();
+
+    let point_x = circuit.add_secret_input(Some(point.0).filter(|_| prover));
+    let point_y = circuit.add_secret_input(Some(point.1).filter(|_| prover));
+
+    <Vesta as EmbeddedCurveAddition>::constrain_on_curve(circuit, point_x, point_y);
+
+    let mut bits = vec![];
+    for bit in &dlog {
+      bits.push(Bit::new(circuit, Some((*bit).into()).filter(|_| prover)));
+    }
+    assert_eq!(u32::try_from(bits.len()).unwrap(), <Pallas as Ciphersuite>::F::CAPACITY);
+
+    <Vesta as EmbeddedCurveAddition>::dlog_pok(
+      circuit,
+      <Pallas as Ciphersuite>::G::generator(),
+      point_x,
+      point_y,
+      &bits,
+    );
+  };
+
+  let test = |point: (_, _), dlog: Vec<_>| {
+    let mut circuit =
+      Circuit::new(g, h, g_bold1.clone(), g_bold2.clone(), h_bold1.clone(), h_bold2.clone(), true);
+    gadget(&mut circuit, point, dlog.clone());
+    let proof = circuit.prove(&mut OsRng, &mut transcript.clone());
+
+    let mut circuit = Circuit::new(g, h, g_bold1.clone(), g_bold2.clone(), h_bold1.clone(), h_bold2.clone(), false);
+    gadget(&mut circuit, point, dlog);
+    circuit.verify(&mut transcript.clone(), proof);
+  };
+
+  assert_eq!(<Pallas as Ciphersuite>::F::CAPACITY, <Vesta as Ciphersuite>::F::CAPACITY);
+
+  {
+    let point = <Pallas as Ciphersuite>::G::generator().to_affine().coordinates().unwrap();
+    let point = (*point.x(), *point.y());
+
+    let dlog = <Vesta as Ciphersuite>::F::ONE;
+    let mut dlog = dlog.to_le_bits().iter().map(|bit| u8::from(*bit)).collect::<Vec<_>>();
+    dlog.truncate(
+      <Pallas as Ciphersuite>::F::CAPACITY
+        .min(<Vesta as Ciphersuite>::F::CAPACITY)
+        .try_into()
+        .unwrap(),
+    );
+
+    test(point, dlog);
+  }
+
+  for _ in 0 .. 32 {
+    let (dlog, bits) = loop {
+      let dlog = <Pallas as Ciphersuite>::F::random(&mut OsRng);
+      let mut bits = dlog.to_le_bits().iter().map(|bit| u8::from(*bit)).collect::<Vec<_>>();
+      for bit in bits.iter().skip(<Pallas as Ciphersuite>::F::CAPACITY.try_into().unwrap()) {
+        if *bit == 1 {
+          continue;
+        }
+      }
+      bits.truncate(
+        <Pallas as Ciphersuite>::F::CAPACITY
+          .min(<Vesta as Ciphersuite>::F::CAPACITY)
+          .try_into()
+          .unwrap(),
+      );
+
+      let mut count = 0;
+      for bit in &bits {
+        if *bit == 1 {
+          count += 1;
+        }
+      }
+      // TODO: Remove once the ecip lib supports odd amounts of points
+      if (count % 2) != 1 {
+         continue;
+      }
+
+      break (dlog, bits);
+    };
+
+    let point = (<Pallas as Ciphersuite>::G::generator() * dlog).to_affine().coordinates().unwrap();
+    let point = (*point.x(), *point.y());
+
+    test(point, bits);
+  }
 }

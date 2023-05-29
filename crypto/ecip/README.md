@@ -1,3 +1,4 @@
 # EC IP
 
-An implementation of Eagen's [EC IP](https://eprint.iacr.org/2020/596).
+An implementation of elliptic curve divisor construction, intended for Eagen's
+[EC IP work](https://eprint.iacr.org/2020/596).

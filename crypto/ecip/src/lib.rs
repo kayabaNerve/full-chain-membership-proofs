@@ -26,13 +26,13 @@ pub trait Ecip: Ciphersuite {
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct Poly<F: Field> {
   // y ** (i + 1)
-  y_coefficients: Vec<F>,
+  pub y_coefficients: Vec<F>,
   // y ** (i + 1) x ** (j + 1)
-  yx_coefficients: Vec<Vec<F>>,
+  pub yx_coefficients: Vec<Vec<F>>,
   // x ** (i + 1)
-  x_coefficients: Vec<F>,
+  pub x_coefficients: Vec<F>,
   // Coefficient for x ** 0, y ** 0, and x ** 0 y ** 0
-  zero_coefficient: F,
+  pub zero_coefficient: F,
 }
 
 // TODO: This isn't constant time.

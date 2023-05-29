@@ -2,7 +2,6 @@ use rand_core::OsRng;
 
 use ciphersuite::{group::Group, Ciphersuite, Pallas, Vesta};
 
-use ecip::Ecip;
 use crate::{PointVector, gadgets::elliptic_curve::EmbeddedShortWeierstrass};
 
 mod weighted_inner_product;

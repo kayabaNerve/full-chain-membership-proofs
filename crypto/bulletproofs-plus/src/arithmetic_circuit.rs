@@ -179,6 +179,14 @@ impl<C: Ciphersuite> Circuit<C> {
     self.variables[variable.0].clone()
   }
 
+  pub fn variable(&self, product: ProductReference) -> VariableReference {
+    match product {
+      ProductReference::Left { variable, .. } => VariableReference(variable),
+      ProductReference::Right { variable, .. } => VariableReference(variable),
+      ProductReference::Output { variable, .. } => VariableReference(variable),
+    }
+  }
+
   pub fn variable_to_product(&self, variable: VariableReference) -> Option<ProductReference> {
     if let Variable::Product(product, _) = self.variables[variable.0] {
       return Some(ProductReference::Output { product, variable: variable.0 });
