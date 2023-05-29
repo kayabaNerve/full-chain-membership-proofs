@@ -331,7 +331,50 @@ impl<C: EmbeddedShortWeierstrass> EmbeddedCurveAddition for C {
     };
     assert!(odd.is_none());
 
-    // TODO: This divisor (and the actually selected points?) needs to be committed to (equality
+    // Prove at least one x coefficient is 1
+    {
+      let mut last = None;
+      for x_coeff in x_coefficients.iter().skip(1).copied() {
+        let lhs = if let Some(last) = last {
+          last
+        } else {
+          circuit.add_secret_input(
+            circuit
+              .unchecked_variable(circuit.variable(x_coefficients[0]))
+              .value()
+              .map(|coeff| coeff - C::F::ONE),
+          )
+        };
+        let rhs = circuit.add_secret_input(
+          circuit
+            .unchecked_variable(circuit.variable(x_coeff))
+            .value()
+            .map(|coeff| coeff - C::F::ONE),
+        );
+        let ((lhs, rhs, _), last_var) = circuit.product(lhs, rhs);
+
+        if last.is_none() {
+          let mut constraint = Constraint::new("x_coeff_0_is_1");
+          constraint.weight(x_coefficients[0], C::F::ONE);
+          constraint.weight(lhs, -C::F::ONE);
+          constraint.rhs_offset(C::F::ONE);
+          circuit.constrain(constraint);
+        }
+
+        let mut constraint = Constraint::new("x_coeff_i_is_1");
+        constraint.weight(x_coeff, C::F::ONE);
+        constraint.weight(rhs, -C::F::ONE);
+        constraint.rhs_offset(C::F::ONE);
+        circuit.constrain(constraint);
+
+        last = Some(last_var);
+      }
+      let mut constraint = Constraint::new("a_x_coeff_is_1");
+      constraint.weight(circuit.variable_to_product(last.unwrap()).unwrap(), C::F::ONE);
+      circuit.constrain(constraint);
+    }
+
+    // TODO: This divisor (and the actually selected points) needs to be committed to (equality
     // with a provided vector commitment)
     // If we need to commit to the actually selected points, we should commit to the DLog since
     // that can be done with just one mul gate/constraint via recomposing the bits
@@ -404,16 +447,17 @@ impl<C: EmbeddedShortWeierstrass> EmbeddedCurveAddition for C {
     circuit.constrain(neg_lhs_constraint);
 
     if circuit.prover() {
-      assert_eq!(
+      debug_assert_eq!(
         circuit.unchecked_variable(circuit.variable(lhs)).value().unwrap(),
         divisor.as_ref().unwrap().eval(challenge_x, challenge_y) *
           divisor.unwrap().eval(challenge_x, -challenge_y)
       );
     }
 
-    // TODO: Prove at least one x coefficient was 1
-
     // Perform the right hand side evaluation
+
+    // Iterate over the generators' forms, either including them or using the multiplicative
+    // identity if that bit wasn't set
     let mut accum = None;
     for i in 0 .. (points - 1) {
       let this_rhs = dlog[i].select_constant(
@@ -429,6 +473,7 @@ impl<C: EmbeddedShortWeierstrass> EmbeddedCurveAddition for C {
       }
     }
 
+    // Include the point the prover is claiming to know the DLog for
     let challenge_x_sub_x = circuit.add_secret_input(if circuit.prover() {
       Some(challenge_x - circuit.unchecked_variable(known_dlog_x).value().unwrap())
     } else {

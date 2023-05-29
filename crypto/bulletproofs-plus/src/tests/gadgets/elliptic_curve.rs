@@ -165,4 +165,6 @@ fn test_dlog_pok() {
 
     test(point, bits);
   }
+
+  // TODO: Test every bit being set
 }
