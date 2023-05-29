@@ -11,7 +11,7 @@ use ciphersuite::{
 };
 
 use crate::{
-  arithmetic_circuit::Circuit,
+  arithmetic_circuit::{Constraint, Circuit},
   gadgets::{bit::Bit, elliptic_curve::EmbeddedCurveAddition},
   tests::generators,
 };
@@ -50,16 +50,15 @@ fn test_incomplete_addition() {
     let (res_x, res_y) =
       <Vesta as EmbeddedCurveAddition>::incomplete_add(circuit, p1_x, p1_y, p2_x, p2_y);
 
-    let p3_x = circuit.add_constant(p3.0);
-    let p3_y = circuit.add_constant(p3.1);
-    circuit.constrain_equality(
-      circuit.variable_to_product(res_x).unwrap(),
-      circuit.variable_to_product(p3_x).unwrap(),
-    );
-    circuit.constrain_equality(
-      circuit.variable_to_product(res_y).unwrap(),
-      circuit.variable_to_product(p3_y).unwrap(),
-    );
+    let mut constraint = Constraint::new("p3_x");
+    constraint.weight(circuit.variable_to_product(res_x).unwrap(), p3.0.invert().unwrap());
+    constraint.rhs_offset(<Vesta as Ciphersuite>::F::ONE);
+    circuit.constrain(constraint);
+
+    let mut constraint = Constraint::new("p3_y");
+    constraint.weight(circuit.variable_to_product(res_y).unwrap(), p3.1.invert().unwrap());
+    constraint.rhs_offset(<Vesta as Ciphersuite>::F::ONE);
+    circuit.constrain(constraint);
   };
 
   let mut circuit =
@@ -107,7 +106,8 @@ fn test_dlog_pok() {
     gadget(&mut circuit, point, dlog.clone());
     let proof = circuit.prove(&mut OsRng, &mut transcript.clone());
 
-    let mut circuit = Circuit::new(g, h, g_bold1.clone(), g_bold2.clone(), h_bold1.clone(), h_bold2.clone(), false);
+    let mut circuit =
+      Circuit::new(g, h, g_bold1.clone(), g_bold2.clone(), h_bold1.clone(), h_bold2.clone(), false);
     gadget(&mut circuit, point, dlog);
     circuit.verify(&mut transcript.clone(), proof);
   };
@@ -154,7 +154,7 @@ fn test_dlog_pok() {
       }
       // TODO: Remove once the ecip lib supports odd amounts of points
       if (count % 2) != 1 {
-         continue;
+        continue;
       }
 
       break (dlog, bits);

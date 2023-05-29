@@ -36,7 +36,6 @@ impl<C: Ciphersuite> Commitment<C> {
 
 #[derive(Clone, Debug, Zeroize, ZeroizeOnDrop)]
 pub enum Variable<C: Ciphersuite> {
-  Constant(C::F),
   Secret(Option<C::F>),
   Committed(Option<Commitment<C>>, C::G),
   Product(usize, Option<C::F>),
@@ -102,7 +101,6 @@ impl<C: Ciphersuite> Constraint<C> {
 impl<C: Ciphersuite> Variable<C> {
   pub fn value(&self) -> Option<C::F> {
     match self {
-      Variable::Constant(value) => Some(*value),
       Variable::Secret(value) => *value,
       // This branch should never be reachable due to usage of CommitmentReference
       Variable::Committed(_commitment, _) => {
@@ -264,30 +262,6 @@ impl<C: Ciphersuite> Circuit<C> {
     (products, variable)
   }
 
-  // TODO: Optimize this out. We shouldn't need a variable for something native to the constraint
-  pub fn add_constant(&mut self, constant: C::F) -> VariableReference {
-    // Return the existing constant, if there's already one
-    for (i, variable) in self.variables.iter().enumerate() {
-      if let Variable::Constant(value) = variable {
-        if *value == constant {
-          return VariableReference(i);
-        }
-      }
-    }
-
-    let res = VariableReference(self.variables.len());
-    self.variables.push(Variable::Constant(constant));
-
-    // Immediately add a product statement for this so we can perform the initial constraint
-    let ((product, _, _), _) = self.product(res, res);
-    let mut constraint = Constraint::new("constant");
-    constraint.weight(product, C::F::ONE);
-    constraint.rhs_offset(constant);
-    self.constraints.push(constraint);
-
-    res
-  }
-
   /// Add an input only known to the prover.
   pub fn add_secret_input(&mut self, value: Option<C::F>) -> VariableReference {
     assert_eq!(self.prover, value.is_some());
@@ -399,7 +373,6 @@ impl<C: Ciphersuite> Circuit<C> {
         // Shift down variables
         while i < self.variables.len() {
           match self.variables[i] {
-            Variable::Constant(..) => {}
             Variable::Secret(..) => {}
             Variable::Committed(..) => {}
             Variable::Product(ref mut product, _) => {
@@ -554,7 +527,6 @@ impl<C: Ciphersuite> Circuit<C> {
 
       for variable in self.variables.iter() {
         match variable {
-          Variable::Constant(_) => {}
           Variable::Secret(_) => {}
           Variable::Committed(value, actual) => {
             let value = value.as_ref().unwrap();
@@ -584,7 +556,6 @@ impl<C: Ciphersuite> Circuit<C> {
     let mut n = 0;
     for variable in &self.variables {
       match variable {
-        Variable::Constant(_) => {}
         Variable::Secret(_) => {}
         Variable::Committed(_, actual) => V.push(*actual),
         Variable::Product(_, _) => n += 1,

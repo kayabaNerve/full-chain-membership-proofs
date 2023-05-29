@@ -56,7 +56,7 @@ impl Bit {
 
     let chosen = circuit.add_secret_input(chosen);
 
-    // TODO: Merge these product statements with others
+    // TODO: Merge this product statements with others
     let ((chosen_prod, _, _), _) = circuit.product(chosen, chosen);
 
     // (bit * if_true) + (-bit_minus_one * if_false)
@@ -66,6 +66,31 @@ impl Bit {
     let mut chosen_constraint = Constraint::new("chosen");
     chosen_constraint.weight(lo, C::F::ONE);
     chosen_constraint.weight(ro, -C::F::ONE);
+    chosen_constraint.weight(chosen_prod, -C::F::ONE);
+    circuit.constrain(chosen_constraint);
+
+    chosen
+  }
+
+  pub fn select_constant<C: Ciphersuite>(
+    &self,
+    circuit: &mut Circuit<C>,
+    if_false: C::F,
+    if_true: C::F,
+  ) -> VariableReference {
+    let chosen = Some(())
+      .filter(|_| circuit.prover())
+      .map(|_| C::F::conditional_select(&if_false, &if_true, self.value.unwrap()));
+
+    let chosen = circuit.add_secret_input(chosen);
+
+    // TODO: Merge this product statements with others
+    let ((chosen_prod, _, _), _) = circuit.product(chosen, chosen);
+    let mut chosen_constraint = Constraint::new("chosen");
+    // If bit, lhs = if_true
+    // If !bit, lhs = if_false
+    chosen_constraint.weight(circuit.variable_to_product(self.variable).unwrap(), if_true);
+    chosen_constraint.weight(circuit.variable_to_product(self.minus_one).unwrap(), -if_false);
     chosen_constraint.weight(chosen_prod, -C::F::ONE);
     circuit.constrain(chosen_constraint);
 

@@ -188,11 +188,8 @@ impl<C: EmbeddedShortWeierstrass> EmbeddedCurveAddition for C {
       }
 
       let (Gx_i, Gy_i) = Self::Embedded::to_xy(G_pow_2[i]);
-      let zero = circuit.add_constant(Self::F::ZERO);
-      let Gx_i = circuit.add_constant(Gx_i);
-      let Gy_i = circuit.add_constant(Gy_i);
-      let x = bit.select(circuit, zero, Gx_i);
-      let y = bit.select(circuit, zero, Gy_i);
+      let x = bit.select_constant(circuit, Self::F::ZERO, Gx_i);
+      let y = bit.select_constant(circuit, Self::F::ZERO, Gy_i);
       xy_i.push((x, y));
     }
 
@@ -417,12 +414,19 @@ impl<C: EmbeddedShortWeierstrass> EmbeddedCurveAddition for C {
     // TODO: Prove at least one x coefficient was 1
 
     // Perform the right hand side evaluation
-    let one = circuit.add_constant(C::F::ONE);
-    let mut accum = circuit.add_constant(C::F::ONE);
+    let mut accum = None;
     for i in 0 .. (points - 1) {
-      let this_x = circuit.add_constant(challenge_x - Self::Embedded::to_xy(G_pow_2[i]).0);
-      let this_rhs = dlog[i].select(circuit, one, this_x);
-      (_, accum) = circuit.product(accum, this_rhs);
+      let this_rhs = dlog[i].select_constant(
+        circuit,
+        C::F::ONE,
+        challenge_x - Self::Embedded::to_xy(G_pow_2[i]).0,
+      );
+      if let Some(accum_var) = accum {
+        let (_, accum_var) = circuit.product(accum_var, this_rhs);
+        accum = Some(accum_var);
+      } else {
+        accum = Some(this_rhs);
+      }
     }
 
     let challenge_x_sub_x = circuit.add_secret_input(if circuit.prover() {
@@ -430,7 +434,7 @@ impl<C: EmbeddedShortWeierstrass> EmbeddedCurveAddition for C {
     } else {
       None
     });
-    let ((_, challenge_x_sub_x, rhs), _) = circuit.product(accum, challenge_x_sub_x);
+    let ((_, challenge_x_sub_x, rhs), _) = circuit.product(accum.unwrap(), challenge_x_sub_x);
     let mut constraint = Constraint::new("challenge_x_sub_x");
     constraint.weight(
       circuit
