@@ -23,6 +23,8 @@ transcript = { package = "flexible-transcript", path = "../transcript", version 
 multiexp = { path = "../multiexp", default-features = false }
 ciphersuite = { path = "../ciphersuite", default-features = false }
 
+ecip = { path = "../ecip" }
+
 [dev-dependencies]
 rand_core = { version = "0.6", features = ["getrandom"] }
 
@@ -30,3 +32,4 @@ transcript = { package = "flexible-transcript", path = "../transcript", features
 
 pasta_curves = { version = "0.5", default-features = false, features = ["bits", "alloc"], git = "https://github.com/kayabaNerve/pasta_curves.git" }
 ciphersuite = { path = "../ciphersuite", features = ["ristretto", "pasta"] }
+ecip = { path = "../ecip", features = ["pasta"] }

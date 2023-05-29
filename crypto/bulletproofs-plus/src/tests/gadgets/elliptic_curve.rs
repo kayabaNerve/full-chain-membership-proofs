@@ -32,6 +32,49 @@ fn test_elliptic_curve_gadget() {
 
   let alt_generator = <Pallas as Ciphersuite>::G::random(&mut OsRng);
 
+  let p1 = <Pallas as Ciphersuite>::G::random(&mut OsRng);
+  let p2 = <Pallas as Ciphersuite>::G::random(&mut OsRng);
+  let p3 = p1 + p2;
+
+  let p1 = PallasAffine::from(p1).coordinates().unwrap();
+  let p1 = (*p1.x(), *p1.y());
+
+  let p2 = PallasAffine::from(p2).coordinates().unwrap();
+  let p2 = (*p2.x(), *p2.y());
+
+  let p3 = PallasAffine::from(p3).coordinates().unwrap();
+  let p3 = (*p3.x(), *p3.y());
+
+  let mut transcript = RecommendedTranscript::new(b"Point Addition Circuit Test");
+
+  let gadget = |circuit: &mut Circuit<Vesta>| {
+    let prover = circuit.prover();
+
+    let p1_x = circuit.add_secret_input(Some(p1.0).filter(|_| prover));
+    let p1_y = circuit.add_secret_input(Some(p1.1).filter(|_| prover));
+
+    let p2_x = circuit.add_secret_input(Some(p2.0).filter(|_| prover));
+    let p2_y = circuit.add_secret_input(Some(p2.1).filter(|_| prover));
+
+    <Vesta as EmbeddedCurveAddition>::constrain_on_curve(circuit, p1_x, p1_y);
+    <Vesta as EmbeddedCurveAddition>::constrain_on_curve(circuit, p2_x, p2_y);
+
+    let (res_x, res_y) =
+      <Vesta as EmbeddedCurveAddition>::incomplete_add(circuit, p1_x, p1_y, p2_x, p2_y);
+
+    let p3_x = circuit.add_constant(p3.0);
+    let p3_y = circuit.add_constant(p3.1);
+    circuit.constrain_equality(
+      circuit.variable_to_product(res_x).unwrap(),
+      circuit.variable_to_product(p3_x).unwrap(),
+    );
+    circuit.constrain_equality(
+      circuit.variable_to_product(res_y).unwrap(),
+      circuit.variable_to_product(p3_y).unwrap(),
+    );
+  };
+
+  /*
   // Pick a blind within the capacity
   let mut blind = <Pallas as Ciphersuite>::F::random(&mut OsRng);
   while *blind.to_le_bits().iter().last().unwrap() {
@@ -54,30 +97,12 @@ fn test_elliptic_curve_gadget() {
     .map(|alt| *PallasAffine::from(*alt).coordinates().unwrap().y())
     .collect::<Vec<_>>();
 
-  let p1 = <Pallas as Ciphersuite>::G::random(&mut OsRng);
-  let p2 = <Pallas as Ciphersuite>::G::random(&mut OsRng);
   let mut p1p2 = (p1 + p2).double();
   p1p2 += alt_generator * blind;
   let p1p2 = PallasAffine::from(p1p2).coordinates().unwrap();
   let (p1p2_x, p1p2_y) = (*p1p2.x(), *p1p2.y());
 
-  let p1 = PallasAffine::from(p1).coordinates().unwrap();
-  let p1 = (*p1.x(), *p1.y(), <Vesta as Ciphersuite>::F::ONE);
-
-  let p2 = PallasAffine::from(p2).coordinates().unwrap();
-  let p2 = (*p2.x(), *p2.y());
-
-  let mut transcript = RecommendedTranscript::new(b"Point Addition Circuit Test");
-
   let gadget = |circuit: &mut Circuit<Vesta>| {
-    let prover = circuit.prover();
-
-    let p1_x = circuit.add_secret_input(Some(p1.0).filter(|_| prover));
-    let p1_y = circuit.add_secret_input(Some(p1.1).filter(|_| prover));
-
-    let p2_x = circuit.add_secret_input(Some(p2.0).filter(|_| prover));
-    let p2_y = circuit.add_secret_input(Some(p2.1).filter(|_| prover));
-
     <Vesta as EmbeddedCurveAddition>::constrain_on_curve(circuit, p1_x, p1_y);
     <Vesta as EmbeddedCurveAddition>::constrain_on_curve(circuit, p2_x, p2_y);
 
@@ -110,6 +135,7 @@ fn test_elliptic_curve_gadget() {
     y_constraint.rhs_offset(p1p2_y);
     circuit.constrain(y_constraint);
   };
+  */
 
   let mut circuit =
     Circuit::new(g, h, g_bold1.clone(), g_bold2.clone(), h_bold1.clone(), h_bold2.clone(), true);

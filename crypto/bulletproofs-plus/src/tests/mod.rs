@@ -2,6 +2,7 @@ use rand_core::OsRng;
 
 use ciphersuite::{group::Group, Ciphersuite, Pallas, Vesta};
 
+use ecip::Ecip;
 use crate::{PointVector, gadgets::elliptic_curve::EmbeddedShortWeierstrass};
 
 mod weighted_inner_product;
@@ -32,9 +33,11 @@ pub fn generators<C: Ciphersuite>(n: usize) -> Generators<C> {
 }
 
 impl EmbeddedShortWeierstrass for Pallas {
+  type Embedded = Vesta;
   const B: u64 = 5;
 }
 
 impl EmbeddedShortWeierstrass for Vesta {
+  type Embedded = Pallas;
   const B: u64 = 5;
 }

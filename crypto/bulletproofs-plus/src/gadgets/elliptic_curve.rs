@@ -5,20 +5,140 @@ use ciphersuite::{
   Ciphersuite,
 };
 
+use ecip::Ecip;
 use crate::{
   arithmetic_circuit::{VariableReference, Constraint, Circuit},
   gadgets::bit::Bit,
 };
 
 pub trait EmbeddedShortWeierstrass: Ciphersuite {
+  type Embedded: Ecip<FieldElement = Self::F>;
+
   const B: u64;
 }
 
-/// Perform addition over the curve embedded into the current curve.
+/// Perform operations over the curve embedded into the current curve.
 pub trait EmbeddedCurveAddition: Ciphersuite {
+  type Embedded: Ecip<FieldElement = Self::F>;
+
   /// Constrains a point to being on curve.
   fn constrain_on_curve(circuit: &mut Circuit<Self>, x: VariableReference, y: VariableReference);
 
+  // Curve Trees, Appendix A.[4, 5]
+  fn incomplete_add(
+    circuit: &mut Circuit<Self>,
+    x1: VariableReference,
+    y1: VariableReference,
+    x2: VariableReference,
+    y2: VariableReference,
+  ) -> (VariableReference, VariableReference) {
+    let (x3, y3, slope, x2m1, x3m1) = if circuit.prover() {
+      let x1_var = circuit.unchecked_variable(x1).value().unwrap();
+      let y1_var = circuit.unchecked_variable(y1).value().unwrap();
+      let a = Self::Embedded::from_xy(x1_var, y1_var);
+
+      let x2_var = circuit.unchecked_variable(x2).value().unwrap();
+      let y2_var = circuit.unchecked_variable(y2).value().unwrap();
+      let b = Self::Embedded::from_xy(x2_var, y2_var);
+
+      let c = a + b;
+
+      let (x3, y3) = Self::Embedded::to_xy(c);
+
+      let slope = (y2_var - y1_var) *
+        Option::<Self::F>::from((x2_var - x1_var).invert()).expect(
+          "trying to add perform incomplete addition on points which share an x coordinate",
+        );
+
+      let x2m1 = x2_var - x1_var;
+      let x3m1 = x3 - x1_var;
+      debug_assert_eq!(slope * x2m1, y2_var - y1_var);
+      debug_assert_eq!(slope * x3m1, -y3 - y1_var);
+      debug_assert_eq!(slope.square(), x1_var + x2_var + x3);
+
+      (Some(x3), Some(y3), Some(slope), Some(x2m1), Some(x3m1))
+    } else {
+      (None, None, None, None, None)
+    };
+
+    let x3 = circuit.add_secret_input(x3);
+    let y3 = circuit.add_secret_input(y3);
+    let slope = circuit.add_secret_input(slope);
+    let x2m1 = circuit.add_secret_input(x2m1);
+    let x3m1 = circuit.add_secret_input(x3m1);
+
+    let x1 = circuit.variable_to_product(x1).expect(
+      "x1 wasn't prior used in a product statement. this shouldn't be possible if on-curve checked",
+    );
+    let y1 = circuit.variable_to_product(y1).expect(
+      "y1 wasn't prior used in a product statement. this shouldn't be possible if on-curve checked",
+    );
+    let x2 = circuit.variable_to_product(x2).expect(
+      "x2 wasn't prior used in a product statement. this shouldn't be possible if on-curve checked",
+    );
+    let y2 = circuit.variable_to_product(y2).expect(
+      "y2 wasn't prior used in a product statement. this shouldn't be possible if on-curve checked",
+    );
+
+    // Prove x2m1 is non-zero via checking it has a multiplicative inverse, enabling incomplete
+    // formulas
+    let x2m1_inv = circuit.unchecked_variable(x2m1).value().map(|x2m1| x2m1.invert().unwrap());
+    let x2m1_inv = circuit.add_secret_input(x2m1_inv);
+    let mut constraint = Constraint::new("incomplete");
+    let ((_, _, out), _) = circuit.product(x2m1, x2m1_inv);
+    constraint.weight(out, Self::F::ONE);
+    constraint.rhs_offset(Self::F::ONE);
+    circuit.constrain(constraint);
+
+    let ((_, x2m1, out), _) = circuit.product(slope, x2m1);
+    let mut constraint = Constraint::new("slope_x2_y2_x2m1");
+    constraint.weight(x2, Self::F::ONE);
+    constraint.weight(x1, -Self::F::ONE);
+    constraint.weight(x2m1, -Self::F::ONE);
+    circuit.constrain(constraint);
+
+    let mut constraint = Constraint::new("slope_x2_y2_out");
+    constraint.weight(y2, Self::F::ONE);
+    constraint.weight(y1, -Self::F::ONE);
+    constraint.weight(out, -Self::F::ONE);
+    circuit.constrain(constraint);
+
+    // Use x3/y3 in a product statement so they can be used in constraints
+    let ((x3_prod, y3_prod, _), _) = circuit.product(x3, y3);
+
+    let ((_, x3m1, out), _) = circuit.product(slope, x3m1);
+    let mut constraint = Constraint::new("slope_x3_y3_x3m1");
+    constraint.weight(x3_prod, Self::F::ONE);
+    constraint.weight(x1, -Self::F::ONE);
+    constraint.weight(x3m1, -Self::F::ONE);
+    circuit.constrain(constraint);
+
+    let mut constraint = Constraint::new("slope_x3_y3_out");
+    constraint.weight(y3_prod, -Self::F::ONE);
+    constraint.weight(y1, -Self::F::ONE);
+    constraint.weight(out, -Self::F::ONE);
+    circuit.constrain(constraint);
+
+    let ((_, _, out), slope_squared) = circuit.product(slope, slope);
+    let mut constraint = Constraint::new("slope_squared");
+    constraint.weight(out, -Self::F::ONE);
+    constraint.weight(x1, Self::F::ONE);
+    constraint.weight(x2, Self::F::ONE);
+    constraint.weight(x3_prod, Self::F::ONE);
+    circuit.constrain(constraint);
+
+    (x3, y3)
+  }
+
+  fn dlog_pok(
+    circuit: &mut Circuit<Self>,
+    G: <Self::Embedded as Ciphersuite>::G,
+    x: VariableReference,
+    y: VariableReference,
+    dlog: Option<&[Bit]>,
+  );
+
+  /*
   /// Doubles an on-curve point.
   fn double(
     circuit: &mut Circuit<Self>,
@@ -46,9 +166,11 @@ pub trait EmbeddedCurveAddition: Ciphersuite {
     fixed_generator_y: &[Self::F],
     scalar: &[Option<Choice>],
   ) -> (VariableReference, VariableReference);
+  */
 
   // This is cheap to run inside the circuit, cheap enough it's not worth implementing
   // non-normalized addition.
+  // TODO: Is this used?
   fn normalize(
     circuit: &mut Circuit<Self>,
     x: VariableReference,
@@ -70,8 +192,9 @@ pub trait EmbeddedCurveAddition: Ciphersuite {
   }
 }
 
-// https:://eprint.iacr.org/2015/1060.pdf
 impl<C: EmbeddedShortWeierstrass> EmbeddedCurveAddition for C {
+  type Embedded = <C as EmbeddedShortWeierstrass>::Embedded;
+
   fn constrain_on_curve(circuit: &mut Circuit<Self>, x: VariableReference, y: VariableReference) {
     let ((_, _, y2_prod), _) = circuit.product(y, y);
     let (_, x2) = circuit.product(x, x);
@@ -84,6 +207,8 @@ impl<C: EmbeddedShortWeierstrass> EmbeddedCurveAddition for C {
     circuit.constrain(constraint);
   }
 
+  /*
+  // https:://eprint.iacr.org/2015/1060.pdf
   fn double(
     circuit: &mut Circuit<C>,
     x: VariableReference,
@@ -129,10 +254,7 @@ impl<C: EmbeddedShortWeierstrass> EmbeddedCurveAddition for C {
     Self::normalize(circuit, x3, y3, z3)
   }
 
-  // Algorithm 8
-  // Curve Trees performed this with just three constraints (A.4).
-  // Its incomplete, yet can its security be proven?
-  // Regardless, this should be able to have its amount of constraints roughly halved re: additions
+  // https:://eprint.iacr.org/2015/1060.pdf, Algorithm 8
   fn add(
     circuit: &mut Circuit<C>,
     x1: VariableReference,
@@ -244,5 +366,16 @@ impl<C: EmbeddedShortWeierstrass> EmbeddedCurveAddition for C {
     }
 
     (curr_x, curr_y)
+  }
+  */
+
+  fn dlog_pok(
+    circuit: &mut Circuit<Self>,
+    G: <Self::Embedded as Ciphersuite>::G,
+    x: VariableReference,
+    y: VariableReference,
+    dlog: Option<&[Bit]>,
+  ) {
+    todo!()
   }
 }

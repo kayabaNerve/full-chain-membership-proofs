@@ -306,6 +306,7 @@ impl<C: Ciphersuite> Circuit<C> {
     res
   }
 
+  /*
   /// Create, and constrain, a variable to be the sum of two other variables.
   pub fn add(&mut self, a: VariableReference, b: VariableReference) -> VariableReference {
     let left = &self.variables[a.0];
@@ -347,6 +348,7 @@ impl<C: Ciphersuite> Circuit<C> {
 
     res
   }
+  */
 
   /// Add a constraint.
   pub fn constrain(&mut self, constraint: Constraint<C>) {
@@ -573,7 +575,7 @@ impl<C: Ciphersuite> Circuit<C> {
       // Remove empty constraints
       self.remove_empty_constraints();
 
-      // TODO: Remove duplicate contraints
+      // TODO: Remove duplicate constraints
 
       // TODO: For a = (x * y) + z, where the x y product only has value to the calculation of a,
       // generate a single constraint for the legitimacy of a
