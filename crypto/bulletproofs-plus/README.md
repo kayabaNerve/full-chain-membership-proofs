@@ -19,22 +19,11 @@ Several optimizations are possible, such as:
 - Removal of scalar matrix for a more direct structure
 - Support for batch verification
 - Removal of `Circuit::prove` and `Circuit::verify` for simply `Circuit::compile`
-- More post-processing of constraints within `Circuit::compile`
-- Implementation of ECC addition via the constraints from
-  [Curve Trees](https://eprint.iacr.org/2022/756.pdf) A.4
-- Hand-written constraints in the currently provided gadgets (instead of the
-  automatically generated ones)
-- More efficient interim calculations
+- Post-processing of gates/constraints in `Circuit::compile`
 
 Despite that, this library is performant enough to write and work with circuits.
 Accordingly, optimization has been delayed until after the initial proof of
 concept is ready.
-
-This library runs post-processing passes on its constraints which are slow.
-One of the noted optimizations is to compile-once, instead of compiling per
-instance. If the constraints are largely hand-written, these post-processing
-passes (and their complexity) can be removed. This decision will need to be made
-when the rest of the library is sufficiently optimized to enable evaluation.
 
 This library uses asserts instead of `Result`. It also has extraneous asserts
 which should be moved to debug.
