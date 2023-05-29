@@ -11,7 +11,7 @@ use ciphersuite::{
 };
 
 use crate::{
-  arithmetic_circuit::{Constraint, Circuit},
+  arithmetic_circuit::Circuit,
   gadgets::{bit::Bit, elliptic_curve::EmbeddedCurveAddition},
   tests::generators,
 };
@@ -50,15 +50,8 @@ fn test_incomplete_addition() {
     let (res_x, res_y) =
       <Vesta as EmbeddedCurveAddition>::incomplete_add(circuit, p1_x, p1_y, p2_x, p2_y);
 
-    let mut constraint = Constraint::new("p3_x");
-    constraint.weight(circuit.variable_to_product(res_x).unwrap(), p3.0.invert().unwrap());
-    constraint.rhs_offset(<Vesta as Ciphersuite>::F::ONE);
-    circuit.constrain(constraint);
-
-    let mut constraint = Constraint::new("p3_y");
-    constraint.weight(circuit.variable_to_product(res_y).unwrap(), p3.1.invert().unwrap());
-    constraint.rhs_offset(<Vesta as Ciphersuite>::F::ONE);
-    circuit.constrain(constraint);
+    circuit.equals_constant(circuit.variable_to_product(res_x).unwrap(), p3.0);
+    circuit.equals_constant(circuit.variable_to_product(res_y).unwrap(), p3.1);
   };
 
   let mut circuit =

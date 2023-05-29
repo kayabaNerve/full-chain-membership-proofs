@@ -304,6 +304,17 @@ impl<C: Ciphersuite> Circuit<C> {
     self.constrain(constraint);
   }
 
+  pub fn equals_constant(&mut self, a: ProductReference, b: C::F) {
+    let mut constraint = Constraint::new("constant_equality");
+    if b == C::F::ZERO {
+      constraint.weight(a, C::F::ONE);
+    } else {
+      constraint.weight(a, b.invert().unwrap());
+      constraint.rhs_offset(C::F::ONE);
+    }
+    self.constrain(constraint);
+  }
+
   // TODO: This can be optimized with post-processing passes
   // TODO: Don't run this on every single prove/verify. It should only be run once at compile time
   fn compile(self) -> (ArithmeticCircuitStatement<C>, Option<ArithmeticCircuitWitness<C>>) {
