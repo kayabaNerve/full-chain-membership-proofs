@@ -314,50 +314,6 @@ impl<C: Ciphersuite> Circuit<C> {
     res
   }
 
-  /*
-  /// Create, and constrain, a variable to be the sum of two other variables.
-  pub fn add(&mut self, a: VariableReference, b: VariableReference) -> VariableReference {
-    let left = &self.variables[a.0];
-    let right = &self.variables[b.0];
-
-    if let (Variable::Constant(left), Variable::Constant(right)) = (left, right) {
-      return self.add_constant(*left + right);
-    }
-
-    let res = VariableReference(self.variables.len());
-    self.variables.push(Variable::Secret(
-      Some(()).filter(|_| self.prover).map(|_| left.value().unwrap() + right.value().unwrap()),
-    ));
-
-    let mut product_refs = vec![self.variable_to_product(a), self.variable_to_product(b)];
-    // Since neither of these have been prior referenced, we have 3 variables needing constraining
-    // That requires two mul statements
-    if product_refs == [None, None] {
-      let ((l, r, _), _) = self.product(a, b);
-      product_refs = vec![Some(l), Some(r)];
-    }
-
-    let other = if product_refs[0].is_none() { a } else { b };
-
-    // Create the second mul statement
-    let ((sum_ref, r, _), _) = self.product(res, other);
-    if product_refs[0].is_none() {
-      product_refs[0] = Some(r);
-    } else if product_refs[1].is_none() {
-      product_refs[1] = Some(r);
-    }
-
-    // Constrain the sum
-    let mut constraint = Constraint::new("sum");
-    constraint.weight(sum_ref, -C::F::ONE);
-    constraint.weight(product_refs[0].unwrap(), C::F::ONE);
-    constraint.weight(product_refs[1].unwrap(), C::F::ONE);
-    self.constrain(constraint);
-
-    res
-  }
-  */
-
   /// Add a constraint.
   pub fn constrain(&mut self, constraint: Constraint<C>) {
     self.constraints.push(constraint);

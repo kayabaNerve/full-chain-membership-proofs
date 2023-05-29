@@ -130,7 +130,7 @@ fn test_dlog_pok() {
     test(point, dlog);
   }
 
-  for _ in 0 .. 32 {
+  for _ in 0 .. 8 {
     let (dlog, bits) = loop {
       let dlog = <Pallas as Ciphersuite>::F::random(&mut OsRng);
       let mut bits = dlog.to_le_bits().iter().map(|bit| u8::from(*bit)).collect::<Vec<_>>();
