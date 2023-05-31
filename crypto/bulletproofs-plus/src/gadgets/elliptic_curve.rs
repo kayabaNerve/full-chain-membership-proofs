@@ -332,9 +332,19 @@ impl<C: EmbeddedShortWeierstrass> EmbeddedCurveAddition for C {
     assert!(odd.is_none());
 
     // Prove at least one x coefficient is 1
-    // TODO: Can this be done in O(1)?
-    // Proving one x coefficient is 1 can't be, yet the actual goal of proving this divisor isn't
-    // identical to zero may be
+
+    // This is a O(n) algorithm since the polynomial is of variable length, and the highest-order
+    // term is the one with a coefficient of 1
+    //
+    // We can normalize so the lowest-order term has a coefficient of 1, yet it'd make some
+    // divisors unrepresentable. Doing so would speed this up 40%, and worth it if said divisors
+    // are negligible (divisors for when only two bits in the scalar were set)
+    //
+    // Alternatively, a distinct method for proving the divisor isn't identical to zero may be
+    // viable
+    //
+    // TODO
+
     {
       let mut last = None;
       for x_coeff in x_coefficients.iter().skip(1).copied() {
