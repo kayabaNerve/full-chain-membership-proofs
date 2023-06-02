@@ -9,6 +9,7 @@ mod single_range_proof;
 mod aggregate_range_proof;
 mod arithmetic_circuit_proof;
 mod arithmetic_circuit;
+mod vector_commitment;
 mod gadgets;
 
 pub type Generators<C> = (

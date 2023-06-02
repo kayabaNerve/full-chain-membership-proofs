@@ -20,7 +20,7 @@ use crate::{
 #[derive(Clone, Debug, Zeroize)]
 pub struct ArithmeticCircuitStatement<C: Ciphersuite> {
   g: C::G,
-  h: C::G,
+  pub(crate) h: C::G,
   g_bold1: PointVector<C>,
   g_bold2: PointVector<C>,
   h_bold1: PointVector<C>,
@@ -63,7 +63,7 @@ impl<C: Ciphersuite> ArithmeticCircuitWitness<C> {
 
 #[derive(Clone, Debug, Zeroize)]
 pub struct ArithmeticCircuitProof<C: Ciphersuite> {
-  A: C::G,
+  pub(crate) A: C::G,
   wip: WipProof<C>,
 }
 
@@ -191,11 +191,12 @@ impl<C: Ciphersuite> ArithmeticCircuitStatement<C> {
     )
   }
 
-  pub fn prove<R: RngCore + CryptoRng, T: Transcript>(
+  pub fn prove_with_blind<R: RngCore + CryptoRng, T: Transcript>(
     mut self,
     rng: &mut R,
     transcript: &mut T,
     mut witness: ArithmeticCircuitWitness<C>,
+    blind: C::F,
   ) -> ArithmeticCircuitProof<C> {
     let m = self.V.len();
 
@@ -215,7 +216,7 @@ impl<C: Ciphersuite> ArithmeticCircuitStatement<C> {
 
     self.initial_transcript(transcript);
 
-    let alpha = C::F::random(&mut *rng);
+    let alpha = blind;
     let A = self.g_bold1.mul_vec(&witness.aL).sum() +
       self.g_bold2.mul_vec(&witness.aO).sum() +
       self.h_bold1.mul_vec(&witness.aR).sum() +
@@ -240,6 +241,16 @@ impl<C: Ciphersuite> ArithmeticCircuitStatement<C> {
         y,
       ),
     }
+  }
+
+  pub fn prove<R: RngCore + CryptoRng, T: Transcript>(
+    self,
+    rng: &mut R,
+    transcript: &mut T,
+    witness: ArithmeticCircuitWitness<C>,
+  ) -> ArithmeticCircuitProof<C> {
+    let blind = C::F::random(&mut *rng);
+    self.prove_with_blind(rng, transcript, witness, blind)
   }
 
   // TODO: Use a BatchVerifier

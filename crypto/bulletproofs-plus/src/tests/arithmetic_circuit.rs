@@ -13,7 +13,7 @@ fn test_arithmetic_circuit() {
   let (g, h, g_bold1, g_bold2, h_bold1, h_bold2) = generators(128);
 
   // Basic circuit for:
-  // Commitmnts x, y, z, z1
+  // Commitments x, y, z, z1
   // x * y = z
   // z + 1 = z1
 
