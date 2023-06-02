@@ -16,10 +16,12 @@ Ed25519, the pasta curves, or tevone.
 
 Several optimizations are possible, such as:
 
+- Implementation of a proper vector commitment scheme
 - Removal of scalar matrix for a more direct structure
 - Support for batch verification
 - Removal of `Circuit::prove` and `Circuit::verify` for simply `Circuit::compile`
 - Post-processing of gates/constraints in `Circuit::compile`
+- Reduction of the amount of `clone`s
 
 Despite that, this library is performant enough to write and work with circuits.
 Accordingly, optimization has been delayed until after the initial proof of
@@ -27,3 +29,7 @@ concept is ready.
 
 This library uses asserts instead of `Result`. It also has extraneous asserts
 which should be moved to debug.
+
+The included vector commitment scheme code was largely tacked on and is
+accordingly much uglier than the rest of the code in this library. It could use
+a lot of love.

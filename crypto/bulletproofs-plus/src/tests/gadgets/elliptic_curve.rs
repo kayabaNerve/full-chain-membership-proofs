@@ -54,12 +54,20 @@ fn test_incomplete_addition() {
     circuit.equals_constant(circuit.variable_to_product(res_y).unwrap(), p3.1);
   };
 
-  let mut circuit =
-    Circuit::new(g, h, g_bold1.clone(), g_bold2.clone(), h_bold1.clone(), h_bold2.clone(), true);
+  let mut circuit = Circuit::new(
+    g,
+    h,
+    g_bold1.clone(),
+    g_bold2.clone(),
+    h_bold1.clone(),
+    h_bold2.clone(),
+    true,
+    None,
+  );
   gadget(&mut circuit);
   let proof = circuit.prove(&mut OsRng, &mut transcript.clone());
 
-  let mut circuit = Circuit::new(g, h, g_bold1, g_bold2, h_bold1, h_bold2, false);
+  let mut circuit = Circuit::new(g, h, g_bold1, g_bold2, h_bold1, h_bold2, false, Some(vec![]));
   gadget(&mut circuit);
   circuit.verify(&mut transcript, proof);
 }
@@ -67,6 +75,10 @@ fn test_incomplete_addition() {
 #[test]
 fn test_dlog_pok() {
   let (g, h, g_bold1, g_bold2, h_bold1, h_bold2) = generators(64 * 256);
+  let (additional_g_1, additional_g_2, additional_hs_1, additional_hs_2, _, _) =
+    generators::<Vesta>(64 * 256);
+  let additional_gs = (additional_g_1, additional_g_2);
+  let additional_hs = (additional_hs_1.0.clone(), additional_hs_2.0.clone());
 
   let transcript = RecommendedTranscript::new(b"Point DLog PoK Circuit Test");
 
@@ -94,15 +106,42 @@ fn test_dlog_pok() {
   };
 
   let test = |point: (_, _), dlog: Vec<_>| {
-    let mut circuit =
-      Circuit::new(g, h, g_bold1.clone(), g_bold2.clone(), h_bold1.clone(), h_bold2.clone(), true);
+    let mut circuit = Circuit::new(
+      g,
+      h,
+      g_bold1.clone(),
+      g_bold2.clone(),
+      h_bold1.clone(),
+      h_bold2.clone(),
+      true,
+      None,
+    );
     gadget(&mut circuit, point, dlog.clone());
-    let proof = circuit.prove(&mut OsRng, &mut transcript.clone());
+    let (_, commitments, proof, proofs) = circuit.prove_with_vector_commitments(
+      &mut OsRng,
+      &mut transcript.clone(),
+      additional_gs,
+      additional_hs.clone(),
+    );
 
-    let mut circuit =
-      Circuit::new(g, h, g_bold1.clone(), g_bold2.clone(), h_bold1.clone(), h_bold2.clone(), false);
+    let mut circuit = Circuit::new(
+      g,
+      h,
+      g_bold1.clone(),
+      g_bold2.clone(),
+      h_bold1.clone(),
+      h_bold2.clone(),
+      false,
+      Some(commitments),
+    );
     gadget(&mut circuit, point, dlog);
-    circuit.verify(&mut transcript.clone(), proof);
+    circuit.verify_with_vector_commitments(
+      &mut transcript.clone(),
+      additional_gs,
+      additional_hs.clone(),
+      proof,
+      proofs,
+    );
   };
 
   assert_eq!(<Pallas as Ciphersuite>::F::CAPACITY, <Vesta as Ciphersuite>::F::CAPACITY);

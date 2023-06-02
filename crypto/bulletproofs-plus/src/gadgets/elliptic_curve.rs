@@ -3,7 +3,7 @@ use subtle::ConditionallySelectable;
 use ciphersuite::{
   group::{
     ff::{Field, PrimeField},
-    Group,
+    Group, GroupEncoding,
   },
   Ciphersuite,
 };
@@ -24,7 +24,7 @@ pub trait EmbeddedShortWeierstrass: Ciphersuite {
 pub trait EmbeddedCurveAddition: Ciphersuite {
   type Embedded: Ecip<FieldElement = Self::F>;
 
-  /// Constrains a point to being on curve.
+  /// Constrains a point to being on curve and not the identity.
   fn constrain_on_curve(circuit: &mut Circuit<Self>, x: VariableReference, y: VariableReference);
 
   // Curve Trees, Appendix A.[4, 5]
@@ -158,7 +158,11 @@ impl<C: EmbeddedShortWeierstrass> EmbeddedCurveAddition for C {
     circuit.constrain(constraint);
   }
 
-  // This uses the EC IP which uses just 2.5 gates per point, beating incomplete addition.
+  // This uses the EC IP which uses just 2.5 gates per point, beating incomplete addition
+  // TODO: Due to the vector commitment scheme currently implemented, each gate causes six extra
+  // gates in distinct proofs (two gates per item, three items per gate (left, right, output)).
+  // That means this uses 17.5 gates per point
+  // If a zero-cost vector commitment scheme isn't implemented, this isn't worth it
   fn dlog_pok(
     circuit: &mut Circuit<Self>,
     G: <Self::Embedded as Ciphersuite>::G,
@@ -283,6 +287,7 @@ impl<C: EmbeddedShortWeierstrass> EmbeddedCurveAddition for C {
     let zero_coefficient = circuit.add_secret_input(zero_coefficient);
 
     // Use the above coefficients in products so they can be referred to in constraints
+    let mut transcript = vec![];
     let mut odd = Some(y_coefficient);
     let (y_coefficient, mut x_coefficients) = {
       let mut y_coeff = None;
@@ -299,6 +304,9 @@ impl<C: EmbeddedShortWeierstrass> EmbeddedCurveAddition for C {
           new_x_coeffs.push(l);
         }
         new_x_coeffs.push(r);
+
+        transcript.push(l);
+        transcript.push(r);
       }
       (y_coeff.unwrap(), new_x_coeffs)
     };
@@ -317,6 +325,9 @@ impl<C: EmbeddedShortWeierstrass> EmbeddedCurveAddition for C {
           new_yx_coeffs.push(l);
         }
         new_yx_coeffs.push(r);
+
+        transcript.push(l);
+        transcript.push(r);
       }
       new_yx_coeffs
     };
@@ -324,10 +335,16 @@ impl<C: EmbeddedShortWeierstrass> EmbeddedCurveAddition for C {
     let zero_coefficient = if let Some(odd) = odd.take() {
       let ((yx_coeff, zero_coeff, _), _) = circuit.product(odd, zero_coefficient);
       yx_coefficients.push(yx_coeff);
+
+      transcript.push(yx_coeff);
+      transcript.push(zero_coeff);
+
       zero_coeff
     } else {
       // TODO: Merge with something else
-      circuit.product(zero_coefficient, zero_coefficient).0 .0
+      let product_ref = circuit.product(zero_coefficient, zero_coefficient).0 .0;
+      transcript.push(product_ref);
+      product_ref
     };
     assert!(odd.is_none());
 
@@ -387,13 +404,21 @@ impl<C: EmbeddedShortWeierstrass> EmbeddedCurveAddition for C {
       circuit.constrain(constraint);
     }
 
-    // TODO: This divisor (and the actually selected points) needs to be committed to (equality
-    // with a provided vector commitment)
-    // If we need to commit to the actually selected points, we should commit to the DLog since
-    // that can be done with just one mul gate/constraint via recomposing the bits
+    // Commit to the divisor
+    let commitment = circuit.allocate_vector_commitment();
+    for var in transcript {
+      circuit.bind(commitment, var, None);
+    }
+    // Also commit to the DLog
+    for bit in dlog {
+      // TODO: This requires the DLog bit not be prior bound. How safe is that?
+      circuit.bind(commitment, circuit.variable_to_product(bit.variable).unwrap(), None);
+    }
 
+    let commitment = circuit.finalize_commitment(commitment);
     // TODO: Select a challenge point using a hash to curve
-    let challenge = C::Embedded::generator() * C::Embedded::hash_to_F(b"ecip", b"challenge");
+    let challenge =
+      C::Embedded::generator() * C::Embedded::hash_to_F(b"ecip", commitment.to_bytes().as_ref());
 
     // Evaluate the divisor over the challenge, and over -challenge
     let (challenge_x, challenge_y) = C::Embedded::to_xy(challenge);

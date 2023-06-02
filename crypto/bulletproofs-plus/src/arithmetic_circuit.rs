@@ -1,4 +1,4 @@
-use std::collections::{HashSet, BTreeMap};
+use std::collections::{HashSet, HashMap, BTreeMap};
 
 use zeroize::{Zeroize, ZeroizeOnDrop};
 use rand_core::{RngCore, CryptoRng};
@@ -57,7 +57,7 @@ pub enum ProductReference {
 }
 #[derive(Copy, Clone, Debug, Zeroize)]
 pub struct CommitmentReference(usize);
-#[derive(Copy, Clone, Debug, Zeroize)]
+#[derive(Copy, Clone, PartialEq, Eq, Hash, Debug, Zeroize)]
 pub struct VectorCommitmentReference(usize);
 
 #[derive(Clone, Debug)]
@@ -138,10 +138,12 @@ pub struct Circuit<C: Ciphersuite> {
   prover: bool,
 
   commitments: usize,
-  variables: Vec<Variable<C>>,
+  pub(crate) variables: Vec<Variable<C>>,
 
   products: Vec<Product>,
-  bound_products: Vec<BTreeMap<ProductReference, C::G>>,
+  bound_products: Vec<BTreeMap<ProductReference, Option<C::G>>>,
+  finalized_commitments: HashMap<VectorCommitmentReference, Option<C::F>>,
+  vector_commitments: Option<Vec<C::G>>,
 
   constraints: Vec<Constraint<C>>,
 }
@@ -155,7 +157,10 @@ impl<C: Ciphersuite> Circuit<C> {
     h_bold1: PointVector<C>,
     h_bold2: PointVector<C>,
     prover: bool,
+    vector_commitments: Option<Vec<C::G>>,
   ) -> Self {
+    assert_eq!(prover, vector_commitments.is_none());
+
     Self {
       g,
       h,
@@ -171,6 +176,8 @@ impl<C: Ciphersuite> Circuit<C> {
 
       products: vec![],
       bound_products: vec![],
+      finalized_commitments: HashMap::new(),
+      vector_commitments,
 
       constraints: vec![],
     }
@@ -210,9 +217,15 @@ impl<C: Ciphersuite> Circuit<C> {
       if let Variable::Product(var_product_id, _) = self.variables[*this_variable] {
         debug_assert_eq!(var_product_id, product_id);
         if variable.0 == *l {
-          return Some(ProductReference::Left { product: product_id, variable: *this_variable });
+          return Some(ProductReference::Left {
+            product: product_id,
+            variable: self.products[var_product_id].left,
+          });
         } else {
-          return Some(ProductReference::Right { product: product_id, variable: *this_variable });
+          return Some(ProductReference::Right {
+            product: product_id,
+            variable: self.products[var_product_id].right,
+          });
         }
       } else {
         panic!("product pointed to non-product variable");
@@ -325,25 +338,59 @@ impl<C: Ciphersuite> Circuit<C> {
     self.constrain(constraint);
   }
 
-  // Allocate a vector commitment ID
+  /// Allocate a vector commitment ID.
   pub fn allocate_vector_commitment(&mut self) -> VectorCommitmentReference {
     let res = VectorCommitmentReference(self.bound_products.len());
     self.bound_products.push(BTreeMap::new());
     res
   }
 
-  // Bind a product variable into a vector commitment, using the specified generator
+  /// Bind a product variable into a vector commitment, using the specified generator.
+  ///
+  /// If no generator is specified, the proof's existing generator will be used. This allows
+  /// isolating the variable, prior to the circuit, without caring for how it was isolated.
   pub fn bind(
     &mut self,
     vector_commitment: VectorCommitmentReference,
     product: ProductReference,
-    generator: C::G,
+    generator: Option<C::G>,
   ) {
+    assert!(!self.finalized_commitments.contains_key(&vector_commitment));
+
     // TODO: Check generators are unique (likely best done in the Wip itself)
     for bound in &self.bound_products {
       assert!(!bound.contains_key(&product));
     }
     self.bound_products[vector_commitment.0].insert(product, generator);
+  }
+
+  /// Finalize a vector commitment, returning it, preventing further binding.
+  pub fn finalize_commitment(&mut self, vector_commitment: VectorCommitmentReference) -> C::G {
+    if self.prover() {
+      let blind = C::F::random(&mut rand_core::OsRng); // TODO: Don't use the OsRng here
+
+      // Calculate and return the vector commitment
+      // TODO: Use a multiexp here
+      let mut commitment = self.h * blind;
+      for (product, generator) in self.bound_products[vector_commitment.0].clone() {
+        commitment += match product {
+          ProductReference::Left { product, variable } => {
+            generator.unwrap_or(self.g_bold1[product]) * self.variables[variable].value().unwrap()
+          }
+          ProductReference::Right { product, variable } => {
+            generator.unwrap_or(self.h_bold1[product]) * self.variables[variable].value().unwrap()
+          }
+          ProductReference::Output { product, variable } => {
+            generator.unwrap_or(self.g_bold2[product]) * self.variables[variable].value().unwrap()
+          }
+        };
+      }
+      self.finalized_commitments.insert(vector_commitment, Some(blind));
+      commitment
+    } else {
+      self.finalized_commitments.insert(vector_commitment, None);
+      self.vector_commitments.as_ref().unwrap()[vector_commitment.0]
+    }
   }
 
   // TODO: This can be optimized with post-processing passes
@@ -363,7 +410,7 @@ impl<C: Ciphersuite> Circuit<C> {
       let mut v = vec![];
       let mut gamma = vec![];
 
-      for variable in self.variables.iter() {
+      for variable in &self.variables {
         match variable {
           Variable::Secret(_) => {}
           Variable::Committed(value, actual) => {
@@ -463,16 +510,19 @@ impl<C: Ciphersuite> Circuit<C> {
         let g = *g;
         match *product {
           ProductReference::Left { product, .. } => {
+            let g = g.unwrap_or(self.g_bold1[product]);
             self.g_bold1[product] = g;
             vc_used.insert(('l', product));
             vector_commitments[vc].push((witness.as_ref().map(|witness| witness.aL[product]), g));
           }
           ProductReference::Right { product, .. } => {
+            let g = g.unwrap_or(self.h_bold1[product]);
             self.h_bold1[product] = g;
             vc_used.insert(('r', product));
             vector_commitments[vc].push((witness.as_ref().map(|witness| witness.aR[product]), g));
           }
           ProductReference::Output { product, .. } => {
+            let g = g.unwrap_or(self.g_bold2[product]);
             self.g_bold2[product] = g;
             vc_used.insert(('o', product));
             vector_commitments[vc]
@@ -596,6 +646,7 @@ impl<C: Ciphersuite> Circuit<C> {
   ) -> (Vec<C::F>, Vec<C::G>, ArithmeticCircuitProof<C>, Vec<(WipProof<C>, WipProof<C>)>) {
     assert!(self.prover);
 
+    let finalized_commitments = self.finalized_commitments.clone();
     let (statement, mut vector_commitments, others, witness) = self.compile();
     assert!(!vector_commitments.is_empty());
     let witness = witness.unwrap();
@@ -622,6 +673,8 @@ impl<C: Ciphersuite> Circuit<C> {
       The security of this is assumed. Technically, the commitment being well-formed isn't
       guaranteed by the Weighted Inner Product relationship. A formal proof of the security of this
       requires that property being proven. Such a proof may already exist as part of the WIP proof.
+
+      TODO
     */
 
     fn well_formed<R: RngCore + CryptoRng, C: Ciphersuite, T: Transcript>(
@@ -678,14 +731,20 @@ impl<C: Ciphersuite> Circuit<C> {
     let mut blinds = vec![];
     let mut commitments = vec![];
     let mut proofs = vec![];
-    for vector_commitment in vector_commitments.drain(..) {
+    for (vc, vector_commitment) in vector_commitments.drain(..).enumerate() {
       let mut scalars = vec![];
       let mut generators = vec![];
       for (var, point) in vector_commitment {
         scalars.push(var.unwrap());
         generators.push(point);
       }
-      blinds.push(C::F::random(&mut *rng));
+      blinds.push(
+        finalized_commitments
+          .get(&VectorCommitmentReference(vc))
+          .cloned()
+          .unwrap_or(Some(C::F::random(&mut *rng)))
+          .unwrap(),
+      );
 
       let (commitment, proof) = well_formed::<_, C, _>(
         &mut *rng,
@@ -742,11 +801,11 @@ impl<C: Ciphersuite> Circuit<C> {
     transcript: &mut T,
     additional_proving_gs: (C::G, C::G),
     additional_proving_hs: (Vec<C::G>, Vec<C::G>),
-    vector_commitments: Vec<C::G>,
     proof: ArithmeticCircuitProof<C>,
     mut vc_proofs: Vec<(WipProof<C>, WipProof<C>)>,
   ) {
     assert!(!self.prover);
+    let vector_commitments = self.vector_commitments.clone().unwrap();
     let (statement, mut vector_commitments_data, mut others, _) = self.compile();
     assert_eq!(vector_commitments.len(), vector_commitments_data.len());
 

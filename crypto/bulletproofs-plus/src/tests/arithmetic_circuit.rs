@@ -81,8 +81,16 @@ fn test_arithmetic_circuit() {
 
   let mut transcript = RecommendedTranscript::new(b"Arithmetic Circuit Test");
 
-  let mut circuit =
-    Circuit::new(g, h, g_bold1.clone(), g_bold2.clone(), h_bold1.clone(), h_bold2.clone(), true);
+  let mut circuit = Circuit::new(
+    g,
+    h,
+    g_bold1.clone(),
+    g_bold2.clone(),
+    h_bold1.clone(),
+    h_bold2.clone(),
+    true,
+    None,
+  );
   gadget(
     &mut circuit,
     Some((x.clone(), y.clone(), z.clone(), z1.clone())),
@@ -90,7 +98,7 @@ fn test_arithmetic_circuit() {
   );
   let proof = circuit.prove(&mut OsRng, &mut transcript.clone());
 
-  let mut circuit = Circuit::new(g, h, g_bold1, g_bold2, h_bold1, h_bold2, false);
+  let mut circuit = Circuit::new(g, h, g_bold1, g_bold2, h_bold1, h_bold2, false, Some(vec![]));
   gadget(
     &mut circuit,
     None,
