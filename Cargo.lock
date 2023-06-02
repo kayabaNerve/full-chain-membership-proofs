@@ -336,6 +336,7 @@ version = "0.1.0"
 dependencies = [
  "bulletproofs-plus",
  "ciphersuite",
+ "ecip",
  "flexible-transcript",
  "multiexp",
  "pasta_curves 0.5.1 (git+https://github.com/kayabaNerve/pasta_curves.git)",

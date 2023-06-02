@@ -5,6 +5,8 @@ use ciphersuite::{
   Ciphersuite,
 };
 
+use ecip::Ecip;
+
 use crate::{CurveCycle, pedersen_hash::pedersen_hash_vartime};
 
 #[derive(Clone, PartialEq, Eq, Debug)]
@@ -90,7 +92,7 @@ impl<C: CurveCycle> Tree<C> {
       if (l % 2) == 1 {
         let mut next_gens = vec![];
         for i in 0 .. (width_u64 * 2) {
-          next_gens.push(C::c2_hash_to_curve(
+          next_gens.push(<C::C2 as Ecip>::hash_to_G(
             "Curve Tree, Odd Generator",
             &[l_bytes.as_ref(), i.to_le_bytes().as_ref()].concat(),
           ));
@@ -99,7 +101,7 @@ impl<C: CurveCycle> Tree<C> {
       } else {
         let mut next_gens = vec![];
         for i in 0 .. (width_u64 * 2) {
-          next_gens.push(C::c1_hash_to_curve(
+          next_gens.push(<C::C1 as Ecip>::hash_to_G(
             "Curve Tree, Even Generator",
             &[l_bytes.as_ref(), i.to_le_bytes().as_ref()].concat(),
           ));

@@ -417,8 +417,7 @@ impl<C: EmbeddedShortWeierstrass> EmbeddedCurveAddition for C {
 
     let commitment = circuit.finalize_commitment(commitment);
     // TODO: Select a challenge point using a hash to curve
-    let challenge =
-      C::Embedded::generator() * C::Embedded::hash_to_F(b"ecip", commitment.to_bytes().as_ref());
+    let challenge = C::Embedded::hash_to_G("bp+_ecip", commitment.to_bytes().as_ref());
 
     // Evaluate the divisor over the challenge, and over -challenge
     let (challenge_x, challenge_y) = C::Embedded::to_xy(challenge);

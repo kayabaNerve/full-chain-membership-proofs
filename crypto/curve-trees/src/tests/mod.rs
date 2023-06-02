@@ -1,4 +1,4 @@
-use pasta_curves::arithmetic::{Coordinates, CurveExt, CurveAffine};
+use pasta_curves::arithmetic::{Coordinates, CurveAffine};
 use ciphersuite::{
   group::{ff::Field, Curve},
   Ciphersuite, Pallas, Vesta,
@@ -27,12 +27,5 @@ impl CurveCycle for Pasta {
     Option::<Coordinates<_>>::from(point.to_affine().coordinates())
       .map(|coords| (*coords.x(), *coords.y()))
       .unwrap_or((<Self::C1 as Ciphersuite>::F::ZERO, <Self::C1 as Ciphersuite>::F::ZERO))
-  }
-
-  fn c1_hash_to_curve(label: &'static str, value: &[u8]) -> <Self::C1 as Ciphersuite>::G {
-    <Pallas as Ciphersuite>::G::hash_to_curve(label)(value)
-  }
-  fn c2_hash_to_curve(label: &'static str, value: &[u8]) -> <Self::C2 as Ciphersuite>::G {
-    <Vesta as Ciphersuite>::G::hash_to_curve(label)(value)
   }
 }

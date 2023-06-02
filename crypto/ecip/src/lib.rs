@@ -21,6 +21,9 @@ pub trait Ecip: Ciphersuite {
   /// Panics if off-curve.
   // This isn't used in-lib, yet is helpful to users
   fn from_xy(x: Self::FieldElement, y: Self::FieldElement) -> Self::G;
+
+  // Required to securely generate challenge points.
+  fn hash_to_G(domain: &'static str, data: &[u8]) -> Self::G;
 }
 
 #[derive(Clone, PartialEq, Eq, Debug)]
@@ -467,7 +470,7 @@ impl<C: Ecip> Divisor<C> {
 
 #[cfg(any(test, feature = "pasta"))]
 mod pasta {
-  use pasta_curves::arithmetic::{Coordinates, CurveAffine};
+  use pasta_curves::arithmetic::{Coordinates, CurveAffine, CurveExt};
   use ciphersuite::{
     group::{ff::Field, Curve},
     Ciphersuite, Pallas, Vesta,
@@ -492,6 +495,10 @@ mod pasta {
         .map(|coords| (*coords.x(), *coords.y()))
         .unwrap_or((<Vesta as Ciphersuite>::F::ZERO, <Vesta as Ciphersuite>::F::ZERO))
     }
+
+    fn hash_to_G(domain: &str, data: &[u8]) -> Self::G {
+      <Pallas as Ciphersuite>::G::hash_to_curve(domain)(data)
+    }
   }
 
   impl Ecip for Vesta {
@@ -510,6 +517,10 @@ mod pasta {
       Option::<Coordinates<_>>::from(point.to_affine().coordinates())
         .map(|coords| (*coords.x(), *coords.y()))
         .unwrap_or((<Pallas as Ciphersuite>::F::ZERO, <Pallas as Ciphersuite>::F::ZERO))
+    }
+
+    fn hash_to_G(domain: &str, data: &[u8]) -> Self::G {
+      <Vesta as Ciphersuite>::G::hash_to_curve(domain)(data)
     }
   }
 }
