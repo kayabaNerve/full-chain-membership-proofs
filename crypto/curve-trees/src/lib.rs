@@ -93,7 +93,7 @@ pub fn layer_gadget<R: RngCore + CryptoRng, C: CurveCycle>(
   last: bool,
 ) -> (Option<<C::C1 as Ciphersuite>::F>, <C::C2 as Ciphersuite>::G) {
   // Unblind the point
-  let (x_coord, y_coord) = {
+  let unblinded = {
     let (blind_x, blind_y) = if let Some(blind) = blind {
       let mut repr = <<C::C1 as Ciphersuite>::F as PrimeField>::Repr::default();
       repr.as_mut().copy_from_slice(blind.to_repr().as_ref());
@@ -105,7 +105,7 @@ pub fn layer_gadget<R: RngCore + CryptoRng, C: CurveCycle>(
     };
     let blind_x = circuit.add_secret_input(blind_x);
     let blind_y = circuit.add_secret_input(blind_y);
-    C::C2::constrain_on_curve(circuit, blind_x, blind_y);
+    let blind_var = C::C2::constrain_on_curve(circuit, blind_x, blind_y);
 
     // Prove we know the DLog of the point we're unblinding by to prevent unblinding by arbitrary
     // points
@@ -130,24 +130,22 @@ pub fn layer_gadget<R: RngCore + CryptoRng, C: CurveCycle>(
       for bit in raw_bits {
         dlog.push(Bit::new_from_choice(circuit, bit));
       }
-      C::C2::dlog_pok(&mut *rng, circuit, H, blind_x, blind_y, &dlog);
+      C::C2::dlog_pok(&mut *rng, circuit, H, blind_var, &dlog);
     }
 
     // Perform the addition
     let (point_x, point_y) = C::c1_coords(blinded_point);
+
     // The prover can set these variables to anything
     // TODO: Add incomplete_add where one point isn't ZK
     let point_x_var = circuit.add_secret_input(Some(point_x).filter(|_| circuit.prover()));
     let point_y_var = circuit.add_secret_input(Some(point_y).filter(|_| circuit.prover()));
-    circuit.product(point_x_var, point_y_var);
-    let unblinded = C::C2::incomplete_add(circuit, point_x_var, point_y_var, blind_x, blind_y);
+    let point_var = C::C2::constrain_on_curve(circuit, point_x_var, point_y_var);
     // Constrain the above variables
-    // This is delayed so the incomplete_add uses them in a product statement, preventing us from
-    // needing our own product statement
-    // This also doesn't require checking on curve since it's against a known on-curve point
     circuit.equals_constant(circuit.variable_to_product(point_x_var).unwrap(), point_x);
     circuit.equals_constant(circuit.variable_to_product(point_y_var).unwrap(), point_y);
-    unblinded
+
+    C::C2::incomplete_add(circuit, point_var, blind_var)
   };
 
   // Create the branch hash
@@ -164,9 +162,9 @@ pub fn layer_gadget<R: RngCore + CryptoRng, C: CurveCycle>(
     }
 
     // Ensure the unblnded point's x/y coordinates are actually present
-    let x_pos = find_index_gadget(circuit, x_coord, &x_coords);
+    let x_pos = find_index_gadget(circuit, unblinded.x(), &x_coords);
     let x_pos = circuit.variable_to_product(x_pos).unwrap();
-    let y_pos = find_index_gadget(circuit, y_coord, &y_coords);
+    let y_pos = find_index_gadget(circuit, unblinded.y(), &y_coords);
     let y_pos = circuit.variable_to_product(y_pos).unwrap();
     circuit.constrain_equality(x_pos, y_pos);
 

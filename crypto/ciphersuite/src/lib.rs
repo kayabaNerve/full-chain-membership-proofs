@@ -55,7 +55,12 @@ pub trait Ciphersuite:
   // This is available via G::Scalar yet `C::G::Scalar` is ambiguous, forcing horrific accesses
   type F: PrimeField + PrimeFieldBits + Zeroize;
   /// Group element type.
-  type G: Group<Scalar = Self::F> + GroupOps + PrimeGroup + Zeroize + ConstantTimeEq + ConditionallySelectable;
+  type G: Group<Scalar = Self::F>
+    + GroupOps
+    + PrimeGroup
+    + Zeroize
+    + ConstantTimeEq
+    + ConditionallySelectable;
   /// Hash algorithm used with this curve.
   // Requires BlockSizeUser so it can be used within Hkdf which requies that.
   type H: Send + Clone + BlockSizeUser + Digest + HashMarker + SecureDigest;

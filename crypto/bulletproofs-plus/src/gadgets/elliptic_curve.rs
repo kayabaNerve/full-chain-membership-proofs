@@ -17,28 +17,49 @@ use crate::{
   gadgets::{Bit, assert_non_zero_gadget},
 };
 
-pub trait EmbeddedShortWeierstrass: Ciphersuite {
-  type Embedded: Ecip<FieldElement = Self::F>;
+/// An on-curve point which is not identity.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct OnCurvePoint {
+  x: VariableReference,
+  y: VariableReference,
+}
 
-  const B: u64;
+impl OnCurvePoint {
+  pub fn x(&self) -> VariableReference {
+    self.x
+  }
+  pub fn y(&self) -> VariableReference {
+    self.y
+  }
 }
 
 /// Perform operations over the curve embedded into the proof's curve.
 pub trait EmbeddedCurveOperations: Ciphersuite {
   type Embedded: Ecip<FieldElement = Self::F>;
 
-  /// Constrains a point to being on curve and not the identity.
-  fn constrain_on_curve(circuit: &mut Circuit<Self>, x: VariableReference, y: VariableReference);
+  /// Constrains a point to being on curve AND not being the identity.
+  fn constrain_on_curve(
+    circuit: &mut Circuit<Self>,
+    x: VariableReference,
+    y: VariableReference,
+  ) -> OnCurvePoint;
+
+  /// Performs addition between two points, where P1 != P2, P1 != -P2, and neither P1 nor P2 are
+  /// identity.
+  ///
+  /// The only checks performed by this function is P1 != P2 and P1 != -P2. Neither point is
+  /// checked to not be identity.
 
   // Curve Trees, Appendix A.[4, 5]
   // This uses 4 gates theoretically, 5 as implemented here, and 6 constraints
   fn incomplete_add(
     circuit: &mut Circuit<Self>,
-    x1: VariableReference,
-    y1: VariableReference,
-    x2: VariableReference,
-    y2: VariableReference,
-  ) -> (VariableReference, VariableReference) {
+    p1: OnCurvePoint,
+    p2: OnCurvePoint,
+  ) -> OnCurvePoint {
+    let OnCurvePoint { x: x1, y: y1 } = p1;
+    let OnCurvePoint { x: x2, y: y2 } = p2;
+
     let (x3, y3, slope, x2m1, x3m1) = if circuit.prover() {
       let x1_var = circuit.unchecked_value(x1).unwrap();
       let y1_var = circuit.unchecked_value(y1).unwrap();
@@ -144,7 +165,7 @@ pub trait EmbeddedCurveOperations: Ciphersuite {
       circuit.constrain(constraint);
     }
 
-    (x3, y3)
+    OnCurvePoint { x: x3, y: y3 }
   }
 
   // This uses the EC IP which uses just 2.5 gates per point, beating incomplete addition
@@ -156,12 +177,9 @@ pub trait EmbeddedCurveOperations: Ciphersuite {
     rng: &mut R,
     circuit: &mut Circuit<Self>,
     G: <Self::Embedded as Ciphersuite>::G,
-    x: VariableReference,
-    y: VariableReference,
+    p: OnCurvePoint,
     dlog: &[Bit],
   ) {
-    let known_dlog_x = x;
-
     let CAPACITY = <Self::Embedded as Ciphersuite>::F::CAPACITY.min(Self::F::CAPACITY);
     assert_eq!(u32::try_from(dlog.len()).unwrap(), CAPACITY);
 
@@ -199,8 +217,8 @@ pub trait EmbeddedCurveOperations: Ciphersuite {
     let (divisor, y_coefficient, yx_coefficients, x_coefficients, zero_coefficient) =
       if circuit.prover() {
         Gs.push(-Self::Embedded::from_xy(
-          circuit.unchecked_value(known_dlog_x).unwrap(),
-          circuit.unchecked_value(y).unwrap(),
+          circuit.unchecked_value(p.x).unwrap(),
+          circuit.unchecked_value(p.y).unwrap(),
         ));
         assert_eq!(Gs.len(), points);
 
@@ -494,7 +512,7 @@ pub trait EmbeddedCurveOperations: Ciphersuite {
 
     // Include the point the prover is claiming to know the DLog for
     let challenge_x_sub_x = circuit.add_secret_input(if circuit.prover() {
-      Some(challenge_x - circuit.unchecked_value(known_dlog_x).unwrap())
+      Some(challenge_x - circuit.unchecked_value(p.x).unwrap())
     } else {
       None
     });
@@ -502,7 +520,7 @@ pub trait EmbeddedCurveOperations: Ciphersuite {
     let mut constraint = Constraint::new("challenge_x_sub_x");
     constraint.weight(
       circuit
-        .variable_to_product(known_dlog_x)
+        .variable_to_product(p.x)
         .expect("point used in DLog PoK wasn't checked to be on curve"),
       Self::F::ONE,
     );
@@ -517,10 +535,21 @@ pub trait EmbeddedCurveOperations: Ciphersuite {
   }
 }
 
+pub trait EmbeddedShortWeierstrass: Ciphersuite {
+  type Embedded: Ecip<FieldElement = Self::F>;
+
+  const B: u64;
+}
+
 impl<C: EmbeddedShortWeierstrass> EmbeddedCurveOperations for C {
   type Embedded = <C as EmbeddedShortWeierstrass>::Embedded;
 
-  fn constrain_on_curve(circuit: &mut Circuit<Self>, x: VariableReference, y: VariableReference) {
+  // y**2 = x**3 + B
+  fn constrain_on_curve(
+    circuit: &mut Circuit<Self>,
+    x: VariableReference,
+    y: VariableReference,
+  ) -> OnCurvePoint {
     let ((_, _, y2_prod), _) = circuit.product(y, y);
     let (_, x2) = circuit.product(x, x);
     let ((_, _, x3), _) = circuit.product(x2, x);
@@ -530,5 +559,7 @@ impl<C: EmbeddedShortWeierstrass> EmbeddedCurveOperations for C {
     constraint.weight(x3, -Self::F::ONE);
     constraint.rhs_offset(Self::F::from(Self::B));
     circuit.constrain(constraint);
+
+    OnCurvePoint { x, y }
   }
 }
