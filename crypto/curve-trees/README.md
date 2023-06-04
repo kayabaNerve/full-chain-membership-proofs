@@ -1,15 +1,19 @@
 # Curve Trees
 
-An implementation of [Curve Trees](https://eprint.iacr.org/2022/756), with some
-modifications.
+An implementation of the ideas behind
+[Curve Trees](https://eprint.iacr.org/2022/756), albeit not the exact protocol.
 
-## Modifications
+This library is premised on BP+, not BP, which offers a proof for an identical
+arithmetic circuit relationship as BPs. Despite this, Curve Trees actually
+expects a distinct relationship supporting vector commitments. The authors notes
+can be found [here](https://hackmd.io/6g5oC5xWRLOoYcTnYBuE7Q).
 
-- This library is premised on BP+, not BP, which offers a proof for an identical
-  relationship as expected from BP.
-- It's planned to use the ECC addition provided by BP+. At time of writing,
-  the BP+ ECC addition gadget uses the complete Weierstrass formulas, not the
-  method described in A.4.
+The BP+ library utilized implements its own vector commitment scheme pending
+formalization of the author's work.
+
+This work uses the BP+ library's provided ECC gadgets, which include a DLog PoK
+which is roughly 50% more efficient than the incomplete addition series
+described in the Curve Trees paper.
 
 ## Status
 
@@ -19,18 +23,9 @@ modifications.
      two, and doesn't archive no longer needed left hand nodes.
   3) A pop algorithm, so reorgs can be successfully handled.
 
+- Some optimizations from the Curve Trees paper are missing, most notably
+  single-coordinate hashing. Set membership can be done in n gates, yet the
+  dual set-membership currently used takes 5n.
+
 - This library uses asserts instead of `Result`. It also has extraneous asserts
   which should be moved to debug.
-
-## Notes
-
-- The paper describes Pedersen hashes as native to Bulletproofs. While they are,
-  somewhat, neither BP nor BP+ allow writing constraints around them. The
-  authors modified their fork of dalek's Bulletproofs to support such
-  constraints. This has yet to be formalized, though a write-up can be found
-  [here](https://hackmd.io/6g5oC5xWRLOoYcTnYBuE7Q).
-
-  If the idea passes an initial sanity check, it'll be used. Before deployment,
-  formal proofs and peer review would be needed. Alternatively, `h + b`
-  additional Bulletproofs can be used, where `h` is the amount of Pedersen
-  hashes needed and `b` is the amount of Bulletproofs used for the circuit.
