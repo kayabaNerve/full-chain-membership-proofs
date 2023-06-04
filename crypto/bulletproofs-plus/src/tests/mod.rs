@@ -4,12 +4,19 @@ use ciphersuite::{group::Group, Ciphersuite, Pallas, Vesta};
 
 use crate::{PointVector, gadgets::elliptic_curve::EmbeddedShortWeierstrass};
 
+#[cfg(test)]
 mod weighted_inner_product;
+#[cfg(test)]
 mod single_range_proof;
+#[cfg(test)]
 mod aggregate_range_proof;
+#[cfg(test)]
 mod arithmetic_circuit_proof;
+#[cfg(test)]
 mod arithmetic_circuit;
+#[cfg(test)]
 mod vector_commitment;
+#[cfg(test)]
 mod gadgets;
 
 pub type Generators<C> = (

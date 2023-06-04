@@ -35,3 +35,4 @@ pasta_curves = { version = "0.5", default-features = false, features = ["bits", 
 ciphersuite = { path = "../ciphersuite", features = ["ristretto", "pasta"] }
 
 ecip = { path = "../ecip", features = ["pasta"] }
+bulletproofs-plus = { path = "../bulletproofs-plus", features = ["tests"] }

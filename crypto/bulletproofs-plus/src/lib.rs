@@ -21,8 +21,8 @@ pub mod arithmetic_circuit;
 
 pub mod gadgets;
 
-#[cfg(test)]
-pub(crate) mod tests;
+#[cfg(any(test, feature = "tests"))]
+pub mod tests;
 
 pub const RANGE_PROOF_BITS: usize = 64;
 

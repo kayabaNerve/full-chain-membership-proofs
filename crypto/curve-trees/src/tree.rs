@@ -113,6 +113,10 @@ impl<C: CurveCycle> Tree<C> {
     Tree { width, odd_generators, even_generators, node: Node::new(false), paths: HashMap::new() }
   }
 
+  pub fn width(&self) -> usize {
+    self.width
+  }
+
   pub fn depth(&self) -> usize {
     depth(&self.node)
   }

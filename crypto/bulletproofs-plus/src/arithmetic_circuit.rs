@@ -10,8 +10,9 @@ use ciphersuite::{
 };
 
 use crate::{
-  ScalarVector, ScalarMatrix, PointVector, weighted_inner_product::*, arithmetic_circuit_proof::*,
+  ScalarVector, ScalarMatrix, PointVector, weighted_inner_product::*, arithmetic_circuit_proof,
 };
+pub use arithmetic_circuit_proof::*;
 
 #[allow(non_snake_case)]
 #[derive(Clone, PartialEq, Eq, Debug, Zeroize, ZeroizeOnDrop)]
@@ -185,6 +186,10 @@ impl<C: Ciphersuite> Circuit<C> {
 
   pub fn prover(&self) -> bool {
     self.prover
+  }
+
+  pub fn h(&self) -> C::G {
+    self.h
   }
 
   /// Obtain the underlying variable from a reference.
@@ -365,13 +370,11 @@ impl<C: Ciphersuite> Circuit<C> {
   }
 
   /// Finalize a vector commitment, returning it, preventing further binding.
-  pub fn finalize_commitment(&mut self, vector_commitment: VectorCommitmentReference) -> C::G {
+  pub fn finalize_commitment(&mut self, vector_commitment: VectorCommitmentReference, blind: Option<C::F>) -> C::G {
     if self.prover() {
-      let blind = C::F::random(&mut rand_core::OsRng); // TODO: Don't use the OsRng here
-
       // Calculate and return the vector commitment
       // TODO: Use a multiexp here
-      let mut commitment = self.h * blind;
+      let mut commitment = self.h * blind.unwrap();
       for (product, generator) in self.bound_products[vector_commitment.0].clone() {
         commitment += match product {
           ProductReference::Left { product, variable } => {
@@ -385,9 +388,10 @@ impl<C: Ciphersuite> Circuit<C> {
           }
         };
       }
-      self.finalized_commitments.insert(vector_commitment, Some(blind));
+      self.finalized_commitments.insert(vector_commitment, blind);
       commitment
     } else {
+      assert!(blind.is_none());
       self.finalized_commitments.insert(vector_commitment, None);
       self.vector_commitments.as_ref().unwrap()[vector_commitment.0]
     }
@@ -629,6 +633,7 @@ impl<C: Ciphersuite> Circuit<C> {
 
   pub fn verify<T: Transcript>(self, transcript: &mut T, proof: ArithmeticCircuitProof<C>) {
     assert!(!self.prover);
+    assert!(self.vector_commitments.as_ref().unwrap().is_empty());
     let (statement, vector_commitments, _, _) = self.compile();
     assert!(vector_commitments.is_empty());
     statement.verify(transcript, proof)

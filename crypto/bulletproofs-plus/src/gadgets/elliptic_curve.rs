@@ -1,3 +1,5 @@
+use rand_core::{RngCore, CryptoRng};
+
 use subtle::ConditionallySelectable;
 
 use ciphersuite::{
@@ -134,42 +136,21 @@ pub trait EmbeddedCurveAddition: Ciphersuite {
     (x3, y3)
   }
 
-  fn dlog_pok(
-    circuit: &mut Circuit<Self>,
-    G: <Self::Embedded as Ciphersuite>::G,
-    x: VariableReference,
-    y: VariableReference,
-    dlog: &[Bit],
-  );
-}
-
-impl<C: EmbeddedShortWeierstrass> EmbeddedCurveAddition for C {
-  type Embedded = <C as EmbeddedShortWeierstrass>::Embedded;
-
-  fn constrain_on_curve(circuit: &mut Circuit<Self>, x: VariableReference, y: VariableReference) {
-    let ((_, _, y2_prod), _) = circuit.product(y, y);
-    let (_, x2) = circuit.product(x, x);
-    let ((_, _, x3), _) = circuit.product(x2, x);
-
-    let mut constraint = Constraint::new("on-curve");
-    constraint.weight(y2_prod, C::F::ONE);
-    constraint.weight(x3, -C::F::ONE);
-    constraint.rhs_offset(C::F::from(Self::B));
-    circuit.constrain(constraint);
-  }
-
   // This uses the EC IP which uses just 2.5 gates per point, beating incomplete addition
   // TODO: Due to the vector commitment scheme currently implemented, each gate causes six extra
   // gates in distinct proofs (two gates per item, three items per gate (left, right, output)).
   // That means this uses 17.5 gates per point
   // If a zero-cost vector commitment scheme isn't implemented, this isn't worth it
-  fn dlog_pok(
+  fn dlog_pok<R: RngCore + CryptoRng>(
+    rng: &mut R,
     circuit: &mut Circuit<Self>,
     G: <Self::Embedded as Ciphersuite>::G,
-    known_dlog_x: VariableReference,
+    x: VariableReference,
     y: VariableReference,
     dlog: &[Bit],
   ) {
+    let known_dlog_x = x;
+
     let CAPACITY = <Self::Embedded as Ciphersuite>::F::CAPACITY.min(Self::F::CAPACITY);
     assert_eq!(u32::try_from(dlog.len()).unwrap(), CAPACITY);
 
@@ -231,11 +212,11 @@ impl<C: EmbeddedShortWeierstrass> EmbeddedCurveAddition for C {
         assert!(y_coefficients.len() <= 1);
         assert_eq!(yx_coeffs(without_identity.len()), yx_coefficients.get(0).map(|vec| vec.len()));
         assert_eq!(x_coeffs(without_identity.len()), x_coefficients.len());
-        assert_eq!(x_coefficients.last().unwrap(), &C::F::ONE);
+        assert_eq!(x_coefficients.last().unwrap(), &Self::F::ONE);
 
         (
           Some(divisor),
-          Some(y_coefficients.get(0).copied().unwrap_or(C::F::ZERO)),
+          Some(y_coefficients.get(0).copied().unwrap_or(Self::F::ZERO)),
           Some(yx_coefficients),
           Some(x_coefficients),
           Some(zero_coefficient),
@@ -263,7 +244,7 @@ impl<C: EmbeddedShortWeierstrass> EmbeddedCurveAddition for C {
               .unwrap_or(vec![])
               .get(i)
               .cloned()
-              .unwrap_or(C::F::ZERO),
+              .unwrap_or(Self::F::ZERO),
           )
         } else {
           None
@@ -276,7 +257,7 @@ impl<C: EmbeddedShortWeierstrass> EmbeddedCurveAddition for C {
       let mut vars = vec![];
       for i in 0 .. x_coeffs(points) {
         vars.push(circuit.add_secret_input(if circuit.prover() {
-          Some(x_coefficients.as_ref().unwrap().get(i).cloned().unwrap_or(C::F::ZERO))
+          Some(x_coefficients.as_ref().unwrap().get(i).cloned().unwrap_or(Self::F::ZERO))
         } else {
           None
         }));
@@ -372,35 +353,35 @@ impl<C: EmbeddedShortWeierstrass> EmbeddedCurveAddition for C {
             circuit
               .unchecked_variable(circuit.variable(x_coefficients[0]))
               .value()
-              .map(|coeff| coeff - C::F::ONE),
+              .map(|coeff| coeff - Self::F::ONE),
           )
         };
         let rhs = circuit.add_secret_input(
           circuit
             .unchecked_variable(circuit.variable(x_coeff))
             .value()
-            .map(|coeff| coeff - C::F::ONE),
+            .map(|coeff| coeff - Self::F::ONE),
         );
         let ((lhs, rhs, _), last_var) = circuit.product(lhs, rhs);
 
         if last.is_none() {
           let mut constraint = Constraint::new("x_coeff_0_is_1");
-          constraint.weight(x_coefficients[0], C::F::ONE);
-          constraint.weight(lhs, -C::F::ONE);
-          constraint.rhs_offset(C::F::ONE);
+          constraint.weight(x_coefficients[0], Self::F::ONE);
+          constraint.weight(lhs, -Self::F::ONE);
+          constraint.rhs_offset(Self::F::ONE);
           circuit.constrain(constraint);
         }
 
         let mut constraint = Constraint::new("x_coeff_i_is_1");
-        constraint.weight(x_coeff, C::F::ONE);
-        constraint.weight(rhs, -C::F::ONE);
-        constraint.rhs_offset(C::F::ONE);
+        constraint.weight(x_coeff, Self::F::ONE);
+        constraint.weight(rhs, -Self::F::ONE);
+        constraint.rhs_offset(Self::F::ONE);
         circuit.constrain(constraint);
 
         last = Some(last_var);
       }
       let mut constraint = Constraint::new("a_x_coeff_is_1");
-      constraint.weight(circuit.variable_to_product(last.unwrap()).unwrap(), C::F::ONE);
+      constraint.weight(circuit.variable_to_product(last.unwrap()).unwrap(), Self::F::ONE);
       circuit.constrain(constraint);
     }
 
@@ -415,12 +396,12 @@ impl<C: EmbeddedShortWeierstrass> EmbeddedCurveAddition for C {
       circuit.bind(commitment, circuit.variable_to_product(bit.variable).unwrap(), None);
     }
 
-    let commitment = circuit.finalize_commitment(commitment);
+    let commitment = circuit.finalize_commitment(commitment, Some(Self::F::random(rng)).filter(|_| circuit.prover()));
     // TODO: Select a challenge point using a hash to curve
-    let challenge = C::Embedded::hash_to_G("bp+_ecip", commitment.to_bytes().as_ref());
+    let challenge = Self::Embedded::hash_to_G("bp+_ecip", commitment.to_bytes().as_ref());
 
     // Evaluate the divisor over the challenge, and over -challenge
-    let (challenge_x, challenge_y) = C::Embedded::to_xy(challenge);
+    let (challenge_x, challenge_y) = Self::Embedded::to_xy(challenge);
 
     // Create the powers of x
     assert!(x_coeffs(points) > yx_coeffs(points).unwrap());
@@ -430,7 +411,7 @@ impl<C: EmbeddedShortWeierstrass> EmbeddedCurveAddition for C {
     }
 
     let mut lhs_constraint = Constraint::new("ecip_lhs");
-    lhs_constraint.weight(zero_coefficient, C::F::ONE);
+    lhs_constraint.weight(zero_coefficient, Self::F::ONE);
 
     // Perform the x_coeffs
     let mut x_res = vec![];
@@ -464,8 +445,8 @@ impl<C: EmbeddedShortWeierstrass> EmbeddedCurveAddition for C {
 
     let (lhs, neg_lhs) = if circuit.prover() {
       let common = circuit.unchecked_variable(circuit.variable(zero_coefficient)).value().unwrap() +
-        x_res.drain(..).map(Option::unwrap).sum::<C::F>();
-      let yx = yx_res.drain(..).map(Option::unwrap).sum::<C::F>();
+        x_res.drain(..).map(Option::unwrap).sum::<Self::F>();
+      let yx = yx_res.drain(..).map(Option::unwrap).sum::<Self::F>();
       let y =
         circuit.unchecked_variable(circuit.variable(y_coefficient)).value().unwrap() * challenge_y;
       (Some(common + yx + y), Some(common - yx - y))
@@ -478,9 +459,9 @@ impl<C: EmbeddedShortWeierstrass> EmbeddedCurveAddition for C {
     let lhs = circuit.add_secret_input(lhs);
     let neg_lhs = circuit.add_secret_input(neg_lhs);
     let ((lhs_to_constrain, neg_lhs_to_constrain, lhs), _) = circuit.product(lhs, neg_lhs);
-    lhs_constraint.weight(lhs_to_constrain, -C::F::ONE);
+    lhs_constraint.weight(lhs_to_constrain, -Self::F::ONE);
     circuit.constrain(lhs_constraint);
-    neg_lhs_constraint.weight(neg_lhs_to_constrain, -C::F::ONE);
+    neg_lhs_constraint.weight(neg_lhs_to_constrain, -Self::F::ONE);
     circuit.constrain(neg_lhs_constraint);
 
     if circuit.prover() {
@@ -499,7 +480,7 @@ impl<C: EmbeddedShortWeierstrass> EmbeddedCurveAddition for C {
     for i in 0 .. (points - 1) {
       let this_rhs = dlog[i].select_constant(
         circuit,
-        C::F::ONE,
+        Self::F::ONE,
         challenge_x - Self::Embedded::to_xy(G_pow_2[i]).0,
       );
       if let Some(accum_var) = accum {
@@ -522,15 +503,31 @@ impl<C: EmbeddedShortWeierstrass> EmbeddedCurveAddition for C {
       circuit
         .variable_to_product(known_dlog_x)
         .expect("point used in DLog PoK wasn't checked to be on curve"),
-      C::F::ONE,
+      Self::F::ONE,
     );
-    constraint.weight(challenge_x_sub_x, C::F::ONE);
+    constraint.weight(challenge_x_sub_x, Self::F::ONE);
     constraint.rhs_offset(challenge_x);
     circuit.constrain(constraint);
 
     let mut constraint = Constraint::new("ecip");
-    constraint.weight(lhs, C::F::ONE);
-    constraint.weight(rhs, -C::F::ONE);
+    constraint.weight(lhs, Self::F::ONE);
+    constraint.weight(rhs, -Self::F::ONE);
+    circuit.constrain(constraint);
+  }
+}
+
+impl<C: EmbeddedShortWeierstrass> EmbeddedCurveAddition for C {
+  type Embedded = <C as EmbeddedShortWeierstrass>::Embedded;
+
+  fn constrain_on_curve(circuit: &mut Circuit<Self>, x: VariableReference, y: VariableReference) {
+    let ((_, _, y2_prod), _) = circuit.product(y, y);
+    let (_, x2) = circuit.product(x, x);
+    let ((_, _, x3), _) = circuit.product(x2, x);
+
+    let mut constraint = Constraint::new("on-curve");
+    constraint.weight(y2_prod, Self::F::ONE);
+    constraint.weight(x3, -Self::F::ONE);
+    constraint.rhs_offset(Self::F::from(Self::B));
     circuit.constrain(constraint);
   }
 }

@@ -97,6 +97,7 @@ fn test_dlog_pok() {
     assert_eq!(u32::try_from(bits.len()).unwrap(), <Pallas as Ciphersuite>::F::CAPACITY);
 
     <Vesta as EmbeddedCurveAddition>::dlog_pok(
+      &mut OsRng,
       circuit,
       <Pallas as Ciphersuite>::G::generator(),
       point_x,

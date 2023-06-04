@@ -28,7 +28,7 @@ impl<C: Ciphersuite> IndexMut<usize> for PointVector<C> {
 }
 
 impl<C: Ciphersuite> PointVector<C> {
-  #[cfg(test)]
+  #[cfg(any(test, feature = "tests"))]
   pub(crate) fn new(len: usize) -> Self {
     PointVector(vec![C::G::identity(); len])
   }

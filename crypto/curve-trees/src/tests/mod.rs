@@ -8,6 +8,10 @@ use crate::CurveCycle;
 
 mod tree;
 
+mod gadgets;
+mod layer;
+mod membership;
+
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct Pasta {}
 impl CurveCycle for Pasta {
