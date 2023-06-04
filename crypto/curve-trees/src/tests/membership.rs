@@ -5,12 +5,7 @@ use ciphersuite::{group::Group, Ciphersuite, Pallas, Vesta};
 
 use bulletproofs_plus::{arithmetic_circuit::Circuit, tests::generators};
 
-use crate::{
-  CurveCycle,
-  tree::Tree,
-  tests::Pasta,
-  new_blind, membership_gadget,
-};
+use crate::{CurveCycle, tree::Tree, tests::Pasta, new_blind, membership_gadget};
 
 #[test]
 fn test_membership() {

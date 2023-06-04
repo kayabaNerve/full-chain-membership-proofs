@@ -11,9 +11,10 @@ use ciphersuite::{
 };
 
 use ecip::{Ecip, Poly, Divisor};
+
 use crate::{
   arithmetic_circuit::{VariableReference, Constraint, Circuit},
-  gadgets::bit::Bit,
+  gadgets::{Bit, assert_non_zero_gadget},
 };
 
 pub trait EmbeddedShortWeierstrass: Ciphersuite {
@@ -22,15 +23,15 @@ pub trait EmbeddedShortWeierstrass: Ciphersuite {
   const B: u64;
 }
 
-/// Perform operations over the curve embedded into the current curve.
-pub trait EmbeddedCurveAddition: Ciphersuite {
+/// Perform operations over the curve embedded into the proof's curve.
+pub trait EmbeddedCurveOperations: Ciphersuite {
   type Embedded: Ecip<FieldElement = Self::F>;
 
   /// Constrains a point to being on curve and not the identity.
   fn constrain_on_curve(circuit: &mut Circuit<Self>, x: VariableReference, y: VariableReference);
 
   // Curve Trees, Appendix A.[4, 5]
-  // This uses 4 gates theoretically, 5 as implemented here
+  // This uses 4 gates theoretically, 5 as implemented here, and 6 constraints
   fn incomplete_add(
     circuit: &mut Circuit<Self>,
     x1: VariableReference,
@@ -39,12 +40,12 @@ pub trait EmbeddedCurveAddition: Ciphersuite {
     y2: VariableReference,
   ) -> (VariableReference, VariableReference) {
     let (x3, y3, slope, x2m1, x3m1) = if circuit.prover() {
-      let x1_var = circuit.unchecked_variable(x1).value().unwrap();
-      let y1_var = circuit.unchecked_variable(y1).value().unwrap();
+      let x1_var = circuit.unchecked_value(x1).unwrap();
+      let y1_var = circuit.unchecked_value(y1).unwrap();
       let a = Self::Embedded::from_xy(x1_var, y1_var);
 
-      let x2_var = circuit.unchecked_variable(x2).value().unwrap();
-      let y2_var = circuit.unchecked_variable(y2).value().unwrap();
+      let x2_var = circuit.unchecked_value(x2).unwrap();
+      let y2_var = circuit.unchecked_value(y2).unwrap();
       let b = Self::Embedded::from_xy(x2_var, y2_var);
 
       let c = a + b;
@@ -58,9 +59,6 @@ pub trait EmbeddedCurveAddition: Ciphersuite {
 
       let x2m1 = x2_var - x1_var;
       let x3m1 = x3 - x1_var;
-      debug_assert_eq!(slope * x2m1, y2_var - y1_var);
-      debug_assert_eq!(slope * x3m1, -y3 - y1_var);
-      debug_assert_eq!(slope.square(), x1_var + x2_var + x3);
 
       (Some(x3), Some(y3), Some(slope), Some(x2m1), Some(x3m1))
     } else {
@@ -86,52 +84,65 @@ pub trait EmbeddedCurveAddition: Ciphersuite {
       "y2 wasn't prior used in a product statement. this shouldn't be possible if on-curve checked",
     );
 
-    // Prove x2m1 is non-zero via checking it has a multiplicative inverse, enabling incomplete
-    // formulas
-    let x2m1_inv = circuit.unchecked_variable(x2m1).value().map(|x2m1| x2m1.invert().unwrap());
-    let x2m1_inv = circuit.add_secret_input(x2m1_inv);
-    let mut constraint = Constraint::new("incomplete");
-    let ((_, _, out), _) = circuit.product(x2m1, x2m1_inv);
-    constraint.weight(out, Self::F::ONE);
-    constraint.rhs_offset(Self::F::ONE);
-    circuit.constrain(constraint);
+    // Prove x2m1 is non-zero, meaning x2 != x1, enabling incomplete formulas
+    assert_non_zero_gadget(circuit, x2m1);
 
-    let ((_, x2m1, out), _) = circuit.product(slope, x2m1);
-    let mut constraint = Constraint::new("slope_x2_y2_x2m1");
+    // Constrain x2m1 is correct
+    let mut constraint = Constraint::new("x2m1");
     constraint.weight(x2, Self::F::ONE);
     constraint.weight(x1, -Self::F::ONE);
-    constraint.weight(x2m1, -Self::F::ONE);
+    // Safe since the non-zero gadget will use it in a product statement
+    constraint.weight(circuit.variable_to_product(x2m1).unwrap(), -Self::F::ONE);
     circuit.constrain(constraint);
 
-    let mut constraint = Constraint::new("slope_x2_y2_out");
-    constraint.weight(y2, Self::F::ONE);
-    constraint.weight(y1, -Self::F::ONE);
-    constraint.weight(out, -Self::F::ONE);
-    circuit.constrain(constraint);
+    // A.4 (6)
+    {
+      let ((_, _, slope_x2m1), _) = circuit.product(slope, x2m1);
+      // slope_x2m1 - (y2 - y1) == 0
+      let mut constraint = Constraint::new("slope_x2m1");
+      constraint.weight(slope_x2m1, Self::F::ONE);
+      constraint.weight(y2, -Self::F::ONE);
+      constraint.weight(y1, Self::F::ONE);
+      circuit.constrain(constraint);
+    }
 
     // Use x3/y3 in a product statement so they can be used in constraints
+    // TODO: Design around this internally
     let ((x3_prod, y3_prod, _), _) = circuit.product(x3, y3);
 
-    let ((_, x3m1, out), _) = circuit.product(slope, x3m1);
-    let mut constraint = Constraint::new("slope_x3_y3_x3m1");
-    constraint.weight(x3_prod, Self::F::ONE);
-    constraint.weight(x1, -Self::F::ONE);
-    constraint.weight(x3m1, -Self::F::ONE);
-    circuit.constrain(constraint);
+    // A.4 (7)
+    {
+      let ((_, x3m1, slope_x3m1), _) = circuit.product(slope, x3m1);
 
-    let mut constraint = Constraint::new("slope_x3_y3_out");
-    constraint.weight(y3_prod, -Self::F::ONE);
-    constraint.weight(y1, -Self::F::ONE);
-    constraint.weight(out, -Self::F::ONE);
-    circuit.constrain(constraint);
+      // Constrain x3m1's accuracy
+      {
+        let mut constraint = Constraint::new("x3m1");
+        constraint.weight(x3_prod, Self::F::ONE);
+        constraint.weight(x1, -Self::F::ONE);
+        constraint.weight(x3m1, -Self::F::ONE);
+        circuit.constrain(constraint);
+      }
 
-    let ((_, _, out), _) = circuit.product(slope, slope);
-    let mut constraint = Constraint::new("slope_squared");
-    constraint.weight(out, -Self::F::ONE);
-    constraint.weight(x1, Self::F::ONE);
-    constraint.weight(x2, Self::F::ONE);
-    constraint.weight(x3_prod, Self::F::ONE);
-    circuit.constrain(constraint);
+      // slope_x3m1 - (-y3 - y1) == 0
+      let mut constraint = Constraint::new("slope_x3m1");
+      constraint.weight(slope_x3m1, Self::F::ONE);
+      constraint.weight(y3_prod, Self::F::ONE);
+      constraint.weight(y1, Self::F::ONE);
+      circuit.constrain(constraint);
+    }
+
+    // A.4 (8)
+    {
+      let ((_, _, slope_squared), _) = circuit.product(slope, slope);
+
+      // 0 == x1 + x2 + x3 - slope_squared
+      let mut constraint = Constraint::new("slope_squared");
+      constraint.weight(slope_squared, -Self::F::ONE);
+      constraint.weight(x3_prod, Self::F::ONE);
+      constraint.weight(x1, Self::F::ONE);
+      constraint.weight(x2, Self::F::ONE);
+      circuit.constrain(constraint);
+    }
 
     (x3, y3)
   }
@@ -188,8 +199,8 @@ pub trait EmbeddedCurveAddition: Ciphersuite {
     let (divisor, y_coefficient, yx_coefficients, x_coefficients, zero_coefficient) =
       if circuit.prover() {
         Gs.push(-Self::Embedded::from_xy(
-          circuit.unchecked_variable(known_dlog_x).value().unwrap(),
-          circuit.unchecked_variable(y).value().unwrap(),
+          circuit.unchecked_value(known_dlog_x).unwrap(),
+          circuit.unchecked_value(y).unwrap(),
         ));
         assert_eq!(Gs.len(), points);
 
@@ -351,16 +362,12 @@ pub trait EmbeddedCurveAddition: Ciphersuite {
         } else {
           circuit.add_secret_input(
             circuit
-              .unchecked_variable(circuit.variable(x_coefficients[0]))
-              .value()
+              .unchecked_value(circuit.variable(x_coefficients[0]))
               .map(|coeff| coeff - Self::F::ONE),
           )
         };
         let rhs = circuit.add_secret_input(
-          circuit
-            .unchecked_variable(circuit.variable(x_coeff))
-            .value()
-            .map(|coeff| coeff - Self::F::ONE),
+          circuit.unchecked_value(circuit.variable(x_coeff)).map(|coeff| coeff - Self::F::ONE),
         );
         let ((lhs, rhs, _), last_var) = circuit.product(lhs, rhs);
 
@@ -419,10 +426,7 @@ pub trait EmbeddedCurveAddition: Ciphersuite {
     for i in 0 .. x_coeffs(points) {
       lhs_constraint.weight(x_coefficients[i], x_pows[i]);
       x_res.push(
-        circuit
-          .unchecked_variable(circuit.variable(x_coefficients[i]))
-          .value()
-          .map(|coeff| coeff * x_pows[i]),
+        circuit.unchecked_value(circuit.variable(x_coefficients[i])).map(|coeff| coeff * x_pows[i]),
       );
     }
 
@@ -434,10 +438,7 @@ pub trait EmbeddedCurveAddition: Ciphersuite {
       lhs_constraint.weight(yx_coefficients[i], yx);
       neg_lhs_constraint.weight(yx_coefficients[i], -yx);
       yx_res.push(
-        circuit
-          .unchecked_variable(circuit.variable(yx_coefficients[i]))
-          .value()
-          .map(|coeff| yx * coeff),
+        circuit.unchecked_value(circuit.variable(yx_coefficients[i])).map(|coeff| yx * coeff),
       );
     }
 
@@ -445,11 +446,10 @@ pub trait EmbeddedCurveAddition: Ciphersuite {
     neg_lhs_constraint.weight(y_coefficient, -challenge_y);
 
     let (lhs, neg_lhs) = if circuit.prover() {
-      let common = circuit.unchecked_variable(circuit.variable(zero_coefficient)).value().unwrap() +
+      let common = circuit.unchecked_value(circuit.variable(zero_coefficient)).unwrap() +
         x_res.drain(..).map(Option::unwrap).sum::<Self::F>();
       let yx = yx_res.drain(..).map(Option::unwrap).sum::<Self::F>();
-      let y =
-        circuit.unchecked_variable(circuit.variable(y_coefficient)).value().unwrap() * challenge_y;
+      let y = circuit.unchecked_value(circuit.variable(y_coefficient)).unwrap() * challenge_y;
       (Some(common + yx + y), Some(common - yx - y))
     } else {
       (None, None)
@@ -467,7 +467,7 @@ pub trait EmbeddedCurveAddition: Ciphersuite {
 
     if circuit.prover() {
       debug_assert_eq!(
-        circuit.unchecked_variable(circuit.variable(lhs)).value().unwrap(),
+        circuit.unchecked_value(circuit.variable(lhs)).unwrap(),
         divisor.as_ref().unwrap().eval(challenge_x, challenge_y) *
           divisor.unwrap().eval(challenge_x, -challenge_y)
       );
@@ -494,7 +494,7 @@ pub trait EmbeddedCurveAddition: Ciphersuite {
 
     // Include the point the prover is claiming to know the DLog for
     let challenge_x_sub_x = circuit.add_secret_input(if circuit.prover() {
-      Some(challenge_x - circuit.unchecked_variable(known_dlog_x).value().unwrap())
+      Some(challenge_x - circuit.unchecked_value(known_dlog_x).unwrap())
     } else {
       None
     });
@@ -517,7 +517,7 @@ pub trait EmbeddedCurveAddition: Ciphersuite {
   }
 }
 
-impl<C: EmbeddedShortWeierstrass> EmbeddedCurveAddition for C {
+impl<C: EmbeddedShortWeierstrass> EmbeddedCurveOperations for C {
   type Embedded = <C as EmbeddedShortWeierstrass>::Embedded;
 
   fn constrain_on_curve(circuit: &mut Circuit<Self>, x: VariableReference, y: VariableReference) {

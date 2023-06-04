@@ -12,9 +12,8 @@ use ciphersuite::{
 
 use ecip::Ecip;
 use bulletproofs_plus::{
-  weighted_inner_product::*,
   arithmetic_circuit::*,
-  gadgets::{bit::Bit, elliptic_curve::EmbeddedCurveAddition},
+  gadgets::{Bit, elliptic_curve::EmbeddedCurveOperations},
 };
 
 pub mod pedersen_hash;
@@ -28,8 +27,8 @@ use gadgets::find_index_gadget;
 pub mod tests;
 
 pub trait CurveCycle: Clone + Copy + PartialEq + Eq + core::fmt::Debug {
-  type C1: Ecip + EmbeddedCurveAddition<Embedded = Self::C2>;
-  type C2: Ecip + EmbeddedCurveAddition<Embedded = Self::C1>;
+  type C1: Ecip + EmbeddedCurveOperations<Embedded = Self::C2>;
+  type C2: Ecip + EmbeddedCurveOperations<Embedded = Self::C1>;
 
   fn c1_coords(
     point: <Self::C1 as Ciphersuite>::G,
@@ -129,7 +128,7 @@ pub fn layer_gadget<R: RngCore + CryptoRng, C: CurveCycle>(
 
       let mut dlog = vec![];
       for bit in raw_bits {
-        dlog.push(Bit::new(circuit, bit));
+        dlog.push(Bit::new_from_choice(circuit, bit));
       }
       C::C2::dlog_pok(&mut *rng, circuit, H, blind_x, blind_y, &dlog);
     }

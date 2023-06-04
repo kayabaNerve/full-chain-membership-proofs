@@ -5,62 +5,7 @@ use ciphersuite::{group::ff::Field, Ciphersuite, Vesta};
 
 use bulletproofs_plus::{arithmetic_circuit::Circuit, tests::generators};
 
-use crate::gadgets::{is_non_zero_gadget, find_index_gadget};
-
-#[test]
-fn test_is_non_zero_gadget() {
-  let (g, h, g_bold1, g_bold2, h_bold1, h_bold2) = generators(16);
-
-  fn gadget(circuit: &mut Circuit<Vesta>, value_arg: Option<<Vesta as Ciphersuite>::F>) {
-    let value = circuit.add_secret_input(value_arg);
-    circuit.product(value, value);
-    let res = is_non_zero_gadget(circuit, value);
-    if let Some(value) = value_arg {
-      assert_eq!(
-        circuit.unchecked_variable(res).value().unwrap(),
-        if value == <Vesta as Ciphersuite>::F::ZERO {
-          <Vesta as Ciphersuite>::F::ZERO
-        } else {
-          <Vesta as Ciphersuite>::F::ONE
-        }
-      );
-    }
-  }
-
-  let transcript = RecommendedTranscript::new(b"Is Non Zero Gadget Test");
-
-  let test = |x| {
-    let mut circuit = Circuit::new(
-      g,
-      h,
-      g_bold1.clone(),
-      g_bold2.clone(),
-      h_bold1.clone(),
-      h_bold2.clone(),
-      true,
-      None,
-    );
-    gadget(&mut circuit, Some(x));
-    let proof = circuit.prove(&mut OsRng, &mut transcript.clone());
-
-    let mut circuit = Circuit::new(
-      g,
-      h,
-      g_bold1.clone(),
-      g_bold2.clone(),
-      h_bold1.clone(),
-      h_bold2.clone(),
-      false,
-      Some(vec![]),
-    );
-    gadget(&mut circuit, None);
-    circuit.verify(&mut transcript.clone(), proof);
-  };
-
-  test(<Vesta as Ciphersuite>::F::ZERO);
-  test(<Vesta as Ciphersuite>::F::ONE);
-  test(<Vesta as Ciphersuite>::F::random(&mut OsRng));
-}
+use crate::gadgets::find_index_gadget;
 
 #[test]
 fn test_find_index_gadget() {
@@ -85,7 +30,7 @@ fn test_find_index_gadget() {
       for (i, value_i) in values_arg.iter().enumerate() {
         if value_i.unwrap() == value {
           assert_eq!(
-            circuit.unchecked_variable(res).value().unwrap(),
+            circuit.unchecked_value(res).unwrap(),
             <Vesta as Ciphersuite>::F::from(u64::try_from(i).unwrap())
           );
           break;

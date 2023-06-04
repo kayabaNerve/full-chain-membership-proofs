@@ -12,7 +12,7 @@ use ciphersuite::{
 
 use crate::{
   arithmetic_circuit::Circuit,
-  gadgets::{bit::Bit, elliptic_curve::EmbeddedCurveAddition},
+  gadgets::{Bit, elliptic_curve::EmbeddedCurveOperations},
   tests::generators,
 };
 
@@ -44,11 +44,11 @@ fn test_incomplete_addition() {
     let p2_x = circuit.add_secret_input(Some(p2.0).filter(|_| prover));
     let p2_y = circuit.add_secret_input(Some(p2.1).filter(|_| prover));
 
-    <Vesta as EmbeddedCurveAddition>::constrain_on_curve(circuit, p1_x, p1_y);
-    <Vesta as EmbeddedCurveAddition>::constrain_on_curve(circuit, p2_x, p2_y);
+    <Vesta as EmbeddedCurveOperations>::constrain_on_curve(circuit, p1_x, p1_y);
+    <Vesta as EmbeddedCurveOperations>::constrain_on_curve(circuit, p2_x, p2_y);
 
     let (res_x, res_y) =
-      <Vesta as EmbeddedCurveAddition>::incomplete_add(circuit, p1_x, p1_y, p2_x, p2_y);
+      <Vesta as EmbeddedCurveOperations>::incomplete_add(circuit, p1_x, p1_y, p2_x, p2_y);
 
     circuit.equals_constant(circuit.variable_to_product(res_x).unwrap(), p3.0);
     circuit.equals_constant(circuit.variable_to_product(res_y).unwrap(), p3.1);
@@ -88,15 +88,15 @@ fn test_dlog_pok() {
     let point_x = circuit.add_secret_input(Some(point.0).filter(|_| prover));
     let point_y = circuit.add_secret_input(Some(point.1).filter(|_| prover));
 
-    <Vesta as EmbeddedCurveAddition>::constrain_on_curve(circuit, point_x, point_y);
+    <Vesta as EmbeddedCurveOperations>::constrain_on_curve(circuit, point_x, point_y);
 
     let mut bits = vec![];
     for bit in &dlog {
-      bits.push(Bit::new(circuit, Some((*bit).into()).filter(|_| prover)));
+      bits.push(Bit::new_from_choice(circuit, Some((*bit).into()).filter(|_| prover)));
     }
     assert_eq!(u32::try_from(bits.len()).unwrap(), <Pallas as Ciphersuite>::F::CAPACITY);
 
-    <Vesta as EmbeddedCurveAddition>::dlog_pok(
+    <Vesta as EmbeddedCurveOperations>::dlog_pok(
       &mut OsRng,
       circuit,
       <Pallas as Ciphersuite>::G::generator(),

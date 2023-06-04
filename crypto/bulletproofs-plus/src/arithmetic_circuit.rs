@@ -192,11 +192,9 @@ impl<C: Ciphersuite> Circuit<C> {
     self.h
   }
 
-  /// Obtain the underlying variable from a reference.
-  ///
-  /// This requires a constraint to be safely used.
-  pub fn unchecked_variable(&self, variable: VariableReference) -> Variable<C> {
-    self.variables[variable.0].clone()
+  /// Obtain the underlying value from a variable reference.
+  pub fn unchecked_value(&self, variable: VariableReference) -> Option<C::F> {
+    self.variables[variable.0].value()
   }
 
   pub fn variable(&self, product: ProductReference) -> VariableReference {
