@@ -396,7 +396,8 @@ pub trait EmbeddedCurveAddition: Ciphersuite {
       circuit.bind(commitment, circuit.variable_to_product(bit.variable).unwrap(), None);
     }
 
-    let commitment = circuit.finalize_commitment(commitment, Some(Self::F::random(rng)).filter(|_| circuit.prover()));
+    let commitment = circuit
+      .finalize_commitment(commitment, Some(Self::F::random(rng)).filter(|_| circuit.prover()));
     // TODO: Select a challenge point using a hash to curve
     let challenge = Self::Embedded::hash_to_G("bp+_ecip", commitment.to_bytes().as_ref());
 

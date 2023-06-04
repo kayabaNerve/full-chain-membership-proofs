@@ -9,8 +9,8 @@ use crate::{
   tests::generators,
 };
 
-fn test_aggregate_range_proof<C: Ciphersuite>(runs: usize) {
-  for m in 1 ..= runs {
+fn test_aggregate_range_proof<C: Ciphersuite>() {
+  for m in 1 ..= 16 {
     let (g, h, g_bold, h_bold, _, _) = generators(RANGE_PROOF_BITS * m);
 
     let mut commitments = vec![];
@@ -35,16 +35,15 @@ fn test_aggregate_range_proof<C: Ciphersuite>(runs: usize) {
 
 #[test]
 fn test_aggregate_range_proof_ristretto() {
-  test_aggregate_range_proof::<Ristretto>(16);
+  test_aggregate_range_proof::<Ristretto>();
 }
 
-// Uses less runs for pallas/vesta due to performance under debug
 #[test]
 fn test_aggregate_range_proof_pallas() {
-  test_aggregate_range_proof::<Pallas>(16);
+  test_aggregate_range_proof::<Pallas>();
 }
 
 #[test]
 fn test_aggregate_range_proof_vesta() {
-  test_aggregate_range_proof::<Vesta>(16);
+  test_aggregate_range_proof::<Vesta>();
 }

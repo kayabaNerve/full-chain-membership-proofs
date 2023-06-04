@@ -159,8 +159,6 @@ impl<C: Ciphersuite> ArithmeticCircuitStatement<C> {
       y_n.push(*y_n.last().unwrap() * y);
       inv_y_n.push(*inv_y_n.last().unwrap() * inv_y_n[0]);
     }
-    debug_assert_eq!(*y_n.last().unwrap(), y.pow([u64::try_from(n).unwrap()]));
-    debug_assert_eq!(y_n.last().unwrap().invert().unwrap(), *inv_y_n.last().unwrap());
 
     let t_y_z = |W: &ScalarMatrix<C>| {
       let res = W.mul_vec(&z_q).mul_vec(&ScalarVector(inv_y_n.clone()));

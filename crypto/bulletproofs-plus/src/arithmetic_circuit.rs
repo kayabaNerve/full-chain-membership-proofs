@@ -370,7 +370,11 @@ impl<C: Ciphersuite> Circuit<C> {
   }
 
   /// Finalize a vector commitment, returning it, preventing further binding.
-  pub fn finalize_commitment(&mut self, vector_commitment: VectorCommitmentReference, blind: Option<C::F>) -> C::G {
+  pub fn finalize_commitment(
+    &mut self,
+    vector_commitment: VectorCommitmentReference,
+    blind: Option<C::F>,
+  ) -> C::G {
     if self.prover() {
       // Calculate and return the vector commitment
       // TODO: Use a multiexp here
@@ -680,6 +684,12 @@ impl<C: Ciphersuite> Circuit<C> {
       requires that property being proven. Such a proof may already exist as part of the WIP proof.
 
       TODO
+
+      As one other note, a single WIP proof is likely fine, with parallelized g_bold/h_bold, if the
+      prover provides the G component and a Schnorr PoK for it. While they may lie, leaving the G
+      component, that shouldn't create any issues so long as G is distinct for all such proofs.
+
+      That wasn't done here as it further complicates a complicated enough already scheme.
     */
 
     fn well_formed<R: RngCore + CryptoRng, C: Ciphersuite, T: Transcript>(

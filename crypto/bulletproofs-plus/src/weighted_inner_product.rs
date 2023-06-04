@@ -152,7 +152,7 @@ impl<C: Ciphersuite> WipStatement<C> {
       .collect::<Vec<_>>();
     P_terms.push((weighted_inner_product(&witness.a, &witness.b, &y_vec), self.g));
     P_terms.push((witness.alpha, self.h));
-    assert_eq!(multiexp(&P_terms), self.P);
+    debug_assert_eq!(multiexp(&P_terms), self.P);
     P_terms.zeroize();
 
     self.initial_transcript(transcript);
@@ -190,7 +190,6 @@ impl<C: Ciphersuite> WipStatement<C> {
 
       let y_n_hat = y_vec[n_hat - 1];
       y_vec.0.truncate(n_hat);
-      debug_assert_eq!(y_n_hat, y.pow([u64::try_from(n_hat).unwrap()]));
 
       let d_l = C::F::random(&mut *rng);
       let d_r = C::F::random(&mut *rng);
@@ -226,16 +225,9 @@ impl<C: Ciphersuite> WipStatement<C> {
       R_vec.push(R);
       R_terms.zeroize();
 
-      let (e, inv_e, e_square, inv_e_square, P_hat);
-      (e, inv_e, e_square, inv_e_square, g_bold, h_bold, P_hat) =
+      let (e, inv_e, e_square, inv_e_square);
+      (e, inv_e, e_square, inv_e_square, g_bold, h_bold, P) =
         Self::next_G_H_P(transcript, g_bold1, g_bold2, h_bold1, h_bold2, P, L, R, y_inv_n_hat);
-
-      debug_assert_eq!(e.invert().unwrap(), inv_e);
-      debug_assert_eq!(e.square(), e_square);
-      debug_assert_eq!(e_square.invert().unwrap(), inv_e_square);
-
-      debug_assert_eq!(P_hat, P + multiexp_vartime(&[(e_square, L), (inv_e_square, R)]));
-      P = P_hat;
 
       a = a1.mul(e).add_vec(&a2.mul(y_n_hat * inv_e));
       b = b1.mul(inv_e).add_vec(&b2.mul(e));
