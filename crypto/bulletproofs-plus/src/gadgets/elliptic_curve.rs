@@ -14,7 +14,7 @@ use ecip::{Ecip, Poly, Divisor};
 
 use crate::{
   arithmetic_circuit::{VariableReference, Constraint, Circuit},
-  gadgets::{Bit, assert_non_zero_gadget},
+  gadgets::{Bit, assert_non_zero_gadget, set_membership::assert_set_membership_gadget},
 };
 
 /// An on-curve point which is not identity.
@@ -350,6 +350,25 @@ pub trait EmbeddedCurveOperations: Ciphersuite {
       (serial_divisor, y_coefficient, yx_coefficients, x_coefficients, zero_coefficient)
     };
 
+    // Prove at least one x coefficient is 1
+
+    // This is a O(n) algorithm since the polynomial is of variable length, and the highest-order
+    // term is the one with a coefficient of 1
+    //
+    // We can normalize so the lowest-order term has a coefficient of 1, yet it'd make some
+    // divisors unrepresentable. Doing so would speed this up 40%, and worth it if said divisors
+    // are negligible (divisors for when only two bits in the scalar were set)
+    //
+    // Alternatively, a distinct method for proving the divisor isn't identical to zero may be
+    // viable
+    //
+    // TODO
+
+    // GC: 0.5 per point + 1
+    let one = circuit.add_secret_input(Some(Self::F::ONE).filter(|_| circuit.prover()));
+    let one = circuit.product(one, one).0 .0;
+    assert_set_membership_gadget(circuit, one, &x_coefficients);
+
     // Also transcript the DLog
     for bit in dlog {
       // TODO: This requires the DLog bit not be prior bound. How safe is that?
@@ -367,60 +386,6 @@ pub trait EmbeddedCurveOperations: Ciphersuite {
     let commitment = circuit
       .finalize_commitment(commitment, Some(Self::F::random(rng)).filter(|_| circuit.prover()));
 
-    // Prove at least one x coefficient is 1
-
-    // This is a O(n) algorithm since the polynomial is of variable length, and the highest-order
-    // term is the one with a coefficient of 1
-    //
-    // We can normalize so the lowest-order term has a coefficient of 1, yet it'd make some
-    // divisors unrepresentable. Doing so would speed this up 40%, and worth it if said divisors
-    // are negligible (divisors for when only two bits in the scalar were set)
-    //
-    // Alternatively, a distinct method for proving the divisor isn't identical to zero may be
-    // viable
-    //
-    // TODO
-
-    // TODO: Make a dedicated set membership gadget
-    // GC: 0.5 per point
-    {
-      let mut last = None;
-      for x_coeff in x_coefficients.iter().skip(1).copied() {
-        let lhs = if let Some(last) = last {
-          last
-        } else {
-          circuit.add_secret_input(
-            circuit
-              .unchecked_value(circuit.variable(x_coefficients[0]))
-              .map(|coeff| coeff - Self::F::ONE),
-          )
-        };
-        let rhs = circuit.add_secret_input(
-          circuit.unchecked_value(circuit.variable(x_coeff)).map(|coeff| coeff - Self::F::ONE),
-        );
-        let ((lhs, rhs, _), last_var) = circuit.product(lhs, rhs);
-
-        if last.is_none() {
-          let mut constraint = Constraint::new("x_coeff_0_is_1");
-          constraint.weight(x_coefficients[0], Self::F::ONE);
-          constraint.weight(lhs, -Self::F::ONE);
-          constraint.rhs_offset(Self::F::ONE);
-          circuit.constrain(constraint);
-        }
-
-        let mut constraint = Constraint::new("x_coeff_i_is_1");
-        constraint.weight(x_coeff, Self::F::ONE);
-        constraint.weight(rhs, -Self::F::ONE);
-        constraint.rhs_offset(Self::F::ONE);
-        circuit.constrain(constraint);
-
-        last = Some(last_var);
-      }
-
-      circuit.equals_constant(circuit.variable_to_product(last.unwrap()).unwrap(), Self::F::ZERO);
-    }
-
-    // TODO: Select a challenge point using a hash to curve
     let challenge = Self::Embedded::hash_to_G("bp+_ecip", commitment.to_bytes().as_ref());
 
     // Evaluate the divisor over the challenge, and over -challenge

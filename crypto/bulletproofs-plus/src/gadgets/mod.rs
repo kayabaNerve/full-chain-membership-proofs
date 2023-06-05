@@ -5,6 +5,8 @@ use crate::arithmetic_circuit::{VariableReference, Circuit};
 mod bit;
 pub use bit::*;
 
+pub mod set_membership;
+
 pub mod elliptic_curve;
 
 /// Assert a variable isn't zero.
