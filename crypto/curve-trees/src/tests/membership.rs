@@ -37,6 +37,9 @@ fn test_membership() {
   let vesta_additional_gs = (vesta_additional_g_0, vesta_additional_g_1);
   let vesta_additional_hs = (vesta_additional_hs_0.0.clone(), vesta_additional_hs_1.0.clone());
 
+  let mut verifier_c1 = BatchVerifier::new(3 + (3 * 4));
+  let mut verifier_c2 = BatchVerifier::new(3 + (3 * 4));
+
   // Test with various widths
   for width in 2 ..= 4usize {
     let max = u64::try_from(width).unwrap().pow(4);
@@ -126,8 +129,6 @@ fn test_membership() {
     );
     gadget(&mut circuit_c1, &mut circuit_c2);
 
-    let mut verifier_c1 = BatchVerifier::new(3 + tree.depth());
-    let mut verifier_c2 = BatchVerifier::new(3 + tree.depth());
     circuit_c1.verify_with_vector_commitments(
       &mut OsRng,
       &mut verifier_c1,
@@ -146,7 +147,8 @@ fn test_membership() {
       vesta_proof,
       vesta_proofs,
     );
-    assert!(verifier_c1.verify_vartime());
-    assert!(verifier_c2.verify_vartime());
   }
+
+  assert!(verifier_c1.verify_vartime());
+  assert!(verifier_c2.verify_vartime());
 }

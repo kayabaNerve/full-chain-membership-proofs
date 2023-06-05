@@ -12,6 +12,7 @@ use crate::{
 };
 
 fn test_aggregate_range_proof<C: Ciphersuite>() {
+  let mut verifier = BatchVerifier::new(16);
   for m in 1 ..= 16 {
     let (g, h, g_bold, h_bold, _, _) = generators(RANGE_PROOF_BITS * m);
 
@@ -31,10 +32,9 @@ fn test_aggregate_range_proof<C: Ciphersuite>() {
 
     let mut transcript = RecommendedTranscript::new(b"Aggregate Range Proof Test");
     let proof = statement.clone().prove(&mut OsRng, &mut transcript.clone(), witness);
-    let mut verifier = BatchVerifier::new(1);
     statement.verify(&mut OsRng, &mut verifier, &mut transcript, proof);
-    assert!(verifier.verify_vartime());
   }
+  assert!(verifier.verify_vartime());
 }
 
 #[test]
