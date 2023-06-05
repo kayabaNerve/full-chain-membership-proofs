@@ -4,7 +4,7 @@ use zeroize::{Zeroize, ZeroizeOnDrop};
 
 use transcript::Transcript;
 
-use multiexp::multiexp;
+use multiexp::{multiexp, BatchVerifier};
 use ciphersuite::{
   group::{ff::Field, GroupEncoding},
   Ciphersuite,
@@ -251,14 +251,19 @@ impl<C: Ciphersuite> ArithmeticCircuitStatement<C> {
     self.prove_with_blind(rng, transcript, witness, blind)
   }
 
-  // TODO: Use a BatchVerifier
-  pub fn verify<T: Transcript>(mut self, transcript: &mut T, proof: ArithmeticCircuitProof<C>) {
+  pub fn verify<R: RngCore + CryptoRng, T: Transcript>(
+    mut self,
+    rng: &mut R,
+    verifier: &mut BatchVerifier<(), C::G>,
+    transcript: &mut T,
+    proof: ArithmeticCircuitProof<C>,
+  ) {
     self.initial_transcript(transcript);
 
     let (y, _, _, _, _, _, A_hat) = self.compute_A_hat(transcript, proof.A);
     self.g_bold1.0.append(&mut self.g_bold2.0);
     self.h_bold1.0.append(&mut self.h_bold2.0);
     (WipStatement::new(self.g, self.h, self.g_bold1, self.h_bold1, A_hat))
-      .verify(transcript, proof.wip, y);
+      .verify(rng, verifier, transcript, proof.wip, y);
   }
 }

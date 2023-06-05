@@ -1,6 +1,8 @@
 use rand_core::{RngCore, OsRng};
 
 use transcript::{Transcript, RecommendedTranscript};
+
+use multiexp::BatchVerifier;
 use ciphersuite::{group::Group, Ciphersuite, Pallas, Vesta};
 
 use bulletproofs_plus::{arithmetic_circuit::Circuit, tests::generators};
@@ -123,7 +125,12 @@ fn test_membership() {
       Some(vesta_commitments),
     );
     gadget(&mut circuit_c1, &mut circuit_c2);
+
+    let mut verifier_c1 = BatchVerifier::new(3 + tree.depth());
+    let mut verifier_c2 = BatchVerifier::new(3 + tree.depth());
     circuit_c1.verify_with_vector_commitments(
+      &mut OsRng,
+      &mut verifier_c1,
       &mut transcript,
       pallas_additional_gs,
       pallas_additional_hs.clone(),
@@ -131,11 +138,15 @@ fn test_membership() {
       pallas_proofs,
     );
     circuit_c2.verify_with_vector_commitments(
+      &mut OsRng,
+      &mut verifier_c2,
       &mut transcript,
       vesta_additional_gs,
       vesta_additional_hs.clone(),
       vesta_proof,
       vesta_proofs,
     );
+    assert!(verifier_c1.verify_vartime());
+    assert!(verifier_c2.verify_vartime());
   }
 }

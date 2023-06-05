@@ -4,6 +4,7 @@ use zeroize::{Zeroize, ZeroizeOnDrop};
 
 use transcript::Transcript;
 
+use multiexp::BatchVerifier;
 use ciphersuite::{
   group::{ff::Field, Group, GroupEncoding},
   Ciphersuite,
@@ -208,12 +209,17 @@ impl<C: Ciphersuite> AggregateRangeStatement<C> {
     }
   }
 
-  // TODO: Use a BatchVerifier
-  pub fn verify<T: Transcript>(self, transcript: &mut T, proof: AggregateRangeProof<C>) {
+  pub fn verify<R: RngCore + CryptoRng, T: Transcript>(
+    self,
+    rng: &mut R,
+    verifier: &mut BatchVerifier<(), C::G>,
+    transcript: &mut T,
+    proof: AggregateRangeProof<C>,
+  ) {
     self.initial_transcript(transcript);
 
     let (y, _, _, _, _, A_hat) = self.compute_A_hat(transcript, proof.A);
     (WipStatement::new(self.g, self.h, self.g_bold, self.h_bold, A_hat))
-      .verify(transcript, proof.wip, y);
+      .verify(rng, verifier, transcript, proof.wip, y);
   }
 }

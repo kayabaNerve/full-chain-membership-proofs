@@ -21,7 +21,7 @@ subtle = { version = "^2.4", default-features = false }
 transcript = { package = "flexible-transcript", path = "../transcript", version = "0.3" }
 
 pasta_curves = { version = "0.5", default-features = false, features = ["bits", "alloc"], git = "https://github.com/kayabaNerve/pasta_curves.git", optional = true }
-multiexp = { path = "../multiexp", default-features = false }
+multiexp = { path = "../multiexp", default-features = false, features = ["batch"] }
 ciphersuite = { path = "../ciphersuite", default-features = false }
 
 ecip = { path = "../ecip" }

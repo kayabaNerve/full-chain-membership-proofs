@@ -1,6 +1,8 @@
 use rand_core::{RngCore, OsRng};
 
 use transcript::{Transcript, RecommendedTranscript};
+
+use multiexp::BatchVerifier;
 use ciphersuite::{group::ff::Field, Ciphersuite, Ristretto, Pallas, Vesta};
 
 use crate::{
@@ -29,7 +31,9 @@ fn test_aggregate_range_proof<C: Ciphersuite>() {
 
     let mut transcript = RecommendedTranscript::new(b"Aggregate Range Proof Test");
     let proof = statement.clone().prove(&mut OsRng, &mut transcript.clone(), witness);
-    statement.verify(&mut transcript, proof);
+    let mut verifier = BatchVerifier::new(1);
+    statement.verify(&mut OsRng, &mut verifier, &mut transcript, proof);
+    assert!(verifier.verify_vartime());
   }
 }
 

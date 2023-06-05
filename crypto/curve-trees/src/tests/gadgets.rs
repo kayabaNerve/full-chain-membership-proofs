@@ -1,6 +1,8 @@
 use rand_core::OsRng;
 
 use transcript::{Transcript, RecommendedTranscript};
+
+use multiexp::BatchVerifier;
 use ciphersuite::{group::ff::Field, Ciphersuite, Vesta};
 
 use bulletproofs_plus::{arithmetic_circuit::Circuit, tests::generators};
@@ -66,7 +68,9 @@ fn test_find_index_gadget() {
       Some(vec![]),
     );
     gadget(&mut circuit, None, &xs.iter().map(|_| None).collect::<Vec<_>>());
-    circuit.verify(&mut transcript.clone(), proof);
+    let mut verifier = BatchVerifier::new(1);
+    circuit.verify(&mut OsRng, &mut verifier, &mut transcript.clone(), proof);
+    assert!(verifier.verify_vartime());
   };
 
   let mut values = vec![<Vesta as Ciphersuite>::F::random(&mut OsRng)];

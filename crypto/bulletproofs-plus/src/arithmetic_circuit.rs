@@ -4,6 +4,8 @@ use zeroize::{Zeroize, ZeroizeOnDrop};
 use rand_core::{RngCore, CryptoRng};
 
 use transcript::Transcript;
+
+use multiexp::BatchVerifier;
 use ciphersuite::{
   group::{ff::Field, GroupEncoding},
   Ciphersuite,
@@ -632,12 +634,18 @@ impl<C: Ciphersuite> Circuit<C> {
     )
   }
 
-  pub fn verify<T: Transcript>(self, transcript: &mut T, proof: ArithmeticCircuitProof<C>) {
+  pub fn verify<R: RngCore + CryptoRng, T: Transcript>(
+    self,
+    rng: &mut R,
+    verifier: &mut BatchVerifier<(), C::G>,
+    transcript: &mut T,
+    proof: ArithmeticCircuitProof<C>,
+  ) {
     assert!(!self.prover);
     assert!(self.vector_commitments.as_ref().unwrap().is_empty());
     let (statement, vector_commitments, _, _) = self.compile();
     assert!(vector_commitments.is_empty());
-    statement.verify(transcript, proof)
+    statement.verify(rng, verifier, transcript, proof)
   }
 
   // Returns the blinds used, the blinded vector commitments, the proof, and proofs the vector
@@ -720,10 +728,7 @@ impl<C: Ciphersuite> Circuit<C> {
               H,
               commitment,
             );
-            let mut t_c = transcript.clone();
-            let proof = statement.clone().prove(&mut *rng, transcript, witness.clone(), y);
-            statement.verify(&mut t_c, proof.clone(), y);
-            proof
+            statement.prove(&mut *rng, transcript, witness.clone(), y)
           },
           {
             let (statement, y) = Circuit::<C>::vector_commitment_statement(
@@ -808,8 +813,10 @@ impl<C: Ciphersuite> Circuit<C> {
     (blinds, vector_commitments, proof, proofs)
   }
 
-  pub fn verify_with_vector_commitments<T: Transcript>(
+  pub fn verify_with_vector_commitments<R: RngCore + CryptoRng, T: Transcript>(
     self,
+    rng: &mut R,
+    verifier: &mut BatchVerifier<(), C::G>,
     transcript: &mut T,
     additional_proving_gs: (C::G, C::G),
     additional_proving_hs: (Vec<C::G>, Vec<C::G>),
@@ -830,7 +837,7 @@ impl<C: Ciphersuite> Circuit<C> {
         statement.h,
         commitment,
       );
-      wip_statement.verify(transcript, proofs.0, y);
+      wip_statement.verify(rng, verifier, transcript, proofs.0, y);
 
       let (wip_statement, y) = Self::vector_commitment_statement(
         additional_proving_gs.1,
@@ -840,7 +847,7 @@ impl<C: Ciphersuite> Circuit<C> {
         statement.h,
         commitment,
       );
-      wip_statement.verify(transcript, proofs.1, y);
+      wip_statement.verify(rng, verifier, transcript, proofs.1, y);
     };
 
     assert_eq!(vector_commitments.len() + 1, vc_proofs.len());
@@ -861,6 +868,6 @@ impl<C: Ciphersuite> Circuit<C> {
       );
     }
 
-    statement.verify(transcript, proof)
+    statement.verify(rng, verifier, transcript, proof)
   }
 }

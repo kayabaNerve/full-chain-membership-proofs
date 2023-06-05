@@ -56,7 +56,7 @@ impl<C: Ciphersuite> RangeCommitment<C> {
 fn u64_decompose<C: Ciphersuite>(value: u64) -> ScalarVector<C> {
   let mut bits = ScalarVector::<C>::new(64);
   for bit in 0 .. 64 {
-    bits[bit] = C::F::from((value & (1u64 << bit)) >> bit);
+    bits[bit] = C::F::from((value >> bit) & 1);
   }
   bits
 }

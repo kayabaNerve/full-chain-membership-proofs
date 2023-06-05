@@ -4,6 +4,7 @@ use zeroize::{Zeroize, ZeroizeOnDrop};
 
 use transcript::Transcript;
 
+use multiexp::BatchVerifier;
 use ciphersuite::{
   group::{ff::Field, GroupEncoding},
   Ciphersuite,
@@ -160,12 +161,18 @@ impl<C: Ciphersuite> SingleRangeStatement<C> {
     }
   }
 
-  // TODO: Use a BatchVerifier
-  pub fn verify<T: Transcript>(self, transcript: &mut T, proof: SingleRangeProof<C>) {
+  pub fn verify<R: RngCore + CryptoRng, T: Transcript>(
+    self,
+    rng: &mut R,
+    verifier: &mut BatchVerifier<(), C::G>,
+    transcript: &mut T,
+    proof: SingleRangeProof<C>,
+  ) {
     self.initial_transcript(transcript);
 
     let Self { g, h, g_bold, h_bold, V } = self;
     let (y, _, _, _, A_hat) = Self::A_hat(transcript, g, &g_bold, &h_bold, V, proof.A);
-    (WipStatement::new(g, h, g_bold, h_bold, A_hat)).verify(transcript, proof.wip, y);
+    (WipStatement::new(g, h, g_bold, h_bold, A_hat))
+      .verify(rng, verifier, transcript, proof.wip, y);
   }
 }

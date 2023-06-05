@@ -1,7 +1,9 @@
 use rand_core::OsRng;
 
 use transcript::{Transcript, RecommendedTranscript};
+
 use pasta_curves::arithmetic::CurveAffine;
+use multiexp::BatchVerifier;
 use ciphersuite::{
   group::{
     ff::{Field, PrimeField, PrimeFieldBits},
@@ -71,7 +73,9 @@ fn test_incomplete_addition() {
 
   let mut circuit = Circuit::new(g, h, g_bold1, g_bold2, h_bold1, h_bold2, false, Some(vec![]));
   gadget(&mut circuit);
-  circuit.verify(&mut transcript, proof);
+  let mut verifier = BatchVerifier::new(1);
+  circuit.verify(&mut OsRng, &mut verifier, &mut transcript, proof);
+  assert!(verifier.verify_vartime());
 }
 
 #[test]
@@ -133,13 +137,18 @@ fn test_dlog_pok() {
       Some(commitments),
     );
     gadget(&mut circuit, point, dlog);
+
+    let mut verifier = BatchVerifier::new(5);
     circuit.verify_with_vector_commitments(
+      &mut OsRng,
+      &mut verifier,
       &mut transcript.clone(),
       additional_gs,
       additional_hs.clone(),
       proof,
       proofs,
     );
+    assert!(verifier.verify_vartime());
   };
 
   assert_eq!(<Pallas as Ciphersuite>::F::CAPACITY, <Vesta as Ciphersuite>::F::CAPACITY);

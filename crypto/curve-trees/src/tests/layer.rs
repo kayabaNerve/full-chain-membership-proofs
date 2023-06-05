@@ -1,6 +1,8 @@
 use rand_core::{RngCore, OsRng};
 
 use transcript::{Transcript, RecommendedTranscript};
+
+use multiexp::BatchVerifier;
 use ciphersuite::{group::Group, Ciphersuite, Pallas, Vesta};
 
 use bulletproofs_plus::{
@@ -87,11 +89,15 @@ fn test_layer_gadget() {
   let mut circuit =
     Circuit::new(g, h, g_bold1, g_bold2, h_bold1, h_bold2, false, Some(commitments));
   gadget(&mut circuit);
+  let mut verifier = BatchVerifier::new(5);
   circuit.verify_with_vector_commitments(
+    &mut OsRng,
+    &mut verifier,
     &mut transcript,
     additional_gs,
     additional_hs,
     proof,
     proofs,
   );
+  assert!(verifier.verify_vartime());
 }

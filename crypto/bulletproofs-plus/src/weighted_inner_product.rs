@@ -4,9 +4,9 @@ use zeroize::{Zeroize, ZeroizeOnDrop};
 
 use transcript::Transcript;
 
-use multiexp::{multiexp, multiexp_vartime};
+use multiexp::{multiexp, multiexp_vartime, BatchVerifier};
 use ciphersuite::{
-  group::{ff::Field, Group, GroupEncoding},
+  group::{ff::Field, GroupEncoding},
   Ciphersuite,
 };
 
@@ -282,8 +282,14 @@ impl<C: Ciphersuite> WipStatement<C> {
     WipProof { L: L_vec, R: R_vec, A, B, r_answer, s_answer, delta_answer }
   }
 
-  // TODO: Use a BatchVerifier
-  pub fn verify<T: Transcript>(self, transcript: &mut T, proof: WipProof<C>, y: C::F) {
+  pub fn verify<R: RngCore + CryptoRng, T: Transcript>(
+    self,
+    rng: &mut R,
+    verifier: &mut BatchVerifier<(), C::G>,
+    transcript: &mut T,
+    proof: WipProof<C>,
+    y: C::F,
+  ) {
     self.initial_transcript(transcript);
 
     let WipStatement { g: _, h: _, mut g_bold, mut h_bold, mut P } = self;
@@ -325,16 +331,18 @@ impl<C: Ciphersuite> WipStatement<C> {
     assert_eq!(h_bold.len(), 1);
 
     let e = Self::transcript_A_B(transcript, proof.A, proof.B);
-    assert!(bool::from(
-      (multiexp_vartime(&[
+    verifier.queue(
+      rng,
+      (),
+      [
         (-e.square(), P),
         (-e, proof.A),
         (proof.r_answer * e, g_bold[0]),
         (proof.s_answer * e, h_bold[0]),
         (proof.r_answer * y * proof.s_answer, self.g),
         (proof.delta_answer, self.h),
-      ]) - proof.B)
-        .is_identity()
-    ));
+        (-C::F::ONE, proof.B),
+      ],
+    );
   }
 }

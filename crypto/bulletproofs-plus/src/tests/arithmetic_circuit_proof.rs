@@ -1,6 +1,8 @@
 use rand_core::OsRng;
 
 use transcript::{Transcript, RecommendedTranscript};
+
+use multiexp::BatchVerifier;
 use ciphersuite::{group::ff::Field, Ciphersuite, Ristretto};
 
 use crate::{
@@ -45,7 +47,9 @@ fn test_zero_arithmetic_circuit() {
 
   let mut transcript = RecommendedTranscript::new(b"Zero Circuit Test");
   let proof = statement.clone().prove(&mut OsRng, &mut transcript.clone(), witness);
-  statement.verify(&mut transcript, proof);
+  let mut verifier = BatchVerifier::new(1);
+  statement.verify(&mut OsRng, &mut verifier, &mut transcript, proof);
+  assert!(verifier.verify_vartime());
 }
 
 #[test]
@@ -136,5 +140,7 @@ fn test_multiplication_arithmetic_circuit() {
 
   let mut transcript = RecommendedTranscript::new(b"Multiplication Circuit Test");
   let proof = statement.clone().prove(&mut OsRng, &mut transcript.clone(), witness);
-  statement.verify(&mut transcript, proof);
+  let mut verifier = BatchVerifier::new(1);
+  statement.verify(&mut OsRng, &mut verifier, &mut transcript, proof);
+  assert!(verifier.verify_vartime());
 }

@@ -3,6 +3,8 @@
 use rand_core::OsRng;
 
 use transcript::{Transcript, RecommendedTranscript};
+
+use multiexp::BatchVerifier;
 use ciphersuite::{
   group::{ff::Field, Group},
   Ciphersuite, Ristretto,
@@ -38,7 +40,9 @@ fn test_zero_weighted_inner_product() {
   let y = <Ristretto as Ciphersuite>::F::random(&mut OsRng);
   let proof = statement.clone().prove(&mut OsRng, &mut transcript.clone(), witness, y);
 
-  statement.verify(&mut transcript, proof, y);
+  let mut verifier = BatchVerifier::new(1);
+  statement.verify(&mut OsRng, &mut verifier, &mut transcript, proof, y);
+  assert!(verifier.verify_vartime());
 }
 
 #[test]
@@ -73,6 +77,8 @@ fn test_weighted_inner_product() {
 
     let mut transcript = RecommendedTranscript::new(b"WIP Test");
     let proof = statement.clone().prove(&mut OsRng, &mut transcript.clone(), witness, y);
-    statement.verify(&mut transcript, proof, y);
+    let mut verifier = BatchVerifier::new(1);
+    statement.verify(&mut OsRng, &mut verifier, &mut transcript, proof, y);
+    assert!(verifier.verify_vartime());
   }
 }

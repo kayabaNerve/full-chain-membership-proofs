@@ -1,6 +1,8 @@
 use rand_core::OsRng;
 
 use transcript::{Transcript, RecommendedTranscript};
+
+use multiexp::BatchVerifier;
 use ciphersuite::{
   group::{ff::Field, Group},
   Ciphersuite, Ristretto,
@@ -83,11 +85,15 @@ fn test_vector_commitment() {
   let mut circuit =
     Circuit::new(g, h, g_bold1, g_bold2, h_bold1, h_bold2, false, Some(commitments));
   gadget(&mut circuit, (x_bind, y_bind), None, (z_bind, a_bind), None);
+  let mut verifier = BatchVerifier::new(5);
   circuit.verify_with_vector_commitments(
+    &mut OsRng,
+    &mut verifier,
     &mut transcript,
     additional_gs,
     additional_hs,
     proof,
     proofs,
   );
+  assert!(verifier.verify_vartime());
 }

@@ -1,6 +1,8 @@
 use rand_core::OsRng;
 
 use transcript::{Transcript, RecommendedTranscript};
+
+use multiexp::BatchVerifier;
 use ciphersuite::{group::ff::Field, Ciphersuite, Vesta};
 
 use crate::{arithmetic_circuit::Circuit, gadgets::is_non_zero_gadget, tests::generators};
@@ -54,7 +56,9 @@ fn test_is_non_zero_gadget() {
       Some(vec![]),
     );
     gadget(&mut circuit, None);
-    circuit.verify(&mut transcript.clone(), proof);
+    let mut verifier = BatchVerifier::new(1);
+    circuit.verify(&mut OsRng, &mut verifier, &mut transcript.clone(), proof);
+    assert!(verifier.verify_vartime());
   };
 
   test(<Vesta as Ciphersuite>::F::ZERO);
