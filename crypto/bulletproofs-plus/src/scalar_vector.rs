@@ -92,9 +92,11 @@ impl<C: Ciphersuite> ScalarVector<C> {
 
     let mut res = Vec::with_capacity(len);
     res.push(C::F::ONE);
-    for i in 1 .. len {
+    res.push(x);
+    for i in 2 .. len {
       res.push(res[i - 1] * x);
     }
+    res.truncate(len);
     ScalarVector(res)
   }
 

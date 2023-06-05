@@ -264,18 +264,11 @@ pub trait EmbeddedCurveOperations: Ciphersuite {
       assert_eq!(Gs.len(), points);
 
       // Drop all Gs which are identity
-      let mut without_identity = Gs;
-      {
-        let mut i = 0;
-        while i < without_identity.len() {
-          if without_identity[i].is_identity().into() {
-            without_identity.swap_remove(i);
-            continue;
-          }
-          i += 1;
-        }
-      }
+      let without_identity =
+        Gs.drain(..).filter(|G| !bool::from(G.is_identity())).collect::<Vec<_>>();
+      drop(Gs);
 
+      // TODO: Can we achieve a more efficient divisor representation via derivatives?
       let divisor = Divisor::<Self::Embedded>::new(&without_identity);
       let Poly { y_coefficients, yx_coefficients, x_coefficients, zero_coefficient } = divisor;
       assert!(y_coefficients.len() <= 1);
@@ -318,6 +311,7 @@ pub trait EmbeddedCurveOperations: Ciphersuite {
     } else {
       vec![None; x_coeffs]
     };
+    assert_eq!(x_coefficients.len(), x_coeffs);
     let x_coefficients_sub_one = set_with_constant(circuit, Self::F::ONE, &x_coefficients);
     drop(x_coefficients);
 
@@ -492,7 +486,9 @@ pub trait EmbeddedCurveOperations: Ciphersuite {
     // identity if that bit wasn't set
 
     // GC: 1 per point
-    let mut accum: Option<(_, Option<Constraint<Self>>)> = None;
+
+    // TODO: Can we use Eagen's sectiton 5.3 to more efficiently prove this?
+    let mut accum: Option<(_, Option<Constraint<_>>)> = None;
     for (bit, G) in dlog.iter().zip(G.0.iter()).take(points - 1) {
       let (this_rhs, mut rhs_constraint) = bit.unsafe_select_constant(
         circuit,
