@@ -14,7 +14,7 @@ use ecip::{Ecip, Poly, Divisor};
 
 use crate::{
   arithmetic_circuit::{VariableReference, Constraint, Circuit},
-  gadgets::{Bit, assert_non_zero_gadget, set_membership::assert_constant_in_set_gadget},
+  gadgets::{Bit, assert_non_zero_gadget, set_membership::set_with_constant},
 };
 
 /// An on-curve point which is not identity.
@@ -188,13 +188,19 @@ pub trait EmbeddedCurveOperations: Ciphersuite {
     OnCurvePoint { x: x3, y: y3 }
   }
 
-  // This uses the EC IP which uses just 2 gates per point, plus 2, beating incomplete addition
-  // As currently implemented (with an inefficiency) it's 3 gates per point
+  // This uses the EC IP which uses just 1.75 gates per point, plus a constant 2
+  // This is more than twice as performant as incomplete addition and is closer to being complete
+  // (only identity is unsupported)
   //
-  // TODO: Due to the vector commitment scheme currently implemented, each gate causes six extra
-  // gates in distinct proofs (two gates per item, three items per gate (left, right, output)).
-  // That means this uses 14 gates per point
-  // If a zero-cost vector commitment scheme isn't implemented, this isn't worth it
+  // It currently has an inefficiency making it 2.75 gates per point (still with the constant 2)
+  // Ideally, it's 1.5 gates per point plus a constant 3 (if a more efficient divisor-non-zero
+  // check is implemented)
+  //
+  // TODO: The currently implemented vector commitment scheme, if used, multiplies the gate count
+  // by 7 due to adding 2 gates per item (with 3 items per gate (left, right, output))
+  // That means this uses 12.25 gates per point
+  // If a zero-cost vector commitment scheme isn't implemented, this isn't worth it for proofs
+  // which don't already incur the vector commitment scheme's overhead
   //
   // Gate count is notated GC
   fn dlog_pok<R: RngCore + CryptoRng>(
@@ -267,12 +273,52 @@ pub trait EmbeddedCurveOperations: Ciphersuite {
       (None, None, None, None)
     };
 
-    // Add the divisor into the circuit, creating a transcript of it
+    // Make sure one of the x coefficients is 1, and therefore that this divisor isn't equal to 0
+    //
+    // This is a O(n) algorithm since the polynomial is of variable length, and the highest-order
+    // term is the one with a coefficient of 1
+    //
+    // We can normalize so the lowest-order term has a coefficient of 1, yet it'd make some
+    // divisors unrepresentable. Doing so would be worth it if said divisors are negligible
+    // (divisors for when only two bits in the scalar were set)
+    //
+    // Alternatively, a distinct method for proving the divisor isn't identical to zero may be
+    // viable
+    //
+    // TODO
+
     // GC: 0.5 per point
-    let (mut transcript, y_coefficient, yx_coefficients, x_coefficients, zero_coefficient) = {
+    let x_coeffs = x_coeffs(points);
+    let x_coefficients = if let Some(mut x_coefficients) = x_coefficients {
+      let mut res = x_coefficients.drain(..).map(Some).collect::<Vec<_>>();
+      while res.len() < x_coeffs {
+        res.push(Some(Self::F::ZERO));
+      }
+      res
+    } else {
+      vec![None; x_coeffs]
+    };
+    let x_coefficients_sub_one = set_with_constant(circuit, Self::F::ONE, &x_coefficients);
+    drop(x_coefficients);
+
+    // We need to select a challenge point for the divisor
+    // This requires committing to the divisor, a ZK variable
+    // We do this by creating a vector commitment for the divisor's variables
+    // This commitment is then what's hashed for challenges
+    // Creating the commitment, along with evaluating the divisor, requires its presence in gates
+
+    // The x coefficients were already used in gates thanks to checking one of them was 1
+    // Technically, the coefficients - 1 were, yet that's irrelevant to the commitment
+
+    let mut transcript = x_coefficients_sub_one.clone();
+
+    // Add the rest of the divisor into the circuit
+    // GC: 0.25 per point
+    let (y_coefficient, yx_coefficients, zero_coefficient) = {
       // First, create a serial representation of the divisor
       let mut serial_divisor = {
-        let mut serial_divisor = vec![y_coefficient];
+        let mut serial_divisor = vec![];
+
         for i in
           0 .. yx_coeffs(points).expect("only 2**4 points were allowed for this composition?")
         {
@@ -296,14 +342,7 @@ pub trait EmbeddedCurveOperations: Ciphersuite {
           });
         }
 
-        for i in 0 .. x_coeffs(points) {
-          serial_divisor.push(if circuit.prover() {
-            Some(x_coefficients.as_ref().unwrap().get(i).cloned().unwrap_or(Self::F::ZERO))
-          } else {
-            None
-          });
-        }
-
+        serial_divisor.push(y_coefficient);
         serial_divisor.push(zero_coefficient);
         serial_divisor
       };
@@ -313,7 +352,7 @@ pub trait EmbeddedCurveOperations: Ciphersuite {
         serial_divisor.drain(..).map(|e| circuit.add_secret_input(e)).collect::<Vec<_>>();
 
       // Use each variable in a product to enable their usage in constraints
-      let serial_divisor = {
+      let mut serial_divisor = {
         let mut i = 0;
         let mut products = vec![];
         while i < serial_divisor.len() {
@@ -334,38 +373,16 @@ pub trait EmbeddedCurveOperations: Ciphersuite {
       };
 
       // Decompose the serial divisor back to its components
-      let mut iter = serial_divisor.iter().cloned();
-      let y_coefficient = iter.next().unwrap();
-      let mut yx_coefficients = vec![];
-      let mut x_coefficients = vec![];
-      while x_coefficients.len() < x_coeffs(points) {
-        if yx_coefficients.len() < yx_coeffs(points).unwrap() {
-          yx_coefficients.push(iter.next().unwrap());
-          continue;
-        }
-        x_coefficients.push(iter.next().unwrap());
-      }
-      let zero_coefficient = iter.next().unwrap();
-      assert!(iter.next().is_none());
-      (serial_divisor, y_coefficient, yx_coefficients, x_coefficients, zero_coefficient)
+      let zero_coefficient = serial_divisor.pop().unwrap();
+      let y_coefficient = serial_divisor.pop().unwrap();
+      let yx_coefficients = serial_divisor;
+
+      transcript.extend(&yx_coefficients);
+      transcript.push(y_coefficient);
+      transcript.push(zero_coefficient);
+
+      (y_coefficient, yx_coefficients, zero_coefficient)
     };
-
-    // Prove at least one x coefficient is 1
-
-    // This is a O(n) algorithm since the polynomial is of variable length, and the highest-order
-    // term is the one with a coefficient of 1
-    //
-    // We can normalize so the lowest-order term has a coefficient of 1, yet it'd make some
-    // divisors unrepresentable. Doing so would speed this up 40%, and worth it if said divisors
-    // are negligible (divisors for when only two bits in the scalar were set)
-    //
-    // Alternatively, a distinct method for proving the divisor isn't identical to zero may be
-    // viable
-    //
-    // TODO
-
-    // GC: 0.5 per point
-    assert_constant_in_set_gadget(circuit, Self::F::ONE, &x_coefficients);
 
     // Also transcript the DLog
     for bit in dlog {
@@ -375,8 +392,7 @@ pub trait EmbeddedCurveOperations: Ciphersuite {
       transcript.push(circuit.variable_to_product(bit.variable).unwrap());
     }
 
-    // The transcript is defined as a series of variables in gates
-    // Put these into a dedicated commitment so we can use the commitment for challenges
+    // Create the commitment
     let commitment = circuit.allocate_vector_commitment();
     for var in transcript {
       circuit.bind(commitment, var, None);
@@ -390,9 +406,9 @@ pub trait EmbeddedCurveOperations: Ciphersuite {
     let (challenge_x, challenge_y) = Self::Embedded::to_xy(challenge);
 
     // Create the powers of x
-    assert!(x_coeffs(points) > yx_coeffs(points).unwrap());
+    assert!(x_coeffs > yx_coeffs(points).unwrap());
     let mut x_pows = vec![challenge_x];
-    while x_pows.len() < x_coeffs(points) {
+    while x_pows.len() < x_coeffs {
       x_pows.push(*x_pows.last().unwrap() * challenge_x);
     }
 
@@ -401,10 +417,16 @@ pub trait EmbeddedCurveOperations: Ciphersuite {
 
     // Perform the x_coeffs
     let mut x_res = vec![];
-    for i in 0 .. x_coeffs(points) {
-      lhs_constraint.weight(x_coefficients[i], x_pows[i]);
+    for i in 0 .. x_coeffs {
+      // Because these x coefficients are minus 1, the left hand side will be short 1 x_pows[i]
+      lhs_constraint.weight(x_coefficients_sub_one[i], x_pows[i]);
+      // Adjust the right hand side accordingly
+      lhs_constraint.rhs_offset(-x_pows[i]);
+
       x_res.push(
-        circuit.unchecked_value(circuit.variable(x_coefficients[i])).map(|coeff| coeff * x_pows[i]),
+        circuit
+          .unchecked_value(circuit.variable(x_coefficients_sub_one[i]))
+          .map(|coeff_minus_one| (coeff_minus_one + Self::F::ONE) * x_pows[i]),
       );
     }
 

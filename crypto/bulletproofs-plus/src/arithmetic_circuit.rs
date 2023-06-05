@@ -101,8 +101,7 @@ impl<C: Ciphersuite> Constraint<C> {
     self
   }
   pub fn rhs_offset(&mut self, offset: C::F) -> &mut Self {
-    assert!(bool::from(self.c.is_zero()));
-    self.c = offset;
+    self.c += offset;
     self
   }
 }

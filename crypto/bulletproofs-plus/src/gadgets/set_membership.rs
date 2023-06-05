@@ -73,3 +73,41 @@ pub fn assert_constant_in_set_gadget<C: Ciphersuite>(
 ) {
   set_membership(circuit, None, Some(constant), set)
 }
+
+// A set membership tailored for the DLog PoK
+//
+// This takes in variables, asserts one of them is a constant in O(n), and returns
+// ProductReferences for variable - constant
+pub(crate) fn set_with_constant<C: Ciphersuite>(
+  circuit: &mut Circuit<C>,
+  constant: C::F,
+  set: &[Option<C::F>],
+) -> Vec<ProductReference> {
+  assert!(set.len() >= 2);
+
+  let sub_member = |circuit: &mut Circuit<C>, var: Option<C::F>| {
+    circuit.add_secret_input(var.map(|var| var - constant))
+  };
+
+  let mut i = 1;
+  let mut accum = None;
+  let mut res = vec![];
+  while i < set.len() {
+    // Use the accumulator or set[0] - member
+    let l = accum.unwrap_or_else(|| sub_member(circuit, set[0]));
+    let r = sub_member(circuit, set[i]);
+    let ((l, r, _), o_var) = circuit.product(l, r);
+
+    if accum.is_none() {
+      res.push(l);
+    }
+    res.push(r);
+
+    accum = Some(o_var);
+
+    i += 1;
+  }
+
+  circuit.equals_constant(circuit.variable_to_product(accum.unwrap()).unwrap(), C::F::ZERO);
+  res
+}
