@@ -14,7 +14,7 @@ use ecip::{Ecip, Poly, Divisor};
 
 use crate::{
   arithmetic_circuit::{VariableReference, Constraint, Circuit},
-  gadgets::{Bit, assert_non_zero_gadget, set_membership::assert_set_membership_gadget},
+  gadgets::{Bit, assert_non_zero_gadget, set_membership::assert_constant_in_set_gadget},
 };
 
 /// An on-curve point which is not identity.
@@ -364,10 +364,8 @@ pub trait EmbeddedCurveOperations: Ciphersuite {
     //
     // TODO
 
-    // GC: 0.5 per point + 1
-    let one = circuit.add_secret_input(Some(Self::F::ONE).filter(|_| circuit.prover()));
-    let one = circuit.product(one, one).0 .0;
-    assert_set_membership_gadget(circuit, one, &x_coefficients);
+    // GC: 0.5 per point
+    assert_constant_in_set_gadget(circuit, Self::F::ONE, &x_coefficients);
 
     // Also transcript the DLog
     for bit in dlog {

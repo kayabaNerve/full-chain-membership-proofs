@@ -2,16 +2,23 @@ use ciphersuite::{group::ff::Field, Ciphersuite};
 
 use crate::arithmetic_circuit::{ProductReference, Constraint, Circuit};
 
-pub fn assert_set_membership_gadget<C: Ciphersuite>(
+// Core set membership gadget, shared between the variable/constant routines.
+// member should be Some if matching against a variable, None for a constant.
+// value should be Some if variable + prover, Some if constant, otherwise None.
+fn set_membership<C: Ciphersuite>(
   circuit: &mut Circuit<C>,
-  member: ProductReference,
+  member: Option<ProductReference>,
+  value: Option<C::F>,
   set: &[ProductReference],
 ) {
   assert!(set.len() >= 2);
 
-  let value = circuit.unchecked_value(circuit.variable(member));
   let sub_member = |circuit: &mut Circuit<C>, var| {
-    let sub = value.map(|value| circuit.unchecked_value(circuit.variable(var)).unwrap() - value);
+    let sub = if circuit.prover() {
+      Some(circuit.unchecked_value(circuit.variable(var)).unwrap() - value.unwrap())
+    } else {
+      None
+    };
     circuit.add_secret_input(sub)
   };
 
@@ -26,8 +33,12 @@ pub fn assert_set_membership_gadget<C: Ciphersuite>(
     let mut constrain_sub = |label, j, var| {
       let mut constraint = Constraint::new(label);
       constraint.weight(set[j], C::F::ONE);
-      constraint.weight(member, -C::F::ONE);
       constraint.weight(var, -C::F::ONE);
+      if let Some(member) = member {
+        constraint.weight(member, -C::F::ONE);
+      } else {
+        constraint.rhs_offset(value.unwrap());
+      }
       circuit.constrain(constraint);
     };
 
@@ -44,4 +55,21 @@ pub fn assert_set_membership_gadget<C: Ciphersuite>(
   }
 
   circuit.equals_constant(circuit.variable_to_product(accum.unwrap()).unwrap(), C::F::ZERO);
+}
+
+pub fn assert_variable_in_set_gadget<C: Ciphersuite>(
+  circuit: &mut Circuit<C>,
+  member: ProductReference,
+  set: &[ProductReference],
+) {
+  let value = circuit.unchecked_value(circuit.variable(member));
+  set_membership(circuit, Some(member), value, set);
+}
+
+pub fn assert_constant_in_set_gadget<C: Ciphersuite>(
+  circuit: &mut Circuit<C>,
+  constant: C::F,
+  set: &[ProductReference],
+) {
+  set_membership(circuit, None, Some(constant), set)
 }
