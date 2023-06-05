@@ -188,13 +188,13 @@ pub trait EmbeddedCurveOperations: Ciphersuite {
     OnCurvePoint { x: x3, y: y3 }
   }
 
-  // This uses the EC IP which uses just 1.75 gates per point, plus a constant 2
+  // This uses a divisor to prove knowledge of a DLog with just 1.75 gates per point, plus a
+  // constant 2 gates
   // This is more than twice as performant as incomplete addition and is closer to being complete
   // (only identity is unsupported)
   //
-  // It currently has an inefficiency making it 2.75 gates per point (still with the constant 2)
-  // Ideally, it's 1.5 gates per point plus a constant 3 (if a more efficient divisor-non-zero
-  // check is implemented)
+  // Ideally, it's 1.5 gates per point, plus a constant 3 (if an O(1) divisor-non-zero check is
+  // implemented)
   //
   // TODO: The currently implemented vector commitment scheme, if used, multiplies the gate count
   // by 7 due to adding 2 gates per item (with 3 items per gate (left, right, output))
@@ -471,16 +471,29 @@ pub trait EmbeddedCurveOperations: Ciphersuite {
     // Iterate over the generators' forms, either including them or using the multiplicative
     // identity if that bit wasn't set
 
-    // GC: 2 per point, 1 if we inline select_constant
-    let mut accum = None;
+    // GC: 1 per point
+    let mut accum: Option<(_, Option<Constraint<Self>>)> = None;
     for (bit, G) in dlog.iter().zip(G.0.iter()).take(points - 1) {
-      let this_rhs =
-        bit.select_constant(circuit, Self::F::ONE, challenge_x - Self::Embedded::to_xy(*G).0);
-      if let Some(accum_var) = accum {
-        let (_, accum_var) = circuit.product(accum_var, this_rhs);
-        accum = Some(accum_var);
+      let (this_rhs, mut rhs_constraint) = bit.unsafe_select_constant(
+        circuit,
+        Self::F::ONE,
+        challenge_x - Self::Embedded::to_xy(*G).0,
+      );
+
+      if let Some((accum_var, accum_constraint)) = accum {
+        let ((accum_prod, this_rhs, _), accum_var) = circuit.product(accum_var, this_rhs);
+
+        if let Some(mut accum_constraint) = accum_constraint {
+          accum_constraint.weight(accum_prod, -Self::F::ONE);
+          circuit.constrain(accum_constraint);
+        }
+
+        rhs_constraint.weight(this_rhs, -Self::F::ONE);
+        circuit.constrain(rhs_constraint);
+
+        accum = Some((accum_var, None));
       } else {
-        accum = Some(this_rhs);
+        accum = Some((this_rhs, Some(rhs_constraint)));
       }
     }
 
@@ -491,7 +504,9 @@ pub trait EmbeddedCurveOperations: Ciphersuite {
       None
     });
     // GC: 1
-    let ((_, challenge_x_sub_x, rhs), _) = circuit.product(accum.unwrap(), challenge_x_sub_x);
+    let accum = accum.unwrap();
+    assert!(accum.1.is_none());
+    let ((_, challenge_x_sub_x, rhs), _) = circuit.product(accum.0, challenge_x_sub_x);
     let mut constraint = Constraint::new("challenge_x_sub_x");
     constraint.weight(
       circuit
