@@ -33,7 +33,28 @@ impl OnCurvePoint {
   }
 }
 
-/// A table for efficient proofs of knowledge of DLog.
+/// A table for efficient proofs of knowledge of discrete logarithms over a specified generator.
+
+// Creating a bit takes one gate.
+// Selecting a constant can be done in zero gates.
+//
+// This means for a 255 bit DLog PoK, there's a 255 gate cost leading into the DLog PoK function.
+// Then there's a 255 * 1.75 gate cost inside that function, for 255 + 446.25 gates.
+//
+// We can move from a base-2 system to a base-4 system with two bits, allowing us to reduce the
+// amount of points via a two-bit table. This would have the same gate cost leading into the
+// function.
+//
+// The issue is that once we perform the constant selection, we need to perform 127 ZK
+// selections and evaluate a 128-point divisor. This would be (127 * 2) + (128 * 1.75) = 478
+// gates. That isn't better.
+//
+// A base-3 system requires 2 gates per trit. Despite this, it'd only require 1 gate to select
+// -P, identity, or P. We'd need 161 trits/points.
+//
+// (161 * 2) + (161 * 1) + (161 * 1.75) = 764.75. This is even worse.
+//
+// TL;DR Addition is so efficient, tabling is a performance loss.
 pub struct DLogTable<C: Ciphersuite>(Vec<C::G>);
 impl<C: Ciphersuite> DLogTable<C> {
   pub fn new(point: C::G) -> DLogTable<C> {
@@ -213,7 +234,6 @@ pub trait EmbeddedCurveOperations: Ciphersuite {
     let CAPACITY = <Self::Embedded as Ciphersuite>::F::CAPACITY.min(Self::F::CAPACITY);
     assert_eq!(u32::try_from(dlog.len()).unwrap(), CAPACITY);
 
-    // TODO: Use [-1, 0, 1], or possibly a 3-bit lookup
     let Gs = if circuit.prover() {
       let mut Gs = vec![];
       for (i, bit) in dlog.iter().enumerate() {
