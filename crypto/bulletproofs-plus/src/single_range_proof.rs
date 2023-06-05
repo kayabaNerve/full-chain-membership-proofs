@@ -152,11 +152,10 @@ impl<C: Ciphersuite> SingleRangeStatement<C> {
 
     SingleRangeProof {
       A,
-      wip: WipStatement::new(g, h, g_bold, h_bold, A_hat).prove(
+      wip: WipStatement::new(g, h, g_bold, h_bold, A_hat, y).prove(
         rng,
         transcript,
         WipWitness::new(a_l, a_r, alpha),
-        y,
       ),
     }
   }
@@ -172,7 +171,7 @@ impl<C: Ciphersuite> SingleRangeStatement<C> {
 
     let Self { g, h, g_bold, h_bold, V } = self;
     let (y, _, _, _, A_hat) = Self::A_hat(transcript, g, &g_bold, &h_bold, V, proof.A);
-    (WipStatement::new(g, h, g_bold, h_bold, A_hat))
-      .verify(rng, verifier, transcript, proof.wip, y);
+    (WipStatement::new(g, h, g_bold, h_bold, A_hat, y))
+      .verify(rng, verifier, transcript, proof.wip);
   }
 }

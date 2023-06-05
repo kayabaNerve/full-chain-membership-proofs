@@ -23,12 +23,15 @@ fn test_zero_weighted_inner_product() {
   let g_bold = PointVector::<Ristretto>::new(1);
   let h_bold = PointVector::<Ristretto>::new(1);
 
+  let y = <Ristretto as Ciphersuite>::F::random(&mut OsRng);
+
   let statement = WipStatement::<Ristretto>::new(
     <Ristretto as Ciphersuite>::G::identity(),
     <Ristretto as Ciphersuite>::G::identity(),
     g_bold,
     h_bold,
     P,
+    y,
   );
   let witness = WipWitness::<Ristretto>::new(
     ScalarVector::<Ristretto>::new(1),
@@ -37,17 +40,17 @@ fn test_zero_weighted_inner_product() {
   );
 
   let mut transcript = RecommendedTranscript::new(b"Zero WIP Test");
-  let y = <Ristretto as Ciphersuite>::F::random(&mut OsRng);
-  let proof = statement.clone().prove(&mut OsRng, &mut transcript.clone(), witness, y);
+  let proof = statement.clone().prove(&mut OsRng, &mut transcript.clone(), witness);
 
   let mut verifier = BatchVerifier::new(1);
-  statement.verify(&mut OsRng, &mut verifier, &mut transcript, proof, y);
+  statement.verify(&mut OsRng, &mut verifier, &mut transcript, proof);
   assert!(verifier.verify_vartime());
 }
 
 #[test]
 fn test_weighted_inner_product() {
   // P = sum(g_bold * a, h_bold * b, g * (a * y * b), h * alpha)
+  let mut verifier = BatchVerifier::new(6);
   for i in [1, 2, 4, 8, 16, 32] {
     let (g, h, g_bold, h_bold, _, _) = generators(i);
 
@@ -72,13 +75,12 @@ fn test_weighted_inner_product() {
       (g * weighted_inner_product(&a, &b, &y_vec)) +
       (h * alpha);
 
-    let statement = WipStatement::<Ristretto>::new(g, h, g_bold, h_bold, P);
+    let statement = WipStatement::<Ristretto>::new(g, h, g_bold, h_bold, P, y);
     let witness = WipWitness::<Ristretto>::new(a, b, alpha);
 
     let mut transcript = RecommendedTranscript::new(b"WIP Test");
-    let proof = statement.clone().prove(&mut OsRng, &mut transcript.clone(), witness, y);
-    let mut verifier = BatchVerifier::new(1);
-    statement.verify(&mut OsRng, &mut verifier, &mut transcript, proof, y);
-    assert!(verifier.verify_vartime());
+    let proof = statement.clone().prove(&mut OsRng, &mut transcript.clone(), witness);
+    statement.verify(&mut OsRng, &mut verifier, &mut transcript, proof);
   }
+  assert!(verifier.verify_vartime());
 }

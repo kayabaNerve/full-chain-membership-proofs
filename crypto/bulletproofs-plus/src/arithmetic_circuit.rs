@@ -614,22 +614,19 @@ impl<C: Ciphersuite> Circuit<C> {
     generators: Vec<C::G>,
     H: C::G,
     commitment: C::G,
-  ) -> (WipStatement<C>, C::F) {
+  ) -> WipStatement<C> {
     transcript.append_message(b"vector_commitment", commitment.to_bytes());
 
     // TODO: Do we need to transcript more before this? Should we?
     let y = C::hash_to_F(b"vector_commitment_proof", transcript.challenge(b"y").as_ref());
 
     let generators_len = generators.len();
-    // TODO: Why isn't y in the statement?
-    (
-      WipStatement::new(
-        g,
-        H,
-        PointVector(generators),
-        PointVector(hs[.. generators_len].to_vec()),
-        commitment,
-      ),
+    WipStatement::new(
+      g,
+      H,
+      PointVector(generators),
+      PointVector(hs[.. generators_len].to_vec()),
+      commitment,
       y,
     )
   }
@@ -720,7 +717,7 @@ impl<C: Ciphersuite> Circuit<C> {
         commitment,
         (
           {
-            let (statement, y) = Circuit::<C>::vector_commitment_statement(
+            let statement = Circuit::<C>::vector_commitment_statement(
               additional_gs.0,
               &additional_hs.0,
               transcript,
@@ -728,10 +725,10 @@ impl<C: Ciphersuite> Circuit<C> {
               H,
               commitment,
             );
-            statement.prove(&mut *rng, transcript, witness.clone(), y)
+            statement.prove(&mut *rng, transcript, witness.clone())
           },
           {
-            let (statement, y) = Circuit::<C>::vector_commitment_statement(
+            let statement = Circuit::<C>::vector_commitment_statement(
               additional_gs.1,
               &additional_hs.1,
               transcript,
@@ -739,7 +736,7 @@ impl<C: Ciphersuite> Circuit<C> {
               H,
               commitment,
             );
-            statement.prove(&mut *rng, transcript, witness, y)
+            statement.prove(&mut *rng, transcript, witness)
           },
         ),
       )
@@ -829,7 +826,7 @@ impl<C: Ciphersuite> Circuit<C> {
     assert_eq!(vector_commitments.len(), vector_commitments_data.len());
 
     let mut verify_proofs = |generators: Vec<_>, commitment, proofs: (_, _)| {
-      let (wip_statement, y) = Self::vector_commitment_statement(
+      let wip_statement = Self::vector_commitment_statement(
         additional_proving_gs.0,
         &additional_proving_hs.0,
         transcript,
@@ -837,9 +834,9 @@ impl<C: Ciphersuite> Circuit<C> {
         statement.h,
         commitment,
       );
-      wip_statement.verify(rng, verifier, transcript, proofs.0, y);
+      wip_statement.verify(rng, verifier, transcript, proofs.0);
 
-      let (wip_statement, y) = Self::vector_commitment_statement(
+      let wip_statement = Self::vector_commitment_statement(
         additional_proving_gs.1,
         &additional_proving_hs.1,
         transcript,
@@ -847,7 +844,7 @@ impl<C: Ciphersuite> Circuit<C> {
         statement.h,
         commitment,
       );
-      wip_statement.verify(rng, verifier, transcript, proofs.1, y);
+      wip_statement.verify(rng, verifier, transcript, proofs.1);
     };
 
     assert_eq!(vector_commitments.len() + 1, vc_proofs.len());

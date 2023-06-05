@@ -232,11 +232,10 @@ impl<C: Ciphersuite> ArithmeticCircuitStatement<C> {
 
     ArithmeticCircuitProof {
       A,
-      wip: WipStatement::new(self.g, self.h, self.g_bold1, self.h_bold1, A_hat).prove(
+      wip: WipStatement::new(self.g, self.h, self.g_bold1, self.h_bold1, A_hat, y).prove(
         rng,
         transcript,
         WipWitness::new(aL, aR, alpha),
-        y,
       ),
     }
   }
@@ -263,7 +262,7 @@ impl<C: Ciphersuite> ArithmeticCircuitStatement<C> {
     let (y, _, _, _, _, _, A_hat) = self.compute_A_hat(transcript, proof.A);
     self.g_bold1.0.append(&mut self.g_bold2.0);
     self.h_bold1.0.append(&mut self.h_bold2.0);
-    (WipStatement::new(self.g, self.h, self.g_bold1, self.h_bold1, A_hat))
-      .verify(rng, verifier, transcript, proof.wip, y);
+    (WipStatement::new(self.g, self.h, self.g_bold1, self.h_bold1, A_hat, y))
+      .verify(rng, verifier, transcript, proof.wip);
   }
 }

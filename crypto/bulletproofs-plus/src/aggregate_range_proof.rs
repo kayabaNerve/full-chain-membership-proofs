@@ -200,11 +200,10 @@ impl<C: Ciphersuite> AggregateRangeStatement<C> {
 
     AggregateRangeProof {
       A,
-      wip: WipStatement::new(self.g, self.h, self.g_bold, self.h_bold, A_hat).prove(
+      wip: WipStatement::new(self.g, self.h, self.g_bold, self.h_bold, A_hat, y).prove(
         rng,
         transcript,
         WipWitness::new(a_l, a_r, alpha),
-        y,
       ),
     }
   }
@@ -219,7 +218,7 @@ impl<C: Ciphersuite> AggregateRangeStatement<C> {
     self.initial_transcript(transcript);
 
     let (y, _, _, _, _, A_hat) = self.compute_A_hat(transcript, proof.A);
-    (WipStatement::new(self.g, self.h, self.g_bold, self.h_bold, A_hat))
-      .verify(rng, verifier, transcript, proof.wip, y);
+    (WipStatement::new(self.g, self.h, self.g_bold, self.h_bold, A_hat, y))
+      .verify(rng, verifier, transcript, proof.wip);
   }
 }
