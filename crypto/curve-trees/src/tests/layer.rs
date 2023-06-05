@@ -3,7 +3,9 @@ use rand_core::{RngCore, OsRng};
 use transcript::{Transcript, RecommendedTranscript};
 use ciphersuite::{group::Group, Ciphersuite, Pallas, Vesta};
 
-use bulletproofs_plus::{arithmetic_circuit::Circuit, tests::generators};
+use bulletproofs_plus::{
+  arithmetic_circuit::Circuit, gadgets::elliptic_curve::DLogTable, tests::generators,
+};
 
 #[rustfmt::skip]
 use crate::{CurveCycle, pedersen_hash::pedersen_hash_vartime, new_blind, layer_gadget, tests::Pasta};
@@ -43,7 +45,7 @@ fn test_layer_gadget() {
     layer_gadget::<_, Pasta>(
       &mut OsRng,
       circuit,
-      H,
+      &DLogTable::new(H),
       &pedersen_generators,
       blinded_point,
       Some(blind_c2).filter(|_| circuit.prover()),

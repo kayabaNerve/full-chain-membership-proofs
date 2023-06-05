@@ -13,7 +13,10 @@ use ciphersuite::{
 use ecip::Ecip;
 use bulletproofs_plus::{
   arithmetic_circuit::*,
-  gadgets::{Bit, elliptic_curve::EmbeddedCurveOperations},
+  gadgets::{
+    Bit,
+    elliptic_curve::{DLogTable, EmbeddedCurveOperations},
+  },
 };
 
 pub mod pedersen_hash;
@@ -85,7 +88,7 @@ pub fn new_blind<R: RngCore + CryptoRng, C1: Ciphersuite, C2: Ciphersuite>(
 pub fn layer_gadget<R: RngCore + CryptoRng, C: CurveCycle>(
   rng: &mut R,
   circuit: &mut Circuit<C::C2>,
-  H: <C::C1 as Ciphersuite>::G,
+  H: &DLogTable<C::C1>,
   pedersen_generators: &[<C::C2 as Ciphersuite>::G],
   blinded_point: <C::C1 as Ciphersuite>::G,
   blind: Option<<C::C2 as Ciphersuite>::F>,
@@ -98,7 +101,8 @@ pub fn layer_gadget<R: RngCore + CryptoRng, C: CurveCycle>(
       let mut repr = <<C::C1 as Ciphersuite>::F as PrimeField>::Repr::default();
       repr.as_mut().copy_from_slice(blind.to_repr().as_ref());
 
-      let coords = C::c1_coords(H * <C::C1 as Ciphersuite>::F::from_repr(repr).unwrap());
+      let coords =
+        C::c1_coords(H.generator() * <C::C1 as Ciphersuite>::F::from_repr(repr).unwrap());
       (Some(coords.0), Some(coords.1))
     } else {
       (None, None)
@@ -212,6 +216,9 @@ pub fn membership_gadget<R: RngCore + CryptoRng, C: CurveCycle>(
   let mut even_blind = Some(blind.map(|blind| blind.1));
   let mut odd_blind = None;
 
+  let c1_h = DLogTable::<C::C1>::new(circuit_c1.h());
+  let c2_h = DLogTable::<C::C2>::new(circuit_c2.h());
+
   for i in 1 ..= tree.depth() {
     if (i % 2) == 1 {
       let Hash::Even(this_blinded_point) = blinded_point else {
@@ -234,7 +241,7 @@ pub fn membership_gadget<R: RngCore + CryptoRng, C: CurveCycle>(
       let (blind, point) = layer_gadget::<_, C>(
         rng,
         circuit_c2,
-        circuit_c1.h(),
+        &c1_h,
         tree.odd_generators(i).unwrap(),
         this_blinded_point,
         even_blind.take().unwrap(),
@@ -265,7 +272,7 @@ pub fn membership_gadget<R: RngCore + CryptoRng, C: CurveCycle>(
       let (blind, point) = layer_gadget::<_, FlipCurveCycle<C>>(
         rng,
         circuit_c1,
-        circuit_c2.h(),
+        &c2_h,
         tree.even_generators(i).unwrap(),
         this_blinded_point,
         odd_blind.take().unwrap(),

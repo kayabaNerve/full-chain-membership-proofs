@@ -92,6 +92,7 @@ impl Bit {
 
   /// Select a constant based on the value of this bit.
   // This uses a shareable gate and one constraint.
+  // TODO: Make this take zero gates.
   pub fn select_constant<C: Ciphersuite>(
     &self,
     circuit: &mut Circuit<C>,

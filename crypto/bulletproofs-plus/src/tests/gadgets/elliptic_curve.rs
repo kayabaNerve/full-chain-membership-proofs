@@ -12,7 +12,10 @@ use ciphersuite::{
 
 use crate::{
   arithmetic_circuit::Circuit,
-  gadgets::{Bit, elliptic_curve::EmbeddedCurveOperations},
+  gadgets::{
+    Bit,
+    elliptic_curve::{DLogTable, EmbeddedCurveOperations},
+  },
   tests::generators,
 };
 
@@ -81,6 +84,8 @@ fn test_dlog_pok() {
 
   let transcript = RecommendedTranscript::new(b"Point DLog PoK Circuit Test");
 
+  let G_table = DLogTable::<Pallas>::new(<Pallas as Ciphersuite>::G::generator());
+
   let gadget = |circuit: &mut Circuit<Vesta>, point: (_, _), dlog: Vec<u8>| {
     let prover = circuit.prover();
 
@@ -95,13 +100,7 @@ fn test_dlog_pok() {
     }
     assert_eq!(u32::try_from(bits.len()).unwrap(), <Pallas as Ciphersuite>::F::CAPACITY);
 
-    <Vesta as EmbeddedCurveOperations>::dlog_pok(
-      &mut OsRng,
-      circuit,
-      <Pallas as Ciphersuite>::G::generator(),
-      point,
-      &bits,
-    );
+    <Vesta as EmbeddedCurveOperations>::dlog_pok(&mut OsRng, circuit, &G_table, point, &bits);
   };
 
   let test = |point: (_, _), dlog: Vec<_>| {

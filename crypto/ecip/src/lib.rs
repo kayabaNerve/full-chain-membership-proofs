@@ -413,6 +413,7 @@ impl<C: Ecip> Divisor<C> {
     }
   }
 
+  #[allow(clippy::new_ret_no_self)]
   pub fn new(points: &[C::G]) -> Poly<C::FieldElement> {
     assert!(points.len() > 1);
     assert_eq!(points.len() % 2, 0); // TODO: Support odd numbers of points
