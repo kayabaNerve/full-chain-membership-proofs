@@ -138,18 +138,7 @@ pub fn layer_gadget<R: RngCore + CryptoRng, C: CurveCycle>(
     }
 
     // Perform the addition
-    let (point_x, point_y) = C::c1_coords(blinded_point);
-
-    // The prover can set these variables to anything
-    // TODO: Add incomplete_add where one point isn't ZK
-    let point_x_var = circuit.add_secret_input(Some(point_x).filter(|_| circuit.prover()));
-    let point_y_var = circuit.add_secret_input(Some(point_y).filter(|_| circuit.prover()));
-    let point_var = C::C2::constrain_on_curve(circuit, point_x_var, point_y_var);
-    // Constrain the above variables
-    circuit.equals_constant(circuit.variable_to_product(point_x_var).unwrap(), point_x);
-    circuit.equals_constant(circuit.variable_to_product(point_y_var).unwrap(), point_y);
-
-    C::C2::incomplete_add(circuit, point_var, blind_var)
+    C::C2::incomplete_add_constant(circuit, blind_var, blinded_point)
   };
 
   // Create the branch hash
@@ -167,9 +156,8 @@ pub fn layer_gadget<R: RngCore + CryptoRng, C: CurveCycle>(
 
     // Ensure the unblnded point's x/y coordinates are actually present
     let x_pos = find_index_gadget(circuit, unblinded.x(), &x_coords);
-    let x_pos = circuit.variable_to_product(x_pos).unwrap();
     let y_pos = find_index_gadget(circuit, unblinded.y(), &y_coords);
-    let y_pos = circuit.variable_to_product(y_pos).unwrap();
+    let ((x_pos, y_pos, _), _) = circuit.product(x_pos, y_pos);
     circuit.constrain_equality(x_pos, y_pos);
 
     // Bind these to the branch hash

@@ -52,13 +52,8 @@ pub fn find_index_gadget<C: Ciphersuite>(
     constraint.weight(circuit.variable_to_product(additive).unwrap(), C::F::ONE);
     index = index.map(|index| index + circuit.unchecked_value(additive).unwrap());
   }
+
   let index = circuit.add_secret_input(index);
-
-  // TODO: Merge this with other statements
-  let index_prod = circuit.product(index, index).0 .0;
-
-  constraint.weight(index_prod, -C::F::ONE);
-  circuit.constrain(constraint);
-
+  circuit.set_variable_constraint(index, constraint);
   index
 }

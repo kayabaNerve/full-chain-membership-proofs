@@ -32,6 +32,7 @@ fn test_incomplete_addition() {
   let p1 = p1.to_affine().coordinates().unwrap();
   let p1 = (*p1.x(), *p1.y());
 
+  let p2_orig = p2;
   let p2 = p2.to_affine().coordinates().unwrap();
   let p2 = (*p2.x(), *p2.y());
 
@@ -53,7 +54,10 @@ fn test_incomplete_addition() {
     let p2 = <Vesta as EmbeddedCurveOperations>::constrain_on_curve(circuit, p2_x, p2_y);
 
     let res = <Vesta as EmbeddedCurveOperations>::incomplete_add(circuit, p1, p2);
+    circuit.equals_constant(circuit.variable_to_product(res.x()).unwrap(), p3.0);
+    circuit.equals_constant(circuit.variable_to_product(res.y()).unwrap(), p3.1);
 
+    let res = <Vesta as EmbeddedCurveOperations>::incomplete_add_constant(circuit, p1, p2_orig);
     circuit.equals_constant(circuit.variable_to_product(res.x()).unwrap(), p3.0);
     circuit.equals_constant(circuit.variable_to_product(res.y()).unwrap(), p3.1);
   };
