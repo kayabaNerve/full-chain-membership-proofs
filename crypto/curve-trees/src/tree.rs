@@ -188,6 +188,11 @@ impl<C: CurveCycle> Tree<C> {
         continue;
       }
 
+      // Ban identity to obtain certain properties in-circuit
+      if leaf.is_identity().into() {
+        continue;
+      }
+
       let (full, mut path) = add_to_node(self.width, &mut self.node, *leaf);
       if path.is_none() {
         assert!(full);

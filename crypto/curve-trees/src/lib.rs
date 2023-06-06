@@ -217,7 +217,6 @@ pub fn membership_gadget<R: RngCore + CryptoRng, C: CurveCycle>(
         let mut elems = vec![];
         for point in membership.remove(0) {
           let Hash::Even(point) = point else { panic!("odd layer had odd children") };
-          // TODO: Ban identity from entering tree
           let (x, y) = C::c1_coords(point);
           elems.push((Some(x), Some(y)));
         }
@@ -248,7 +247,6 @@ pub fn membership_gadget<R: RngCore + CryptoRng, C: CurveCycle>(
         let mut elems = vec![];
         for point in membership.remove(0) {
           let Hash::Odd(point) = point else { panic!("even layer had even children") };
-          // TODO: Ban identity from entering tree
           let (x, y) = C::c2_coords(point);
           elems.push((Some(x), Some(y)));
         }
