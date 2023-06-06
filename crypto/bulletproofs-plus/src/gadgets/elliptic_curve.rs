@@ -60,7 +60,6 @@ impl<C: Ciphersuite> DLogTable<C> {
   pub fn new(point: C::G) -> DLogTable<C> {
     assert!(point != C::G::identity());
 
-    // TODO: Use a more efficient table
     let bits = usize::try_from(C::F::CAPACITY).unwrap();
     let mut G_pow_2 = vec![point; bits];
     for i in 1 .. bits {
@@ -488,28 +487,14 @@ pub trait EmbeddedCurveOperations: Ciphersuite {
     // GC: 1 per point
 
     // TODO: Can we use Eagen's sectiton 5.3 to more efficiently prove this?
-    let mut accum: Option<(_, Option<Constraint<_>>)> = None;
+    let mut accum = None;
     for (bit, G) in dlog.iter().zip(G.0.iter()).take(points - 1) {
-      let (this_rhs, mut rhs_constraint) = bit.unsafe_select_constant(
-        circuit,
-        Self::F::ONE,
-        challenge_x - Self::Embedded::to_xy(*G).0,
-      );
-
-      if let Some((accum_var, accum_constraint)) = accum {
-        let ((accum_prod, this_rhs, _), accum_var) = circuit.product(accum_var, this_rhs);
-
-        if let Some(mut accum_constraint) = accum_constraint {
-          accum_constraint.weight(accum_prod, -Self::F::ONE);
-          circuit.constrain(accum_constraint);
-        }
-
-        rhs_constraint.weight(this_rhs, -Self::F::ONE);
-        circuit.constrain(rhs_constraint);
-
-        accum = Some((accum_var, None));
+      let this_rhs =
+        bit.select_constant(circuit, Self::F::ONE, challenge_x - Self::Embedded::to_xy(*G).0);
+      if let Some(accum_var) = accum {
+        accum = Some(circuit.product(accum_var, this_rhs).1);
       } else {
-        accum = Some((this_rhs, Some(rhs_constraint)));
+        accum = Some(this_rhs);
       }
     }
 
@@ -520,9 +505,7 @@ pub trait EmbeddedCurveOperations: Ciphersuite {
       None
     });
     // GC: 1
-    let accum = accum.unwrap();
-    assert!(accum.1.is_none());
-    let ((_, challenge_x_sub_x, rhs), _) = circuit.product(accum.0, challenge_x_sub_x);
+    let ((_, challenge_x_sub_x, rhs), _) = circuit.product(accum.unwrap(), challenge_x_sub_x);
     let mut constraint = Constraint::new("challenge_x_sub_x");
     constraint.weight(
       circuit

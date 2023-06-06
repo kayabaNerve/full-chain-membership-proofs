@@ -49,7 +49,7 @@ pub enum Variable<C: Ciphersuite> {
   Product(usize, Option<C::F>),
 }
 
-#[derive(Copy, Clone, PartialEq, Eq, Debug, Zeroize)]
+#[derive(Copy, Clone, PartialEq, Eq, Hash, Debug, Zeroize)]
 pub struct VariableReference(usize);
 // TODO: Remove Ord and usage of HashMaps/BTreeMaps
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug, Zeroize)]
@@ -148,6 +148,7 @@ pub struct Circuit<C: Ciphersuite> {
   vector_commitments: Option<Vec<C::G>>,
 
   constraints: Vec<Constraint<C>>,
+  variable_constraints: HashMap<VariableReference, Option<Constraint<C>>>,
 }
 
 impl<C: Ciphersuite> Circuit<C> {
@@ -182,6 +183,7 @@ impl<C: Ciphersuite> Circuit<C> {
       vector_commitments,
 
       constraints: vec![],
+      variable_constraints: HashMap::new(),
     }
   }
 
@@ -279,12 +281,28 @@ impl<C: Ciphersuite> Circuit<C> {
     ));
 
     // Add consistency constraints with prior variable uses
+    // Or if this is the variables first usage, check if it has a constraint for said usage
+    // The consistency constraint is prioritized as it's presumably cheaper
     if let Some(existing) = existing_a_use {
       self.constrain_equality(products.0, existing);
+    } else if let Some(Some(mut constraint)) =
+      self.variable_constraints.get_mut(&a).map(|constraint| constraint.take())
+    {
+      constraint.weight(products.0, -C::F::ONE);
+      self.constrain(constraint);
     }
     if let Some(existing) = existing_b_use {
       self.constrain_equality(products.1, existing);
+    } else if let Some(Some(mut constraint)) =
+      self.variable_constraints.get_mut(&b).map(|constraint| constraint.take())
+    {
+      constraint.weight(products.1, -C::F::ONE);
+      self.constrain(constraint);
     }
+
+    // Insert that no constraint was used so we error if a variable constraint is later added
+    self.variable_constraints.insert(a, None);
+    self.variable_constraints.insert(b, None);
 
     (products, variable)
   }
@@ -318,6 +336,15 @@ impl<C: Ciphersuite> Circuit<C> {
   /// Add a constraint.
   pub fn constrain(&mut self, constraint: Constraint<C>) {
     self.constraints.push(constraint);
+  }
+
+  /// Set a constraint to be applied to this variable once it's used in a product statement.
+  pub fn set_variable_constraint(
+    &mut self,
+    variable: VariableReference,
+    constraint: Constraint<C>,
+  ) {
+    assert!(self.variable_constraints.insert(variable, Some(constraint)).is_none());
   }
 
   pub fn constrain_equality(&mut self, a: ProductReference, b: ProductReference) {

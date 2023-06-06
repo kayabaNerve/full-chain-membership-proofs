@@ -50,7 +50,7 @@ impl Bit {
   }
 
   /// Select a variable based on the value of this bit.
-  // This uses two gates and a shareable gate, along with one constraint.
+  // This uses two gates and one constraint.
   pub fn select<C: Ciphersuite>(
     &self,
     circuit: &mut Circuit<C>,
@@ -64,9 +64,6 @@ impl Bit {
     });
 
     let chosen = circuit.add_secret_input(chosen);
-
-    // TODO: Merge this product statements with others
-    let ((chosen_prod, _, _), _) = circuit.product(chosen, chosen);
 
     // (bit * if_true) + (-bit_minus_one * if_false)
     // If bit is 0, if_false. If bit is 1, if_true
@@ -84,21 +81,18 @@ impl Bit {
     let mut chosen_constraint = Constraint::new("chosen");
     chosen_constraint.weight(lo, C::F::ONE);
     chosen_constraint.weight(ro, -C::F::ONE);
-    chosen_constraint.weight(chosen_prod, -C::F::ONE);
-    circuit.constrain(chosen_constraint);
+    circuit.set_variable_constraint(chosen, chosen_constraint);
 
     chosen
   }
 
   /// Select a constant based on the value of this bit.
-  // This uses just one constraint yet requires said constraint to be applied to a gate by the
-  // caller
-  pub(crate) fn unsafe_select_constant<C: Ciphersuite>(
+  pub fn select_constant<C: Ciphersuite>(
     &self,
     circuit: &mut Circuit<C>,
     if_false: C::F,
     if_true: C::F,
-  ) -> (VariableReference, Constraint<C>) {
+  ) -> VariableReference {
     let chosen = Some(())
       .filter(|_| circuit.prover())
       .map(|_| C::F::conditional_select(&if_false, &if_true, self.value.unwrap()));
@@ -111,25 +105,7 @@ impl Bit {
     // time of construction
     chosen_constraint.weight(circuit.variable_to_product(self.variable).unwrap(), if_true);
     chosen_constraint.weight(circuit.variable_to_product(self.minus_one).unwrap(), -if_false);
-
-    (chosen, chosen_constraint)
-  }
-
-  /// Select a constant based on the value of this bit.
-  // Uses a shareable gate and a constraint.
-  pub fn select_constant<C: Ciphersuite>(
-    &self,
-    circuit: &mut Circuit<C>,
-    if_false: C::F,
-    if_true: C::F,
-  ) -> VariableReference {
-    let (chosen, mut chosen_constraint) = self.unsafe_select_constant(circuit, if_false, if_true);
-
-    // Immediately use this in a product to make further usage safe
-    // TODO: Merge this product statements with others
-    let ((chosen_prod, _, _), _) = circuit.product(chosen, chosen);
-    chosen_constraint.weight(chosen_prod, -C::F::ONE);
-    circuit.constrain(chosen_constraint);
+    circuit.set_variable_constraint(chosen, chosen_constraint);
 
     chosen
   }
