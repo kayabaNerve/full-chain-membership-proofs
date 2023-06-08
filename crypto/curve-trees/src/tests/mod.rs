@@ -6,9 +6,10 @@ use ciphersuite::{
 
 use crate::CurveCycle;
 
+mod permissible;
+
 mod tree;
 
-mod gadgets;
 mod layer;
 mod membership;
 

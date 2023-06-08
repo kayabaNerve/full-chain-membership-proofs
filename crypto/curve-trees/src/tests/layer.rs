@@ -3,14 +3,20 @@ use rand_core::{RngCore, OsRng};
 use transcript::{Transcript, RecommendedTranscript};
 
 use multiexp::BatchVerifier;
-use ciphersuite::{group::Group, Ciphersuite, Pallas, Vesta};
+use ciphersuite::{
+  group::{ff::Field, Group},
+  Ciphersuite, Pallas, Vesta,
+};
 
+use ecip::Ecip;
 use bulletproofs_plus::{
   arithmetic_circuit::Circuit, gadgets::elliptic_curve::DLogTable, tests::generators,
 };
 
-#[rustfmt::skip]
-use crate::{CurveCycle, pedersen_hash::pedersen_hash_vartime, new_blind, layer_gadget, tests::Pasta};
+use crate::{
+  CurveCycle, pedersen_hash::pedersen_hash_vartime, permissible::Permissible, new_blind,
+  layer_gadget, tests::Pasta,
+};
 
 #[test]
 fn test_layer_gadget() {
@@ -20,10 +26,16 @@ fn test_layer_gadget() {
   let additional_gs = (additional_g_0, additional_g_1);
   let additional_hs = (additional_hs_0.0.clone(), additional_hs_1.0.clone());
 
+  let permissible = Permissible::<<Pasta as CurveCycle>::C1> {
+    h: <<Pasta as CurveCycle>::C1 as Ciphersuite>::G::random(&mut OsRng),
+    alpha: <<Pasta as CurveCycle>::C1 as Ecip>::FieldElement::random(&mut OsRng),
+    beta: <<Pasta as CurveCycle>::C1 as Ecip>::FieldElement::random(&mut OsRng),
+  };
+
   let H = <Pallas as Ciphersuite>::G::random(&mut OsRng);
 
   let mut pedersen_generators = vec![];
-  for _ in 0 .. 8 {
+  for _ in 0 .. 4 {
     pedersen_generators.push(<Vesta as Ciphersuite>::G::random(&mut OsRng));
   }
 
@@ -31,14 +43,13 @@ fn test_layer_gadget() {
   let mut raw_elems = vec![];
   let mut formatted_elems = vec![];
   for _ in 0 .. 4 {
-    elems.push(<Pallas as Ciphersuite>::G::random(&mut OsRng));
-    let (x, y) = Pasta::c1_coords(*elems.last().unwrap());
+    elems.push(permissible.make_permissible(<Pallas as Ciphersuite>::G::random(&mut OsRng)).1);
+    let x = Pasta::c1_coords(*elems.last().unwrap()).0;
     raw_elems.push(x);
-    raw_elems.push(y);
-    formatted_elems.push((Some(x), Some(y)));
+    formatted_elems.push(Some(x));
   }
 
-  let (blind_c1, blind_c2) = new_blind::<_, Pallas, Vesta>(&mut OsRng);
+  let (blind_c1, blind_c2) = new_blind::<_, Pallas, Vesta>(&mut OsRng, 0);
   let point = elems[usize::try_from(OsRng.next_u64() % 4).unwrap()];
   // Uses - so the blind is added back
   let blinded_point = point - (H * blind_c1);
@@ -47,17 +58,15 @@ fn test_layer_gadget() {
     layer_gadget::<_, Pasta>(
       &mut OsRng,
       circuit,
+      &permissible,
       &DLogTable::new(H),
       &pedersen_generators,
       blinded_point,
       Some(blind_c2).filter(|_| circuit.prover()),
-      formatted_elems
-        .iter()
-        .cloned()
-        .map(|(x, y)| (x.filter(|_| circuit.prover()), y.filter(|_| circuit.prover())))
-        .collect(),
+      0,
+      formatted_elems.iter().cloned().map(|x| x.filter(|_| circuit.prover())).collect(),
       false,
-    );
+    )
   };
 
   let mut transcript = RecommendedTranscript::new(b"Layer Gadget Test");

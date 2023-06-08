@@ -7,7 +7,7 @@ use ciphersuite::{
 
 use ecip::Ecip;
 
-use crate::{CurveCycle, pedersen_hash::pedersen_hash_vartime};
+use crate::{CurveCycle, pedersen_hash::pedersen_hash_vartime, permissible::Permissible};
 
 #[derive(Clone, PartialEq, Eq, Debug)]
 enum Child<C: CurveCycle> {
@@ -23,6 +23,7 @@ pub enum Hash<C: CurveCycle> {
 
 #[derive(Clone, PartialEq, Eq, Debug)]
 struct Node<C: CurveCycle> {
+  permissibility_offset: u64,
   hash: Hash<C>,
   full: bool,
   dirty: bool,
@@ -34,6 +35,10 @@ struct Node<C: CurveCycle> {
 // When the tree reaches capacity, it has a parent node added, growing its capacity
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct Tree<C: CurveCycle> {
+  permissible_c1: Permissible<C::C1>,
+  permissible_c2: Permissible<C::C2>,
+  leaf_randomness: <C::C1 as Ciphersuite>::G,
+
   width: usize,
   odd_generators: Vec<Vec<<C::C2 as Ciphersuite>::G>>,
   even_generators: Vec<Vec<<C::C1 as Ciphersuite>::G>>,
@@ -49,6 +54,7 @@ pub struct Tree<C: CurveCycle> {
 impl<C: CurveCycle> Node<C> {
   fn new(even: bool) -> Self {
     Self {
+      permissibility_offset: 0,
       hash: if even {
         Hash::Even(<C::C1 as Ciphersuite>::G::identity())
       } else {
@@ -74,7 +80,13 @@ fn depth<C: CurveCycle>(node: &Node<C>) -> usize {
 }
 
 impl<C: CurveCycle> Tree<C> {
-  pub fn new(width: usize, max_size: u64) -> Self {
+  pub fn new(
+    permissible_c1: Permissible<C::C1>,
+    permissible_c2: Permissible<C::C2>,
+    leaf_randomness: <C::C1 as Ciphersuite>::G,
+    width: usize,
+    max_size: u64,
+  ) -> Self {
     assert!(width >= 2);
 
     let width_u64 = u64::try_from(width).unwrap();
@@ -91,7 +103,7 @@ impl<C: CurveCycle> Tree<C> {
       let l_bytes = l.to_le_bytes();
       if (l % 2) == 1 {
         let mut next_gens = vec![];
-        for i in 0 .. (width_u64 * 2) {
+        for i in 0 .. width_u64 {
           next_gens.push(<C::C2 as Ecip>::hash_to_G(
             "Curve Tree, Odd Generator",
             &[l_bytes.as_ref(), i.to_le_bytes().as_ref()].concat(),
@@ -100,7 +112,7 @@ impl<C: CurveCycle> Tree<C> {
         odd_generators.push(next_gens);
       } else {
         let mut next_gens = vec![];
-        for i in 0 .. (width_u64 * 2) {
+        for i in 0 .. width_u64 {
           next_gens.push(<C::C1 as Ecip>::hash_to_G(
             "Curve Tree, Even Generator",
             &[l_bytes.as_ref(), i.to_le_bytes().as_ref()].concat(),
@@ -110,7 +122,25 @@ impl<C: CurveCycle> Tree<C> {
       }
     }
 
-    Tree { width, odd_generators, even_generators, node: Node::new(false), paths: HashMap::new() }
+    Tree {
+      permissible_c1,
+      permissible_c2,
+      leaf_randomness,
+
+      width,
+      odd_generators,
+      even_generators,
+
+      node: Node::new(false),
+      paths: HashMap::new(),
+    }
+  }
+
+  pub(crate) fn permissible_c1(&self) -> &Permissible<C::C1> {
+    &self.permissible_c1
+  }
+  pub(crate) fn permissible_c2(&self) -> &Permissible<C::C2> {
+    &self.permissible_c2
   }
 
   pub fn width(&self) -> usize {
@@ -181,6 +211,12 @@ impl<C: CurveCycle> Tree<C> {
     }
 
     for leaf in leaves {
+      // Make the leaf permissible
+      let mut leaf = *leaf;
+      while !self.permissible_c1.point(leaf) {
+        leaf += self.leaf_randomness;
+      }
+
       // Only allow leaves to be added once
       // While leaves may legitimately appear multiple times, any one insertion allows proving
       // membership
@@ -193,7 +229,7 @@ impl<C: CurveCycle> Tree<C> {
         continue;
       }
 
-      let (full, mut path) = add_to_node(self.width, &mut self.node, *leaf);
+      let (full, mut path) = add_to_node(self.width, &mut self.node, leaf);
       if path.is_none() {
         assert!(full);
 
@@ -233,7 +269,7 @@ impl<C: CurveCycle> Tree<C> {
         match children[1] {
           Child::Leaf(_) => panic!("leaf on newly grown tree's top node"),
           Child::Node(ref mut next) => {
-            let (full, mut new_path) = add_to_node(self.width, next, *leaf);
+            let (full, mut new_path) = add_to_node(self.width, next, leaf);
             assert!(!full);
             new_path.as_mut().unwrap().push(1);
             path = new_path;
@@ -241,6 +277,7 @@ impl<C: CurveCycle> Tree<C> {
         }
 
         self.node = Node {
+          permissibility_offset: 0,
           hash: if currently_even {
             Hash::Odd(<C::C2 as Ciphersuite>::G::identity())
           } else {
@@ -256,6 +293,8 @@ impl<C: CurveCycle> Tree<C> {
     }
 
     fn clean<C: CurveCycle>(
+      permissible_c1: &Permissible<C::C1>,
+      permissible_c2: &Permissible<C::C2>,
       odd_generators: &[Vec<<C::C2 as Ciphersuite>::G>],
       even_generators: &[Vec<<C::C1 as Ciphersuite>::G>],
       node: &mut Node<C>,
@@ -269,7 +308,7 @@ impl<C: CurveCycle> Tree<C> {
         match child {
           Child::Leaf(leaf) => child_hashes.push(Hash::Even(*leaf)),
           Child::Node(ref mut node) => {
-            clean(odd_generators, even_generators, node);
+            clean(permissible_c1, permissible_c2, odd_generators, even_generators, node);
             child_hashes.push(node.hash);
           }
         }
@@ -281,48 +320,53 @@ impl<C: CurveCycle> Tree<C> {
         match hash {
           Hash::Even(hash) => {
             assert!(matches!(node.hash, Hash::Odd(_)));
-            // TODO: The curve trees paper describes a single coordinate optimization
-            let (x, y) = C::c1_coords(hash);
-            even_elems.push(x);
-            even_elems.push(y);
+            even_elems.push(C::c1_coords(hash).0);
           }
           Hash::Odd(hash) => {
             assert!(matches!(node.hash, Hash::Even(_)));
-            let (x, y) = C::c2_coords(hash);
-            odd_elems.push(x);
-            odd_elems.push(y);
+            odd_elems.push(C::c2_coords(hash).0);
           }
         }
       }
 
       let this_node_depth = depth(node);
-      match &mut node.hash {
+      node.permissibility_offset = match &mut node.hash {
         Hash::Even(ref mut hash) => {
           assert!(even_elems.is_empty());
           assert_eq!(this_node_depth % 2, 0);
-          *hash = pedersen_hash_vartime::<C::C1>(
+          let permissioned = permissible_c1.make_permissible(pedersen_hash_vartime::<C::C1>(
             &odd_elems,
             // Even generators are 2, 4, 6
             &even_generators[(this_node_depth - 2) / 2][.. odd_elems.len()],
-          );
+          ));
+          *hash = permissioned.1;
+          permissioned.0
         }
         Hash::Odd(ref mut hash) => {
           assert!(odd_elems.is_empty());
           assert_eq!(this_node_depth % 2, 1);
-          *hash = pedersen_hash_vartime::<C::C2>(
+          let permissioned = permissible_c2.make_permissible(pedersen_hash_vartime::<C::C2>(
             &even_elems,
             // Truncating division
             &odd_generators[this_node_depth / 2][.. even_elems.len()],
-          );
+          ));
+          *hash = permissioned.1;
+          permissioned.0
         }
-      }
+      };
       node.dirty = false;
     }
-    clean(&self.odd_generators, &self.even_generators, &mut self.node);
+    clean(
+      &self.permissible_c1,
+      &self.permissible_c2,
+      &self.odd_generators,
+      &self.even_generators,
+      &mut self.node,
+    );
   }
 
   // Return the complimentary preimages for the specified leaf.
-  pub fn membership(&self, leaf: <C::C1 as Ciphersuite>::G) -> Option<Vec<Vec<Hash<C>>>> {
+  pub fn membership(&self, leaf: <C::C1 as Ciphersuite>::G) -> Option<Vec<(u64, Vec<Hash<C>>)>> {
     let mut path = self.paths.get(leaf.to_bytes().as_ref()).cloned()?;
 
     // The path length should be the depth - 1
@@ -344,13 +388,13 @@ impl<C: CurveCycle> Tree<C> {
         }
       }
 
+      res.push((curr.permissibility_offset, preimages));
+
       // Update curr
       curr = match &curr.children[child] {
         Child::Leaf(_) => unreachable!(),
         Child::Node(node) => node,
       };
-
-      res.push(preimages);
     }
 
     let mut preimages = vec![];
@@ -372,7 +416,7 @@ impl<C: CurveCycle> Tree<C> {
       assert!(found);
     }
 
-    res.push(preimages);
+    res.push((curr.permissibility_offset, preimages));
 
     res.reverse();
     Some(res)

@@ -16,22 +16,24 @@ use bulletproofs_plus::{
   gadgets::{
     Bit,
     elliptic_curve::{DLogTable, EmbeddedCurveOperations},
+    set_membership::assert_variable_in_set_gadget,
   },
 };
 
 pub mod pedersen_hash;
+pub mod permissible;
+use permissible::Permissible;
 pub mod tree;
 use tree::*;
-
-pub(crate) mod gadgets;
-use gadgets::find_index_gadget;
 
 #[cfg(test)]
 pub mod tests;
 
 pub trait CurveCycle: Clone + Copy + PartialEq + Eq + core::fmt::Debug {
-  type C1: Ecip + EmbeddedCurveOperations<Embedded = Self::C2>;
-  type C2: Ecip + EmbeddedCurveOperations<Embedded = Self::C1>;
+  type C1: Ecip<FieldElement = <Self::C2 as Ciphersuite>::F>
+    + EmbeddedCurveOperations<Embedded = Self::C2>;
+  type C2: Ecip<FieldElement = <Self::C1 as Ciphersuite>::F>
+    + EmbeddedCurveOperations<Embedded = Self::C1>;
 
   fn c1_coords(
     point: <Self::C1 as Ciphersuite>::G,
@@ -61,6 +63,7 @@ impl<C: CurveCycle> CurveCycle for FlipCurveCycle<C> {
 
 pub fn new_blind<R: RngCore + CryptoRng, C1: Ciphersuite, C2: Ciphersuite>(
   rng: &mut R,
+  offset: u64,
 ) -> (C1::F, C2::F) {
   let capacity = C1::F::CAPACITY.min(C2::F::CAPACITY);
   let mut res = C1::F::ZERO;
@@ -76,8 +79,8 @@ pub fn new_blind<R: RngCore + CryptoRng, C1: Ciphersuite, C2: Ciphersuite>(
   }
 
   // TODO: Support divisors when we have an odd amount of points and remove this
-  if (res.to_le_bits().iter().filter(|bit| **bit).count() % 2) != 1 {
-    return new_blind::<_, C1, C2>(rng);
+  if ((res + C1::F::from(offset)).to_le_bits().iter().filter(|bit| **bit).count() % 2) != 1 {
+    return new_blind::<_, C1, C2>(rng, offset);
   }
 
   let mut c2_repr = <C2::F as PrimeField>::Repr::default();
@@ -88,11 +91,13 @@ pub fn new_blind<R: RngCore + CryptoRng, C1: Ciphersuite, C2: Ciphersuite>(
 pub fn layer_gadget<R: RngCore + CryptoRng, C: CurveCycle>(
   rng: &mut R,
   circuit: &mut Circuit<C::C2>,
+  permissible: &Permissible<C::C1>,
   H: &DLogTable<C::C1>,
   pedersen_generators: &[<C::C2 as Ciphersuite>::G],
   blinded_point: <C::C1 as Ciphersuite>::G,
   blind: Option<<C::C2 as Ciphersuite>::F>,
-  elements: Vec<(Option<<C::C2 as Ciphersuite>::F>, Option<<C::C2 as Ciphersuite>::F>)>,
+  permissibility_offset: u64,
+  elements: Vec<Option<<C::C2 as Ciphersuite>::F>>,
   last: bool,
 ) -> (Option<<C::C1 as Ciphersuite>::F>, <C::C2 as Ciphersuite>::G) {
   // Unblind the point
@@ -124,6 +129,9 @@ pub fn layer_gadget<R: RngCore + CryptoRng, C: CurveCycle>(
           .iter()
           .map(|bit| Some(Choice::from(u8::try_from(*bit).unwrap())))
           .collect::<Vec<_>>();
+        for bit in &bits[capacity ..] {
+          assert_eq!(bit.unwrap().unwrap_u8(), 0);
+        }
         bits.truncate(capacity);
         bits
       } else {
@@ -141,45 +149,55 @@ pub fn layer_gadget<R: RngCore + CryptoRng, C: CurveCycle>(
     C::C2::incomplete_add_constant(circuit, blind_var, blinded_point)
   };
 
+  // Make sure the point is permissible
+  permissible.gadget(circuit, unblinded.y());
+
   // Create the branch hash
-  // TODO: Use a single-coord hash, as detailed in the Curve Trees paper
   {
     // Add the elements in this hash
     let mut x_coords = vec![];
-    let mut y_coords = vec![];
-    for elem in &elements {
-      x_coords.push(circuit.add_secret_input(elem.0));
-      y_coords.push(circuit.add_secret_input(elem.1));
-      // TODO: This should be removable with architectural improvements
-      circuit.product(*x_coords.last().unwrap(), *y_coords.last().unwrap());
+    for elem in elements.clone() {
+      x_coords.push(circuit.add_secret_input(elem));
     }
 
-    // Ensure the unblnded point's x/y coordinates are actually present
-    let x_pos = find_index_gadget(circuit, unblinded.x(), &x_coords);
-    let y_pos = find_index_gadget(circuit, unblinded.y(), &y_coords);
-    let ((x_pos, y_pos, _), _) = circuit.product(x_pos, y_pos);
-    circuit.constrain_equality(x_pos, y_pos);
+    let x_coords = {
+      let mut prods = vec![];
+      let mut i = 0;
+      while i < x_coords.len() {
+        let (l, r, _) =
+          circuit.product(x_coords[i], x_coords.get(i + 1).copied().unwrap_or(x_coords[i])).0;
+        prods.push(l);
+        prods.push(r);
+        i += 2;
+      }
+      prods.truncate(x_coords.len());
+      prods
+    };
+
+    // Ensure the unblinded point's x coordinate is actually present in the hash
+    assert_variable_in_set_gadget(
+      circuit,
+      circuit.variable_to_product(unblinded.x()).unwrap(),
+      &x_coords,
+    );
 
     // Bind these to the branch hash
     let commitment = circuit.allocate_vector_commitment();
-    assert_eq!(pedersen_generators.len(), (elements.len() * 2));
+    assert_eq!(pedersen_generators.len(), elements.len());
     for i in 0 .. elements.len() {
-      circuit.bind(
-        commitment,
-        circuit.variable_to_product(x_coords[i]).unwrap(),
-        Some(pedersen_generators[i * 2]),
-      );
-      circuit.bind(
-        commitment,
-        circuit.variable_to_product(y_coords[i]).unwrap(),
-        Some(pedersen_generators[(i * 2) + 1]),
-      );
+      circuit.bind(commitment, x_coords[i], Some(pedersen_generators[i]));
     }
 
     let blind = Some(if last {
-      (<C::C1 as Ciphersuite>::F::ZERO, <C::C2 as Ciphersuite>::F::ZERO)
+      // If this is the last hash, just use the final permissibility offset
+      (<C::C1 as Ciphersuite>::F::ZERO, -<C::C2 as Ciphersuite>::F::from(permissibility_offset))
     } else {
-      new_blind::<_, C::C1, C::C2>(rng)
+      let (mut b1, b2) = new_blind::<_, C::C1, C::C2>(rng, permissibility_offset);
+      // Add the permissibility offset so the 'unblinded' Pedersen hash has the blind needed to be
+      // permissible
+      // TODO: Adding this offset may make b1 no longer mutual
+      b1 += <C::C1 as Ciphersuite>::F::from(permissibility_offset);
+      (b1, b2)
     })
     .filter(|_| circuit.prover());
     (
@@ -213,25 +231,27 @@ pub fn membership_gadget<R: RngCore + CryptoRng, C: CurveCycle>(
         panic!("blinded_point was odd at odd layer")
       };
 
-      let elems = if let Some(membership) = membership.as_mut() {
+      let (permissibility_offset, elems) = if let Some(membership) = membership.as_mut() {
         let mut elems = vec![];
-        for point in membership.remove(0) {
+        let (permissibility_offset, points) = membership.remove(0);
+        for point in points {
           let Hash::Even(point) = point else { panic!("odd layer had odd children") };
-          let (x, y) = C::c1_coords(point);
-          elems.push((Some(x), Some(y)));
+          elems.push(Some(C::c1_coords(point).0));
         }
-        elems
+        (permissibility_offset, elems)
       } else {
-        vec![(None, None); tree.width()]
+        (0, vec![None; tree.width()])
       };
 
       let (blind, point) = layer_gadget::<_, C>(
         rng,
         circuit_c2,
+        tree.permissible_c1(),
         &c1_h,
         tree.odd_generators(i).unwrap(),
         this_blinded_point,
         even_blind.take().unwrap(),
+        permissibility_offset,
         elems,
         i == tree.depth(),
       );
@@ -243,25 +263,27 @@ pub fn membership_gadget<R: RngCore + CryptoRng, C: CurveCycle>(
         panic!("blinded_point was even at even layer")
       };
 
-      let elems = if let Some(membership) = membership.as_mut() {
+      let (permissibility_offset, elems) = if let Some(membership) = membership.as_mut() {
         let mut elems = vec![];
-        for point in membership.remove(0) {
+        let (permissibility_offset, points) = membership.remove(0);
+        for point in points {
           let Hash::Odd(point) = point else { panic!("even layer had even children") };
-          let (x, y) = C::c2_coords(point);
-          elems.push((Some(x), Some(y)));
+          elems.push(Some(C::c2_coords(point).0));
         }
-        elems
+        (permissibility_offset, elems)
       } else {
-        vec![(None, None); tree.width()]
+        (0, vec![None; tree.width()])
       };
 
       let (blind, point) = layer_gadget::<_, FlipCurveCycle<C>>(
         rng,
         circuit_c1,
+        tree.permissible_c2(),
         &c2_h,
         tree.even_generators(i).unwrap(),
         this_blinded_point,
         odd_blind.take().unwrap(),
+        permissibility_offset,
         elems,
         i == tree.depth(),
       );
@@ -271,5 +293,6 @@ pub fn membership_gadget<R: RngCore + CryptoRng, C: CurveCycle>(
     }
   }
 
+  // TODO: We don't need proofs that the tree root VC is well formed. We can just add it ourselves
   assert_eq!(blinded_point, tree.root());
 }

@@ -23,7 +23,7 @@ transcript = { package = "flexible-transcript", path = "../transcript", version 
 multiexp = { path = "../multiexp", default-features = false }
 ciphersuite = { path = "../ciphersuite", default-features = false }
 
-ecip = { path = "../ecip", default-features = false }
+ecip = { path = "../ecip", default-features = false, features = ["pasta"] }
 bulletproofs-plus = { path = "../bulletproofs-plus", default-features = false }
 
 [dev-dependencies]
