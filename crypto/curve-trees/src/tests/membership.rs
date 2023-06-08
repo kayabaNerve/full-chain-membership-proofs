@@ -18,7 +18,7 @@ use crate::{
 #[test]
 fn test_membership() {
   let (pallas_g, pallas_h, pallas_g_bold1, pallas_g_bold2, pallas_h_bold1, pallas_h_bold2) =
-    generators::<Pallas>(1024 * 32);
+    generators::<Pallas>(2048 * 4);
   let (
     pallas_additional_g_0,
     pallas_additional_g_1,
@@ -26,12 +26,12 @@ fn test_membership() {
     pallas_additional_hs_1,
     _,
     _,
-  ) = generators::<Pallas>(1024 * 32);
+  ) = generators::<Pallas>(2048 * 4);
   let pallas_additional_gs = (pallas_additional_g_0, pallas_additional_g_1);
   let pallas_additional_hs = (pallas_additional_hs_0.0.clone(), pallas_additional_hs_1.0.clone());
 
   let (vesta_g, vesta_h, vesta_g_bold1, vesta_g_bold2, vesta_h_bold1, vesta_h_bold2) =
-    generators::<Vesta>(1024 * 32);
+    generators::<Vesta>(2048 * 4);
   let (
     vesta_additional_g_0,
     vesta_additional_g_1,
@@ -39,7 +39,7 @@ fn test_membership() {
     vesta_additional_hs_1,
     _,
     _,
-  ) = generators::<Vesta>(1024 * 32);
+  ) = generators::<Vesta>(2048 * 4);
   let vesta_additional_gs = (vesta_additional_g_0, vesta_additional_g_1);
   let vesta_additional_hs = (vesta_additional_hs_0.0.clone(), vesta_additional_hs_1.0.clone());
 

@@ -20,9 +20,9 @@ use crate::{
 
 #[test]
 fn test_layer_gadget() {
-  let (g, h, g_bold1, g_bold2, h_bold1, h_bold2) = generators::<Vesta>(1024 * 8);
+  let (g, h, g_bold1, g_bold2, h_bold1, h_bold2) = generators::<Vesta>(2048);
   let (additional_g_0, additional_g_1, additional_hs_0, additional_hs_1, _, _) =
-    generators::<Vesta>(1024 * 8);
+    generators::<Vesta>(2048);
   let additional_gs = (additional_g_0, additional_g_1);
   let additional_hs = (additional_hs_0.0.clone(), additional_hs_1.0.clone());
 
