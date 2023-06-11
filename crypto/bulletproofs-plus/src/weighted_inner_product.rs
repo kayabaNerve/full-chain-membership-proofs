@@ -79,10 +79,6 @@ impl<T: Transcript, C: Ciphersuite> WipStatement<T, C> {
     e
   }
 
-  fn transcript_round(transcript: &mut T, P: C::G) {
-    transcript.append_message(b"P_permutation", P.to_bytes());
-  }
-
   fn transcript_A_B(transcript: &mut T, A: C::G, B: C::G) -> C::F {
     transcript.append_message(b"A", A.to_bytes());
     transcript.append_message(b"B", B.to_bytes());
@@ -96,10 +92,10 @@ impl<T: Transcript, C: Ciphersuite> WipStatement<T, C> {
 
   fn next_G_H_P(
     transcript: &mut T,
-    g_bold1: PointVector<C>,
-    g_bold2: PointVector<C>,
-    h_bold1: PointVector<C>,
-    h_bold2: PointVector<C>,
+    mut g_bold1: PointVector<C>,
+    mut g_bold2: PointVector<C>,
+    mut h_bold1: PointVector<C>,
+    mut h_bold2: PointVector<C>,
     mut P: C::G,
     L: C::G,
     R: C::G,
@@ -112,15 +108,22 @@ impl<T: Transcript, C: Ciphersuite> WipStatement<T, C> {
     let e = Self::transcript_L_R(transcript, L, R);
     let inv_e = e.invert().unwrap();
 
-    let g_bold = g_bold1.mul(inv_e).add_vec(&g_bold2.mul(e * y_inv_n_hat));
-    let h_bold = h_bold1.mul(e).add_vec(&h_bold2.mul(inv_e));
+    let mut new_g_bold = vec![];
+    let e_y_inv = e * y_inv_n_hat;
+    for g_bold in g_bold1.0.drain(..).zip(g_bold2.0.drain(..)) {
+      new_g_bold.push(multiexp_vartime(&[(inv_e, g_bold.0), (e_y_inv, g_bold.1)]));
+    }
+
+    let mut new_h_bold = vec![];
+    for h_bold in h_bold1.0.drain(..).zip(h_bold2.0.drain(..)) {
+      new_h_bold.push(multiexp_vartime(&[(e, h_bold.0), (inv_e, h_bold.1)]));
+    }
+
     let e_square = e.square();
     let inv_e_square = inv_e.square();
     P += multiexp_vartime(&[(e_square, L), (inv_e_square, R)]);
 
-    Self::transcript_round(transcript, P);
-
-    (e, inv_e, e_square, inv_e_square, g_bold, h_bold, P)
+    (e, inv_e, e_square, inv_e_square, PointVector(new_g_bold), PointVector(new_h_bold), P)
   }
 
   pub fn prove<R: RngCore + CryptoRng>(

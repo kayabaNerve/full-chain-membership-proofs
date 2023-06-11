@@ -44,7 +44,6 @@ impl<C: Ciphersuite> PointVector<C> {
     }
     res
   }
-  */
 
   pub(crate) fn mul(&self, scalar: impl core::borrow::Borrow<C::F>) -> Self {
     let mut res = self.clone();
@@ -63,7 +62,6 @@ impl<C: Ciphersuite> PointVector<C> {
     res
   }
 
-  /*
   pub(crate) fn sub_vec(&self, vector: &Self) -> Self {
     assert_eq!(self.len(), vector.len());
     let mut res = self.clone();

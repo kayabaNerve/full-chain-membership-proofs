@@ -50,6 +50,7 @@ impl<C: Ciphersuite> ScalarVector<C> {
     }
     res
   }
+
   pub(crate) fn mul(&self, scalar: impl Borrow<C::F>) -> Self {
     let mut res = self.clone();
     for val in res.0.iter_mut() {

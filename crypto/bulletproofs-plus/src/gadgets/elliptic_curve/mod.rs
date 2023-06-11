@@ -370,6 +370,8 @@ pub trait EmbeddedCurveOperations: Ciphersuite {
   // which don't already incur the vector commitment scheme's overhead
   //
   // Gate count is notated GC
+
+  // TODO: Can we impl a batch DLog PoK?
   fn dlog_pok<R: RngCore + CryptoRng, T: Transcript>(
     rng: &mut R,
     circuit: &mut Circuit<T, Self>,
