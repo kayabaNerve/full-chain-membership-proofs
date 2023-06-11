@@ -102,8 +102,8 @@ impl<T: Transcript, C: Ciphersuite> SingleRangeStatement<T, C> {
       two_descending_y.clone(),
       y_n_plus_one,
       z_vec.clone(),
-      A + g_bold.mul_vec(&ScalarVector(vec![-z; RANGE_PROOF_BITS])).sum() +
-        h_bold.mul_vec(&two_descending_y.add_vec(&z_vec)).sum() +
+      A + g_bold.multiexp_vartime(&ScalarVector(vec![-z; RANGE_PROOF_BITS])) +
+        h_bold.multiexp_vartime(&two_descending_y.add_vec(&z_vec)) +
         (V * y_n_plus_one) +
         (g * ((y_pows * z) - (two_pows.sum() * y_n_plus_one * z) - (y_pows * z.square()))),
     )
@@ -135,7 +135,7 @@ impl<T: Transcript, C: Ciphersuite> SingleRangeStatement<T, C> {
 
     let g_bold = generators.g_bold();
     let h_bold = generators.h_bold();
-    let A = g_bold.mul_vec(&a_l).sum() + h_bold.mul_vec(&a_r).sum() + (generators.h() * alpha);
+    let A = g_bold.multiexp(&a_l) + h_bold.multiexp(&a_r) + (generators.h() * alpha);
     let (y, two_descending_y, y_n_plus_one, z_vec, A_hat) =
       Self::A_hat(transcript, generators.g(), g_bold, h_bold, V, A);
 

@@ -4,6 +4,7 @@ use zeroize::{Zeroize, ZeroizeOnDrop};
 
 use transcript::Transcript;
 
+use multiexp::{multiexp, multiexp_vartime};
 use ciphersuite::{
   group::{Group, GroupEncoding},
   Ciphersuite,
@@ -71,9 +72,7 @@ impl<C: Ciphersuite> PointVector<C> {
     }
     res
   }
-  */
 
-  // TODO: Use a multiexp here
   pub(crate) fn mul_vec(&self, vector: &ScalarVector<C>) -> Self {
     assert_eq!(self.len(), vector.len());
     let mut res = self.clone();
@@ -82,10 +81,31 @@ impl<C: Ciphersuite> PointVector<C> {
     }
     res
   }
+  */
 
+  pub(crate) fn multiexp(&self, vector: &ScalarVector<C>) -> C::G {
+    assert_eq!(self.len(), vector.len());
+    let mut res = Vec::with_capacity(self.len());
+    for (point, scalar) in self.0.iter().copied().zip(vector.0.iter().copied()) {
+      res.push((scalar, point));
+    }
+    multiexp(&res)
+  }
+
+  pub(crate) fn multiexp_vartime(&self, vector: &ScalarVector<C>) -> C::G {
+    assert_eq!(self.len(), vector.len());
+    let mut res = Vec::with_capacity(self.len());
+    for (point, scalar) in self.0.iter().copied().zip(vector.0.iter().copied()) {
+      res.push((scalar, point));
+    }
+    multiexp_vartime(&res)
+  }
+
+  /*
   pub(crate) fn sum(&self) -> C::G {
     self.0.iter().sum()
   }
+  */
 
   pub(crate) fn len(&self) -> usize {
     self.0.len()

@@ -161,14 +161,13 @@ impl<T: Transcript, C: Ciphersuite> ArithmeticCircuitStatement<T, C> {
       WL_y_z.clone(),
       WR_y_z.clone(),
       WO_y_z.clone(),
-      A + self.generators.g_bold().mul_vec(&WR_y_z).sum() +
-        self.generators.h_bold().mul_vec(&WL_y_z).sum() +
+      A + self.generators.g_bold().multiexp_vartime(&WR_y_z) +
+        self.generators.h_bold().multiexp_vartime(&WL_y_z) +
         self
           .generators
           .h_bold2()
-          .mul_vec(&WO_y_z.sub(C::F::ONE).mul(inv_y_n.last().unwrap()))
-          .sum() +
-        self.V.mul_vec(&z_q_WV).sum() +
+          .multiexp_vartime(&WO_y_z.sub(C::F::ONE).mul(inv_y_n.last().unwrap())) +
+        self.V.multiexp_vartime(&z_q_WV) +
         (self.generators.g() *
           (z_q.inner_product(&self.c) +
             weighted_inner_product(&WR_y_z, &WL_y_z, &ScalarVector(y_n)))),
@@ -206,9 +205,10 @@ impl<T: Transcript, C: Ciphersuite> ArithmeticCircuitStatement<T, C> {
     self.initial_transcript(transcript);
 
     let alpha = blind;
-    let A = self.generators.g_bold().mul_vec(&witness.aL).sum() +
-      self.generators.g_bold2().mul_vec(&witness.aO).sum() +
-      self.generators.h_bold().mul_vec(&witness.aR).sum() +
+    // TODO: Merge this multiexps, and other sequential multiexps throughout the codebase
+    let A = self.generators.g_bold().multiexp(&witness.aL) +
+      self.generators.g_bold2().multiexp(&witness.aO) +
+      self.generators.h_bold().multiexp(&witness.aR) +
       (self.generators.h() * alpha);
     let (y, inv_y_n, z_q_WV, WL_y_z, WR_y_z, WO_y_z, A_hat) = self.compute_A_hat(transcript, A);
 

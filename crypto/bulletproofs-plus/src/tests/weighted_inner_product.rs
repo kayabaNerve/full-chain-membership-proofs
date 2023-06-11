@@ -62,8 +62,8 @@ fn test_weighted_inner_product() {
       b[i] = <Ristretto as Ciphersuite>::F::random(&mut OsRng);
     }
 
-    let P = g_bold.mul_vec(&a).0.iter().sum::<<Ristretto as Ciphersuite>::G>() +
-      h_bold.mul_vec(&b).0.iter().sum::<<Ristretto as Ciphersuite>::G>() +
+    let P = g_bold.multiexp(&a) +
+      h_bold.multiexp(&b) +
       (g * weighted_inner_product(&a, &b, &y_vec)) +
       (h * alpha);
 

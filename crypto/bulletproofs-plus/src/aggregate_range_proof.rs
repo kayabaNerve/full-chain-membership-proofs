@@ -137,8 +137,8 @@ impl<T: Transcript, C: Ciphersuite> AggregateRangeStatement<T, C> {
       y_mn_plus_one,
       z_vec.clone(),
       ScalarVector(z_pow),
-      A + self.generators.g_bold().mul_vec(&ScalarVector(vec![-z; mn])).sum() +
-        self.generators.h_bold().mul_vec(&d_descending_y.add_vec(&z_vec)).sum() +
+      A + self.generators.g_bold().multiexp_vartime(&ScalarVector(vec![-z; mn])) +
+        self.generators.h_bold().multiexp_vartime(&d_descending_y.add_vec(&z_vec)) +
         (commitment_accum * y_mn_plus_one) +
         (self.generators.g() *
           ((y_pows * z) - (d.sum() * y_mn_plus_one * z) - (y_pows * z.square()))),
@@ -183,7 +183,7 @@ impl<T: Transcript, C: Ciphersuite> AggregateRangeStatement<T, C> {
     let h_bold = self.generators.h_bold();
 
     let alpha = C::F::random(&mut *rng);
-    let A = g_bold.mul_vec(&a_l).sum() + h_bold.mul_vec(&a_r).sum() + (self.generators.h() * alpha);
+    let A = g_bold.multiexp(&a_l) + h_bold.multiexp(&a_r) + (self.generators.h() * alpha);
 
     let (y, d_descending_y, y_mn_plus_one, z_vec, z_pow, A_hat) = self.compute_A_hat(transcript, A);
 
