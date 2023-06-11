@@ -10,7 +10,8 @@ use ciphersuite::{
 
 use ecip::Ecip;
 use bulletproofs_plus::{
-  arithmetic_circuit::Circuit, gadgets::elliptic_curve::DLogTable, tests::generators,
+  arithmetic_circuit::Circuit, gadgets::elliptic_curve::DLogTable,
+  tests::generators as generators_fn,
 };
 
 use crate::{
@@ -20,9 +21,9 @@ use crate::{
 
 #[test]
 fn test_layer_gadget() {
-  let (g, h, g_bold1, g_bold2, h_bold1, h_bold2) = generators::<Vesta>(2048);
-  let (additional_g_0, additional_g_1, additional_hs_0, additional_hs_1, _, _) =
-    generators::<Vesta>(2048);
+  let generators = generators_fn::<Vesta>(2048);
+  let (additional_g_0, additional_g_1, additional_hs_0, additional_hs_1) =
+    generators_fn::<Vesta>(2048).reduce(2048, false).decompose();
   let additional_gs = (additional_g_0, additional_g_1);
   let additional_hs = (additional_hs_0.0.clone(), additional_hs_1.0.clone());
 
@@ -55,8 +56,8 @@ fn test_layer_gadget() {
   // Uses - so the blind is added back
   let blinded_point = point - (H * blind_c1);
 
-  let gadget = |circuit: &mut Circuit<Vesta>| {
-    layer_gadget::<_, Pasta>(
+  let gadget = |circuit: &mut Circuit<_, Vesta>| {
+    layer_gadget::<_, _, Pasta>(
       &mut OsRng,
       circuit,
       &permissible,
@@ -72,16 +73,7 @@ fn test_layer_gadget() {
 
   let mut transcript = RecommendedTranscript::new(b"Layer Gadget Test");
 
-  let mut circuit = Circuit::new(
-    g,
-    h,
-    g_bold1.clone(),
-    g_bold2.clone(),
-    h_bold1.clone(),
-    h_bold2.clone(),
-    true,
-    None,
-  );
+  let mut circuit = Circuit::new(generators.clone(), true, None);
   gadget(&mut circuit);
   let (blinds, commitments, proof, proofs) = circuit.prove_with_vector_commitments(
     &mut OsRng,
@@ -92,12 +84,11 @@ fn test_layer_gadget() {
 
   assert_eq!(commitments.len(), 2);
   assert_eq!(
-    *commitments.last().unwrap() - (h * blinds.last().unwrap()),
+    *commitments.last().unwrap() - (generators.h() * blinds.last().unwrap()),
     pedersen_hash_vartime::<Vesta>(&raw_elems, &pedersen_generators)
   );
 
-  let mut circuit =
-    Circuit::new(g, h, g_bold1, g_bold2, h_bold1, h_bold2, false, Some(commitments));
+  let mut circuit = Circuit::new(generators, false, Some(commitments));
   gadget(&mut circuit);
   let mut verifier = BatchVerifier::new(5);
   circuit.verify_with_vector_commitments(

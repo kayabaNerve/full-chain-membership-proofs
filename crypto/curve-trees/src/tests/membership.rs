@@ -10,7 +10,8 @@ use ciphersuite::{
 
 use ecip::Ecip;
 use bulletproofs_plus::{
-  arithmetic_circuit::Circuit, gadgets::elliptic_curve::DLogTable, tests::generators,
+  arithmetic_circuit::Circuit, gadgets::elliptic_curve::DLogTable,
+  tests::generators as generators_fn,
 };
 
 use crate::{
@@ -19,29 +20,21 @@ use crate::{
 
 #[test]
 fn test_membership() {
-  let (pallas_g, pallas_h, pallas_g_bold1, pallas_g_bold2, pallas_h_bold1, pallas_h_bold2) =
-    generators::<Pallas>(1536 * 4);
+  let pallas_generators = generators_fn::<Pallas>(512 * 4);
+  let pallas_h = pallas_generators.h();
   let (
     pallas_additional_g_0,
     pallas_additional_g_1,
     pallas_additional_hs_0,
     pallas_additional_hs_1,
-    _,
-    _,
-  ) = generators::<Pallas>(1536 * 4);
+  ) = generators_fn::<Pallas>(1536 * 4).reduce(1536 * 4, false).decompose();
   let pallas_additional_gs = (pallas_additional_g_0, pallas_additional_g_1);
   let pallas_additional_hs = (pallas_additional_hs_0.0.clone(), pallas_additional_hs_1.0.clone());
 
-  let (vesta_g, vesta_h, vesta_g_bold1, vesta_g_bold2, vesta_h_bold1, vesta_h_bold2) =
-    generators::<Vesta>(1536 * 4);
-  let (
-    vesta_additional_g_0,
-    vesta_additional_g_1,
-    vesta_additional_hs_0,
-    vesta_additional_hs_1,
-    _,
-    _,
-  ) = generators::<Vesta>(1536 * 4);
+  let vesta_generators = generators_fn::<Vesta>(512 * 4);
+  let vesta_h = vesta_generators.h();
+  let (vesta_additional_g_0, vesta_additional_g_1, vesta_additional_hs_0, vesta_additional_hs_1) =
+    generators_fn::<Vesta>(1536 * 4).reduce(1536 * 4, false).decompose();
   let vesta_additional_gs = (vesta_additional_g_0, vesta_additional_g_1);
   let vesta_additional_hs = (vesta_additional_hs_0.0.clone(), vesta_additional_hs_1.0.clone());
 
@@ -81,10 +74,10 @@ fn test_membership() {
       new_blind::<_, Pallas, Vesta>(&mut OsRng, DLogTable::<Pallas>::new(pallas_h).trits(), 0).0;
     let point = leaves[usize::try_from(OsRng.next_u64() % (1 << 30)).unwrap() % leaves.len()];
     assert!(permissible_c1.point(point));
-    let blinded_point = point - (pallas_h * blind_c1);
+    let blinded_point = point - (pallas_generators.h() * blind_c1);
 
-    let gadget = |circuit_c1: &mut Circuit<Pallas>, circuit_c2: &mut Circuit<Vesta>| {
-      membership_gadget::<_, Pasta>(
+    let gadget = |circuit_c1: &mut Circuit<_, Pallas>, circuit_c2: &mut Circuit<_, Vesta>| {
+      membership_gadget::<_, _, Pasta>(
         &mut OsRng,
         circuit_c1,
         circuit_c2,
@@ -96,26 +89,8 @@ fn test_membership() {
 
     let mut transcript = RecommendedTranscript::new(b"Membership Gadget Test");
 
-    let mut circuit_c1 = Circuit::new(
-      pallas_g,
-      pallas_h,
-      pallas_g_bold1.clone(),
-      pallas_g_bold2.clone(),
-      pallas_h_bold1.clone(),
-      pallas_h_bold2.clone(),
-      true,
-      None,
-    );
-    let mut circuit_c2 = Circuit::new(
-      vesta_g,
-      vesta_h,
-      vesta_g_bold1.clone(),
-      vesta_g_bold2.clone(),
-      vesta_h_bold1.clone(),
-      vesta_h_bold2.clone(),
-      true,
-      None,
-    );
+    let mut circuit_c1 = Circuit::new(pallas_generators.clone(), true, None);
+    let mut circuit_c2 = Circuit::new(vesta_generators.clone(), true, None);
     gadget(&mut circuit_c1, &mut circuit_c2);
 
     let mut prove_transcript = transcript.clone();
@@ -134,26 +109,8 @@ fn test_membership() {
         vesta_additional_hs.clone(),
       );
 
-    let mut circuit_c1 = Circuit::new(
-      pallas_g,
-      pallas_h,
-      pallas_g_bold1.clone(),
-      pallas_g_bold2.clone(),
-      pallas_h_bold1.clone(),
-      pallas_h_bold2.clone(),
-      false,
-      Some(pallas_commitments),
-    );
-    let mut circuit_c2 = Circuit::new(
-      vesta_g,
-      vesta_h,
-      vesta_g_bold1.clone(),
-      vesta_g_bold2.clone(),
-      vesta_h_bold1.clone(),
-      vesta_h_bold2.clone(),
-      false,
-      Some(vesta_commitments),
-    );
+    let mut circuit_c1 = Circuit::new(pallas_generators.clone(), false, Some(pallas_commitments));
+    let mut circuit_c2 = Circuit::new(vesta_generators.clone(), false, Some(vesta_commitments));
     gadget(&mut circuit_c1, &mut circuit_c2);
 
     circuit_c1.verify_with_vector_commitments(

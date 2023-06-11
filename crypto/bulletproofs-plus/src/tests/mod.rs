@@ -1,8 +1,9 @@
 use rand_core::OsRng;
 
+use transcript::RecommendedTranscript;
 use ciphersuite::{group::Group, Ciphersuite, Pallas, Vesta};
 
-use crate::{PointVector, gadgets::elliptic_curve::EmbeddedShortWeierstrass};
+use crate::{Generators, gadgets::elliptic_curve::EmbeddedShortWeierstrass};
 
 #[cfg(test)]
 mod weighted_inner_product;
@@ -10,6 +11,7 @@ mod weighted_inner_product;
 mod single_range_proof;
 #[cfg(test)]
 mod aggregate_range_proof;
+
 #[cfg(test)]
 mod arithmetic_circuit_proof;
 #[cfg(test)]
@@ -19,24 +21,22 @@ mod vector_commitment;
 #[cfg(test)]
 mod gadgets;
 
-pub type Generators<C> = (
-  <C as Ciphersuite>::G,
-  <C as Ciphersuite>::G,
-  PointVector<C>,
-  PointVector<C>,
-  PointVector<C>,
-  PointVector<C>,
-);
-
-pub fn generators<C: Ciphersuite>(n: usize) -> Generators<C> {
+pub fn generators<C: Ciphersuite>(n: usize) -> Generators<RecommendedTranscript, C> {
   let gens = || {
-    let mut res = PointVector::<C>::new(n);
-    for i in 0 .. n {
-      res[i] = C::G::random(&mut OsRng);
+    let mut res = Vec::with_capacity(n);
+    for _ in 0 .. n {
+      res.push(C::G::random(&mut OsRng));
     }
     res
   };
-  (C::G::random(&mut OsRng), C::G::random(&mut OsRng), gens(), gens(), gens(), gens())
+  Generators::new(
+    C::G::random(&mut OsRng),
+    C::G::random(&mut OsRng),
+    gens(),
+    gens(),
+    gens(),
+    gens(),
+  )
 }
 
 impl EmbeddedShortWeierstrass for Pallas {

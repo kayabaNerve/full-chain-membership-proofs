@@ -1,3 +1,4 @@
+use transcript::Transcript;
 use ciphersuite::{group::ff::Field, Ciphersuite};
 
 use ecip::Ecip;
@@ -37,10 +38,11 @@ impl<C: Ecip> Permissible<C> {
   }
 
   pub(crate) fn gadget<
+    T: Transcript,
     C2: Ciphersuite<F = C::FieldElement> + EmbeddedCurveOperations<Embedded = C>,
   >(
     &self,
-    circuit: &mut Circuit<C2>,
+    circuit: &mut Circuit<T, C2>,
     y: VariableReference,
   ) {
     let sqrt =

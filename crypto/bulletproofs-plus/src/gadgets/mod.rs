@@ -1,3 +1,4 @@
+use transcript::Transcript;
 use ciphersuite::{group::ff::Field, Ciphersuite};
 
 use crate::arithmetic_circuit::{VariableReference, Circuit};
@@ -11,7 +12,10 @@ pub mod elliptic_curve;
 
 /// Assert a variable isn't zero.
 // One gate, one contraint.
-pub fn assert_non_zero_gadget<C: Ciphersuite>(circuit: &mut Circuit<C>, var: VariableReference) {
+pub fn assert_non_zero_gadget<T: Transcript, C: Ciphersuite>(
+  circuit: &mut Circuit<T, C>,
+  var: VariableReference,
+) {
   // Any non-zero variable will have a multiplicative inverse.
   let inv = circuit.unchecked_value(var).map(|val| val.invert().unwrap());
   let inv = circuit.add_secret_input(inv);
@@ -21,7 +25,10 @@ pub fn assert_non_zero_gadget<C: Ciphersuite>(circuit: &mut Circuit<C>, var: Var
 
 // Returns a variable for one if the value is non-zero, or a variable for zero if the value is zero.
 // One gate and the combined constraints/gates of assert_non_zero_gadget, Bit::new_from_var.
-pub fn is_non_zero_gadget<C: Ciphersuite>(circuit: &mut Circuit<C>, var: VariableReference) -> Bit {
+pub fn is_non_zero_gadget<T: Transcript, C: Ciphersuite>(
+  circuit: &mut Circuit<T, C>,
+  var: VariableReference,
+) -> Bit {
   // Multiply against the inverse, or 1 if there is no inverse due to this being 0
   // This makes the output 0/1 for an honest prover
   let inv = circuit.unchecked_value(var).map(|val| val.invert().unwrap_or(C::F::ONE));

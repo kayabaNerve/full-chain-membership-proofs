@@ -10,14 +10,14 @@ use ciphersuite::{
 
 use crate::{
   arithmetic_circuit::{Constraint, Circuit},
-  tests::generators,
+  tests::generators as generators_fn,
 };
 
 #[test]
 fn test_vector_commitment() {
-  let (g, h, g_bold1, g_bold2, h_bold1, h_bold2) = generators(8);
-  let (additional_g_1, additional_g_2, additional_hs_1, additional_hs_2, _, _) =
-    generators::<Ristretto>(8);
+  let generators = generators_fn(8);
+  let (additional_g_1, additional_g_2, additional_hs_1, additional_hs_2) =
+    generators_fn::<Ristretto>(8).reduce(8, false).decompose();
   let additional_gs = (additional_g_1, additional_g_2);
   let additional_hs = (additional_hs_1.0.clone(), additional_hs_2.0.clone());
 
@@ -28,7 +28,7 @@ fn test_vector_commitment() {
   let a_bind = <Ristretto as Ciphersuite>::G::random(&mut OsRng);
 
   fn gadget(
-    circuit: &mut Circuit<Ristretto>,
+    circuit: &mut Circuit<RecommendedTranscript, Ristretto>,
     binds_x_y: (<Ristretto as Ciphersuite>::G, <Ristretto as Ciphersuite>::G),
     x_y: Option<(<Ristretto as Ciphersuite>::F, <Ristretto as Ciphersuite>::F)>,
     binds_z_a: (<Ristretto as Ciphersuite>::G, <Ristretto as Ciphersuite>::G),
@@ -59,16 +59,7 @@ fn test_vector_commitment() {
 
   let mut transcript = RecommendedTranscript::new(b"Vector Commitment Test");
 
-  let mut circuit = Circuit::new(
-    g,
-    h,
-    g_bold1.clone(),
-    g_bold2.clone(),
-    h_bold1.clone(),
-    h_bold2.clone(),
-    true,
-    None,
-  );
+  let mut circuit = Circuit::new(generators.clone(), true, None);
   gadget(&mut circuit, (x_bind, y_bind), Some((x, y)), (z_bind, a_bind), Some((z, a)));
   let (blinds, commitments, proof, proofs) = circuit.prove_with_vector_commitments(
     &mut OsRng,
@@ -79,11 +70,10 @@ fn test_vector_commitment() {
   assert_eq!(blinds.len(), 2);
   assert_eq!(commitments.len(), 2);
   assert_eq!(proofs.len(), 3);
-  assert_eq!(commitments[0], (x_bind * x) + (y_bind * y) + (h * blinds[0]));
-  assert_eq!(commitments[1], (z_bind * z) + (a_bind * (z * a)) + (h * blinds[1]));
+  assert_eq!(commitments[0], (x_bind * x) + (y_bind * y) + (generators.h() * blinds[0]));
+  assert_eq!(commitments[1], (z_bind * z) + (a_bind * (z * a)) + (generators.h() * blinds[1]));
 
-  let mut circuit =
-    Circuit::new(g, h, g_bold1, g_bold2, h_bold1, h_bold2, false, Some(commitments));
+  let mut circuit = Circuit::new(generators, false, Some(commitments));
   gadget(&mut circuit, (x_bind, y_bind), None, (z_bind, a_bind), None);
   let mut verifier = BatchVerifier::new(5);
   circuit.verify_with_vector_commitments(

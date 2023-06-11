@@ -17,12 +17,12 @@ use crate::{
   gadgets::elliptic_curve::{
     Trit, DLogTable, EmbeddedCurveOperations, scalar_to_trits, trits_to_scalar,
   },
-  tests::generators,
+  tests::generators as generators_fn,
 };
 
 #[test]
 fn test_incomplete_addition() {
-  let (g, h, g_bold1, g_bold2, h_bold1, h_bold2) = generators(64 * 256);
+  let generators = generators_fn(64 * 256);
 
   let p1 = <Pallas as Ciphersuite>::G::random(&mut OsRng);
   let p2 = <Pallas as Ciphersuite>::G::random(&mut OsRng);
@@ -40,7 +40,7 @@ fn test_incomplete_addition() {
 
   let mut transcript = RecommendedTranscript::new(b"Point Addition Circuit Test");
 
-  let gadget = |circuit: &mut Circuit<Vesta>| {
+  let gadget = |circuit: &mut Circuit<RecommendedTranscript, Vesta>| {
     let prover = circuit.prover();
 
     let p1_x = circuit.add_secret_input(Some(p1.0).filter(|_| prover));
@@ -61,20 +61,11 @@ fn test_incomplete_addition() {
     circuit.equals_constant(circuit.variable_to_product(res.y()).unwrap(), p3.1);
   };
 
-  let mut circuit = Circuit::new(
-    g,
-    h,
-    g_bold1.clone(),
-    g_bold2.clone(),
-    h_bold1.clone(),
-    h_bold2.clone(),
-    true,
-    None,
-  );
+  let mut circuit = Circuit::new(generators.clone(), true, None);
   gadget(&mut circuit);
   let proof = circuit.prove(&mut OsRng, &mut transcript.clone());
 
-  let mut circuit = Circuit::new(g, h, g_bold1, g_bold2, h_bold1, h_bold2, false, Some(vec![]));
+  let mut circuit = Circuit::new(generators, false, Some(vec![]));
   gadget(&mut circuit);
   let mut verifier = BatchVerifier::new(1);
   circuit.verify(&mut OsRng, &mut verifier, &mut transcript, proof);
@@ -103,9 +94,9 @@ fn test_trinary() {
 
 #[test]
 fn test_dlog_pok() {
-  let (g, h, g_bold1, g_bold2, h_bold1, h_bold2) = generators(64 * 256);
-  let (additional_g_1, additional_g_2, additional_hs_1, additional_hs_2, _, _) =
-    generators::<Vesta>(64 * 256);
+  let generators = generators_fn(64 * 256);
+  let (additional_g_1, additional_g_2, additional_hs_1, additional_hs_2) =
+    generators_fn::<Vesta>(64 * 256).reduce(64 * 256, false).decompose();
   let additional_gs = (additional_g_1, additional_g_2);
   let additional_hs = (additional_hs_1.0.clone(), additional_hs_2.0.clone());
 
@@ -113,7 +104,7 @@ fn test_dlog_pok() {
 
   let G_table = DLogTable::<Pallas>::new(<Pallas as Ciphersuite>::G::generator());
 
-  let gadget = |circuit: &mut Circuit<Vesta>, point: (_, _), dlog| {
+  let gadget = |circuit: &mut Circuit<RecommendedTranscript, Vesta>, point: (_, _), dlog| {
     let prover = circuit.prover();
 
     let point_x = circuit.add_secret_input(Some(point.0).filter(|_| prover));
@@ -125,16 +116,7 @@ fn test_dlog_pok() {
   };
 
   let test = |point: (_, _), dlog| {
-    let mut circuit = Circuit::new(
-      g,
-      h,
-      g_bold1.clone(),
-      g_bold2.clone(),
-      h_bold1.clone(),
-      h_bold2.clone(),
-      true,
-      None,
-    );
+    let mut circuit = Circuit::new(generators.clone(), true, None);
     gadget(&mut circuit, point, Some(dlog));
     let (_, commitments, proof, proofs) = circuit.prove_with_vector_commitments(
       &mut OsRng,
@@ -143,16 +125,7 @@ fn test_dlog_pok() {
       additional_hs.clone(),
     );
 
-    let mut circuit = Circuit::new(
-      g,
-      h,
-      g_bold1.clone(),
-      g_bold2.clone(),
-      h_bold1.clone(),
-      h_bold2.clone(),
-      false,
-      Some(commitments),
-    );
+    let mut circuit = Circuit::new(generators.clone(), false, Some(commitments));
     gadget(&mut circuit, point, None);
 
     let mut verifier = BatchVerifier::new(5);

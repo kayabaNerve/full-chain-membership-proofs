@@ -13,11 +13,11 @@ use crate::{
 
 #[test]
 fn test_zero_arithmetic_circuit() {
-  let (g, h, g_bold1, g_bold2, h_bold1, h_bold2) = generators(1);
+  let generators = generators(1);
 
   let value = <Ristretto as Ciphersuite>::F::random(&mut OsRng);
   let gamma = <Ristretto as Ciphersuite>::F::random(&mut OsRng);
-  let commitment = (g * value) + (h * gamma);
+  let commitment = (generators.g() * value) + (generators.h() * gamma);
   let V = PointVector(vec![commitment]);
 
   let zero_vec = || ScalarVector::<Ristretto>(vec![<Ristretto as Ciphersuite>::F::ZERO]);
@@ -35,9 +35,7 @@ fn test_zero_arithmetic_circuit() {
   WV.push(vec![(0, <Ristretto as Ciphersuite>::F::ZERO)]);
   let c = zero_vec();
 
-  let statement = ArithmeticCircuitStatement::<Ristretto>::new(
-    g, h, g_bold1, g_bold2, h_bold1, h_bold2, V, WL, WR, WO, WV, c,
-  );
+  let statement = ArithmeticCircuitStatement::<_, Ristretto>::new(generators, V, WL, WR, WO, WV, c);
   let witness = ArithmeticCircuitWitness::<Ristretto>::new(
     aL,
     aR,
@@ -60,13 +58,12 @@ fn test_multiplication_arithmetic_circuit() {
 
   // Hand-written circuit for:
   // Commitments x, y, z, z1
-  // y = 2x
   // x * y = z
   // z + 1 = z1
 
-  let (g, h, g_bold1, g_bold2, h_bold1, h_bold2) = generators(n);
+  let generators = generators(n);
 
-  let commit = |value, gamma| (g * value) + (h * gamma);
+  let commit = |value, gamma| (generators.g() * value) + (generators.h() * gamma);
 
   let x = <Ristretto as Ciphersuite>::F::random(&mut OsRng);
   let x_mask = <Ristretto as Ciphersuite>::F::random(&mut OsRng);
@@ -128,9 +125,7 @@ fn test_multiplication_arithmetic_circuit() {
     <Ristretto as Ciphersuite>::F::ZERO,
   ]);
 
-  let statement = ArithmeticCircuitStatement::<Ristretto>::new(
-    g, h, g_bold1, g_bold2, h_bold1, h_bold2, V, WL, WR, WO, WV, c,
-  );
+  let statement = ArithmeticCircuitStatement::<_, Ristretto>::new(generators, V, WL, WR, WO, WV, c);
   let witness = ArithmeticCircuitWitness::<Ristretto>::new(
     aL,
     aR,

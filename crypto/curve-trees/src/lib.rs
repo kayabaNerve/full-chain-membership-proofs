@@ -4,6 +4,7 @@ use core::marker::PhantomData;
 
 use rand_core::{RngCore, CryptoRng};
 
+use transcript::Transcript;
 use ciphersuite::{
   group::ff::{Field, PrimeField},
   Ciphersuite,
@@ -82,9 +83,9 @@ pub fn new_blind<R: RngCore + CryptoRng, C1: Ciphersuite, C2: Ciphersuite>(
   (res, C2::F::from_repr(c2_repr).unwrap())
 }
 
-pub fn layer_gadget<R: RngCore + CryptoRng, C: CurveCycle>(
+pub fn layer_gadget<R: RngCore + CryptoRng, T: Transcript, C: CurveCycle>(
   rng: &mut R,
-  circuit: &mut Circuit<C::C2>,
+  circuit: &mut Circuit<T, C::C2>,
   permissible: &Permissible<C::C1>,
   H: &DLogTable<C::C1>,
   pedersen_generators: &[<C::C2 as Ciphersuite>::G],
@@ -170,10 +171,10 @@ pub fn layer_gadget<R: RngCore + CryptoRng, C: CurveCycle>(
   }
 }
 
-pub fn membership_gadget<R: RngCore + CryptoRng, C: CurveCycle>(
+pub fn membership_gadget<R: RngCore + CryptoRng, T: Transcript, C: CurveCycle>(
   rng: &mut R,
-  circuit_c1: &mut Circuit<C::C1>,
-  circuit_c2: &mut Circuit<C::C2>,
+  circuit_c1: &mut Circuit<T, C::C1>,
+  circuit_c2: &mut Circuit<T, C::C2>,
   tree: &Tree<C>,
   blinded_point: <C::C1 as Ciphersuite>::G,
   blind: Option<<C::C1 as Ciphersuite>::F>,
@@ -207,7 +208,7 @@ pub fn membership_gadget<R: RngCore + CryptoRng, C: CurveCycle>(
         (0, vec![None; tree.width()])
       };
 
-      let (blind, point) = layer_gadget::<_, C>(
+      let (blind, point) = layer_gadget::<_, _, C>(
         rng,
         circuit_c2,
         tree.permissible_c1(),
@@ -239,7 +240,7 @@ pub fn membership_gadget<R: RngCore + CryptoRng, C: CurveCycle>(
         (0, vec![None; tree.width()])
       };
 
-      let (blind, point) = layer_gadget::<_, FlipCurveCycle<C>>(
+      let (blind, point) = layer_gadget::<_, _, FlipCurveCycle<C>>(
         rng,
         circuit_c1,
         tree.permissible_c2(),

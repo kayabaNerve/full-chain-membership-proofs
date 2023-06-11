@@ -11,9 +11,12 @@ mod elliptic_curve;
 
 #[test]
 fn test_is_non_zero_gadget() {
-  let (g, h, g_bold1, g_bold2, h_bold1, h_bold2) = generators(16);
+  let generators = generators(16);
 
-  fn gadget(circuit: &mut Circuit<Vesta>, value_arg: Option<<Vesta as Ciphersuite>::F>) {
+  fn gadget(
+    circuit: &mut Circuit<RecommendedTranscript, Vesta>,
+    value_arg: Option<<Vesta as Ciphersuite>::F>,
+  ) {
     let value = circuit.add_secret_input(value_arg);
     circuit.product(value, value);
     let res = is_non_zero_gadget(circuit, value);
@@ -32,29 +35,11 @@ fn test_is_non_zero_gadget() {
   let transcript = RecommendedTranscript::new(b"Is Non Zero Gadget Test");
 
   let test = |x| {
-    let mut circuit = Circuit::new(
-      g,
-      h,
-      g_bold1.clone(),
-      g_bold2.clone(),
-      h_bold1.clone(),
-      h_bold2.clone(),
-      true,
-      None,
-    );
+    let mut circuit = Circuit::new(generators.clone(), true, None);
     gadget(&mut circuit, Some(x));
     let proof = circuit.prove(&mut OsRng, &mut transcript.clone());
 
-    let mut circuit = Circuit::new(
-      g,
-      h,
-      g_bold1.clone(),
-      g_bold2.clone(),
-      h_bold1.clone(),
-      h_bold2.clone(),
-      false,
-      Some(vec![]),
-    );
+    let mut circuit = Circuit::new(generators.clone(), false, Some(vec![]));
     gadget(&mut circuit, None);
     let mut verifier = BatchVerifier::new(1);
     circuit.verify(&mut OsRng, &mut verifier, &mut transcript.clone(), proof);

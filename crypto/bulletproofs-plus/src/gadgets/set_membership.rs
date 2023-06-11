@@ -1,3 +1,4 @@
+use transcript::Transcript;
 use ciphersuite::{group::ff::Field, Ciphersuite};
 
 use crate::arithmetic_circuit::{ProductReference, Constraint, Circuit};
@@ -5,15 +6,15 @@ use crate::arithmetic_circuit::{ProductReference, Constraint, Circuit};
 // Core set membership gadget, shared between the variable/constant routines.
 // member should be Some if matching against a variable, None for a constant.
 // value should be Some if variable + prover, Some if constant, otherwise None.
-fn set_membership<C: Ciphersuite>(
-  circuit: &mut Circuit<C>,
+fn set_membership<T: Transcript, C: Ciphersuite>(
+  circuit: &mut Circuit<T, C>,
   member: Option<ProductReference>,
   value: Option<C::F>,
   set: &[ProductReference],
 ) {
   assert!(set.len() >= 2);
 
-  let sub_member = |circuit: &mut Circuit<C>, var| {
+  let sub_member = |circuit: &mut Circuit<T, C>, var| {
     let sub = if circuit.prover() {
       Some(circuit.unchecked_value(circuit.variable(var)).unwrap() - value.unwrap())
     } else {
@@ -57,8 +58,8 @@ fn set_membership<C: Ciphersuite>(
   circuit.equals_constant(circuit.variable_to_product(accum.unwrap()).unwrap(), C::F::ZERO);
 }
 
-pub fn assert_variable_in_set_gadget<C: Ciphersuite>(
-  circuit: &mut Circuit<C>,
+pub fn assert_variable_in_set_gadget<T: Transcript, C: Ciphersuite>(
+  circuit: &mut Circuit<T, C>,
   member: ProductReference,
   set: &[ProductReference],
 ) {
@@ -66,8 +67,8 @@ pub fn assert_variable_in_set_gadget<C: Ciphersuite>(
   set_membership(circuit, Some(member), value, set);
 }
 
-pub fn assert_constant_in_set_gadget<C: Ciphersuite>(
-  circuit: &mut Circuit<C>,
+pub fn assert_constant_in_set_gadget<T: Transcript, C: Ciphersuite>(
+  circuit: &mut Circuit<T, C>,
   constant: C::F,
   set: &[ProductReference],
 ) {
@@ -78,14 +79,14 @@ pub fn assert_constant_in_set_gadget<C: Ciphersuite>(
 //
 // This takes in variables, asserts one of them is a constant in O(n), and returns
 // ProductReferences for variable - constant
-pub(crate) fn set_with_constant<C: Ciphersuite>(
-  circuit: &mut Circuit<C>,
+pub(crate) fn set_with_constant<T: Transcript, C: Ciphersuite>(
+  circuit: &mut Circuit<T, C>,
   constant: C::F,
   set: &[Option<C::F>],
 ) -> Vec<ProductReference> {
   assert!(set.len() >= 2);
 
-  let sub_member = |circuit: &mut Circuit<C>, var: Option<C::F>| {
+  let sub_member = |circuit: &mut Circuit<T, C>, var: Option<C::F>| {
     circuit.add_secret_input(var.map(|var| var - constant))
   };
 

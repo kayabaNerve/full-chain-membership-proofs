@@ -13,21 +13,18 @@ use crate::{
 
 fn test_aggregate_range_proof<C: Ciphersuite>() {
   let mut verifier = BatchVerifier::new(16);
+  let generators = generators(RANGE_PROOF_BITS * 16);
   for m in 1 ..= 16 {
-    let (g, h, g_bold, h_bold, _, _) = generators(RANGE_PROOF_BITS * m);
+    let generators = generators.clone().reduce(RANGE_PROOF_BITS * m, false);
 
     let mut commitments = vec![];
     for _ in 0 .. m {
       commitments
         .push(RangeCommitment::new(OsRng.next_u64(), <C as Ciphersuite>::F::random(&mut OsRng)));
     }
-    let statement = AggregateRangeStatement::<C>::new(
-      g,
-      h,
-      g_bold,
-      h_bold,
-      commitments.iter().map(|com| com.calculate(g, h)).collect(),
-    );
+    let commitment_points =
+      commitments.iter().map(|com| com.calculate(generators.g(), generators.h())).collect();
+    let statement = AggregateRangeStatement::<_, C>::new(generators, commitment_points);
     let witness = AggregateRangeWitness::<C>::new(&commitments);
 
     let mut transcript = RecommendedTranscript::new(b"Aggregate Range Proof Test");

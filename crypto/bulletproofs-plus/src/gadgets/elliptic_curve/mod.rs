@@ -2,6 +2,7 @@ use rand_core::{RngCore, CryptoRng};
 
 use subtle::Choice;
 
+use transcript::Transcript;
 use ciphersuite::{
   group::{
     ff::{Field, PrimeField},
@@ -125,8 +126,8 @@ pub trait EmbeddedCurveOperations: Ciphersuite {
   type Embedded: Ecip<FieldElement = Self::F>;
 
   /// Constrains a point to being on curve AND not being the identity.
-  fn constrain_on_curve(
-    circuit: &mut Circuit<Self>,
+  fn constrain_on_curve<T: Transcript>(
+    circuit: &mut Circuit<T, Self>,
     x: VariableReference,
     y: VariableReference,
   ) -> OnCurvePoint;
@@ -139,8 +140,8 @@ pub trait EmbeddedCurveOperations: Ciphersuite {
 
   // Curve Trees, Appendix A.[4, 5]
   // This uses 4 gates theoretically, 5 as implemented here, and 6 constraints
-  fn incomplete_add(
-    circuit: &mut Circuit<Self>,
+  fn incomplete_add<T: Transcript>(
+    circuit: &mut Circuit<T, Self>,
     p1: OnCurvePoint,
     p2: OnCurvePoint,
   ) -> OnCurvePoint {
@@ -253,8 +254,8 @@ pub trait EmbeddedCurveOperations: Ciphersuite {
 
   // Curve Trees, Appendix A.[4, 5]
   // This uses 4 gates theoretically, 5 as implemented here, and 6 constraints
-  fn incomplete_add_constant(
-    circuit: &mut Circuit<Self>,
+  fn incomplete_add_constant<T: Transcript>(
+    circuit: &mut Circuit<T, Self>,
     p1: OnCurvePoint,
     p2: <Self::Embedded as Ciphersuite>::G,
   ) -> OnCurvePoint {
@@ -369,9 +370,9 @@ pub trait EmbeddedCurveOperations: Ciphersuite {
   // which don't already incur the vector commitment scheme's overhead
   //
   // Gate count is notated GC
-  fn dlog_pok<R: RngCore + CryptoRng>(
+  fn dlog_pok<R: RngCore + CryptoRng, T: Transcript>(
     rng: &mut R,
-    circuit: &mut Circuit<Self>,
+    circuit: &mut Circuit<T, Self>,
     G: &DLogTable<Self::Embedded>,
     p: OnCurvePoint,
     dlog: Option<<Self::Embedded as Ciphersuite>::F>,
@@ -702,8 +703,8 @@ impl<C: EmbeddedShortWeierstrass> EmbeddedCurveOperations for C {
   type Embedded = <C as EmbeddedShortWeierstrass>::Embedded;
 
   // y**2 = x**3 + B
-  fn constrain_on_curve(
-    circuit: &mut Circuit<Self>,
+  fn constrain_on_curve<T: Transcript>(
+    circuit: &mut Circuit<T, Self>,
     x: VariableReference,
     y: VariableReference,
   ) -> OnCurvePoint {

@@ -13,15 +13,12 @@ use ciphersuite::{
   Ciphersuite,
 };
 
-use crate::{ScalarVector, PointVector, weighted_inner_product};
+use crate::{ScalarVector, PointVector, Generators, weighted_inner_product};
 
 // Figure 1
 #[derive(Clone, Debug, Zeroize)]
-pub struct WipStatement<C: Ciphersuite> {
-  g: C::G,
-  h: C::G,
-  g_bold: PointVector<C>,
-  h_bold: PointVector<C>,
+pub struct WipStatement<T: Transcript, C: Ciphersuite> {
+  generators: Generators<T, C>,
   P: C::G,
   y: ScalarVector<C>,
 }
@@ -52,39 +49,26 @@ pub struct WipProof<C: Ciphersuite> {
   delta_answer: C::F,
 }
 
-impl<C: Ciphersuite> WipStatement<C> {
-  pub fn new(
-    g: C::G,
-    h: C::G,
-    g_bold: PointVector<C>,
-    h_bold: PointVector<C>,
-    P: C::G,
-    y: C::F,
-  ) -> Self {
-    assert!(!g_bold.0.is_empty());
-    assert_eq!(g_bold.len(), h_bold.len());
-
+impl<T: Transcript, C: Ciphersuite> WipStatement<T, C> {
+  pub fn new(generators: Generators<T, C>, P: C::G, y: C::F) -> Self {
     // y ** n
-    let mut y_vec = ScalarVector::new(g_bold.len());
+    let mut y_vec = ScalarVector::new(generators.g_bold1.len());
     y_vec[0] = y;
     for i in 1 .. y_vec.len() {
       y_vec[i] = y_vec[i - 1] * y;
     }
 
-    Self { g, h, g_bold, h_bold, P, y: y_vec }
+    Self { generators, P, y: y_vec }
   }
 
-  fn initial_transcript<T: Transcript>(&self, transcript: &mut T) {
+  fn initial_transcript(&mut self, transcript: &mut T) {
     transcript.domain_separate(b"weighted_inner_product");
-    transcript.append_message(b"generator", self.g.to_bytes());
-    transcript.append_message(b"alt_generator", self.h.to_bytes());
-    self.g_bold.transcript(transcript, b"g_bold");
-    self.h_bold.transcript(transcript, b"h_bold");
+    transcript.append_message(b"generators", self.generators.transcript.challenge(b"summary"));
     transcript.append_message(b"P", self.P.to_bytes());
     transcript.append_message(b"y", self.y[0].to_repr());
   }
 
-  fn transcript_L_R<T: Transcript>(transcript: &mut T, L: C::G, R: C::G) -> C::F {
+  fn transcript_L_R(transcript: &mut T, L: C::G, R: C::G) -> C::F {
     transcript.append_message(b"L", L.to_bytes());
     transcript.append_message(b"R", R.to_bytes());
 
@@ -95,18 +79,11 @@ impl<C: Ciphersuite> WipStatement<C> {
     e
   }
 
-  fn transcript_round<T: Transcript>(
-    transcript: &mut T,
-    g_bold: &PointVector<C>,
-    h_bold: &PointVector<C>,
-    P: C::G,
-  ) {
-    g_bold.transcript(transcript, b"g_bold_permutation");
-    h_bold.transcript(transcript, b"h_bold_permutation");
+  fn transcript_round(transcript: &mut T, P: C::G) {
     transcript.append_message(b"P_permutation", P.to_bytes());
   }
 
-  fn transcript_A_B<T: Transcript>(transcript: &mut T, A: C::G, B: C::G) -> C::F {
+  fn transcript_A_B(transcript: &mut T, A: C::G, B: C::G) -> C::F {
     transcript.append_message(b"A", A.to_bytes());
     transcript.append_message(b"B", B.to_bytes());
 
@@ -117,7 +94,7 @@ impl<C: Ciphersuite> WipStatement<C> {
     e
   }
 
-  fn next_G_H_P<T: Transcript>(
+  fn next_G_H_P(
     transcript: &mut T,
     g_bold1: PointVector<C>,
     g_bold2: PointVector<C>,
@@ -129,8 +106,8 @@ impl<C: Ciphersuite> WipStatement<C> {
     y_inv_n_hat: C::F,
   ) -> (C::F, C::F, C::F, C::F, PointVector<C>, PointVector<C>, C::G) {
     assert_eq!(g_bold1.len(), g_bold2.len());
+    assert_eq!(h_bold1.len(), h_bold2.len());
     assert_eq!(g_bold1.len(), h_bold1.len());
-    assert_eq!(g_bold1.len(), h_bold2.len());
 
     let e = Self::transcript_L_R(transcript, L, R);
     let inv_e = e.invert().unwrap();
@@ -141,35 +118,35 @@ impl<C: Ciphersuite> WipStatement<C> {
     let inv_e_square = inv_e.square();
     P += multiexp_vartime(&[(e_square, L), (inv_e_square, R)]);
 
-    Self::transcript_round(transcript, &g_bold, &h_bold, P);
+    Self::transcript_round(transcript, P);
 
     (e, inv_e, e_square, inv_e_square, g_bold, h_bold, P)
   }
 
-  pub fn prove<R: RngCore + CryptoRng, T: Transcript>(
-    self,
+  pub fn prove<R: RngCore + CryptoRng>(
+    mut self,
     rng: &mut R,
     transcript: &mut T,
     witness: WipWitness<C>,
   ) -> WipProof<C> {
+    self.initial_transcript(transcript);
+
+    let WipStatement { generators, mut P, mut y } = self;
+    let (g, h, mut g_bold, mut h_bold) = generators.decompose();
+
     // Check P has the expected relationship
     let mut P_terms = witness
       .a
       .0
       .iter()
       .copied()
-      .zip(self.g_bold.0.iter().copied())
-      .chain(witness.b.0.iter().copied().zip(self.h_bold.0.iter().copied()))
+      .zip(g_bold.0.iter().copied())
+      .chain(witness.b.0.iter().copied().zip(h_bold.0.iter().copied()))
       .collect::<Vec<_>>();
-    P_terms.push((weighted_inner_product(&witness.a, &witness.b, &self.y), self.g));
-    P_terms.push((witness.alpha, self.h));
-    debug_assert_eq!(multiexp(&P_terms), self.P);
+    P_terms.push((weighted_inner_product(&witness.a, &witness.b, &y), g));
+    P_terms.push((witness.alpha, h));
+    debug_assert_eq!(multiexp(&P_terms), P);
     P_terms.zeroize();
-
-    self.initial_transcript(transcript);
-
-    let WipStatement { g: _, h: _, mut g_bold, mut h_bold, mut P, mut y } = self;
-    assert_eq!(g_bold.len(), h_bold.len());
 
     let mut a = witness.a.clone();
     let mut b = witness.b.clone();
@@ -186,8 +163,8 @@ impl<C: Ciphersuite> WipStatement<C> {
     while g_bold.len() > 1 {
       let (a1, a2) = a.clone().split();
       let (b1, b2) = b.clone().split();
-      let (g_bold1, g_bold2) = g_bold.clone().split();
-      let (h_bold1, h_bold2) = h_bold.clone().split();
+      let (g_bold1, g_bold2) = g_bold.split();
+      let (h_bold1, h_bold2) = h_bold.split();
 
       let n_hat = g_bold1.len();
       assert_eq!(a1.len(), n_hat);
@@ -217,8 +194,8 @@ impl<C: Ciphersuite> WipStatement<C> {
         .zip(g_bold2.0.iter().copied())
         .chain(b2.0.iter().copied().zip(h_bold1.0.iter().copied()))
         .collect::<Vec<_>>();
-      L_terms.push((c_l, self.g));
-      L_terms.push((d_l, self.h));
+      L_terms.push((c_l, g));
+      L_terms.push((d_l, h));
       let L = multiexp(&L_terms);
       L_vec.push(L);
       L_terms.zeroize();
@@ -230,8 +207,8 @@ impl<C: Ciphersuite> WipStatement<C> {
         .zip(g_bold1.0.iter().copied())
         .chain(b1.0.iter().copied().zip(h_bold2.0.iter().copied()))
         .collect::<Vec<_>>();
-      R_terms.push((c_r, self.g));
-      R_terms.push((d_r, self.h));
+      R_terms.push((c_r, g));
+      R_terms.push((d_r, h));
       let R = multiexp(&R_terms);
       R_vec.push(R);
       R_terms.zeroize();
@@ -263,16 +240,12 @@ impl<C: Ciphersuite> WipStatement<C> {
 
     let ry = r * y[0];
 
-    let mut A_terms = vec![
-      (r, g_bold[0]),
-      (s, h_bold[0]),
-      ((ry * b[0]) + (s * y[0] * a[0]), self.g),
-      (delta, self.h),
-    ];
+    let mut A_terms =
+      vec![(r, g_bold[0]), (s, h_bold[0]), ((ry * b[0]) + (s * y[0] * a[0]), g), (delta, h)];
     let A = multiexp(&A_terms);
     A_terms.zeroize();
 
-    let mut B_terms = vec![(ry * s, self.g), (long_n, self.h)];
+    let mut B_terms = vec![(ry * s, g), (long_n, h)];
     let B = multiexp(&B_terms);
     B_terms.zeroize();
 
@@ -285,8 +258,8 @@ impl<C: Ciphersuite> WipStatement<C> {
     WipProof { L: L_vec, R: R_vec, A, B, r_answer, s_answer, delta_answer }
   }
 
-  pub fn verify<R: RngCore + CryptoRng, T: Transcript>(
-    self,
+  pub fn verify<R: RngCore + CryptoRng>(
+    mut self,
     rng: &mut R,
     verifier: &mut BatchVerifier<(), C::G>,
     transcript: &mut T,
@@ -294,7 +267,8 @@ impl<C: Ciphersuite> WipStatement<C> {
   ) {
     self.initial_transcript(transcript);
 
-    let WipStatement { g: _, h: _, mut g_bold, mut h_bold, mut P, y } = self;
+    let WipStatement { generators, mut P, y } = self;
+    let (g, h, mut g_bold, mut h_bold) = generators.decompose();
 
     assert!(!g_bold.0.is_empty());
     assert_eq!(g_bold.len(), h_bold.len());
@@ -333,8 +307,8 @@ impl<C: Ciphersuite> WipStatement<C> {
         (-e, proof.A),
         (proof.r_answer * e, g_bold[0]),
         (proof.s_answer * e, h_bold[0]),
-        (proof.r_answer * y[0] * proof.s_answer, self.g),
-        (proof.delta_answer, self.h),
+        (proof.r_answer * y[0] * proof.s_answer, g),
+        (proof.delta_answer, h),
         (-C::F::ONE, proof.B),
       ],
     );

@@ -1,5 +1,6 @@
 use subtle::{Choice, ConstantTimeEq, ConditionallySelectable};
 
+use transcript::Transcript;
 use ciphersuite::{group::ff::Field, Ciphersuite};
 
 use crate::arithmetic_circuit::{VariableReference, Constraint, Circuit};
@@ -15,7 +16,10 @@ pub struct Bit {
 impl Bit {
   /// Create a new bit from an existing variable.
   // This uses one gate and two constraints.
-  pub fn new_from_var<C: Ciphersuite>(circuit: &mut Circuit<C>, bit: VariableReference) -> Bit {
+  pub fn new_from_var<T: Transcript, C: Ciphersuite>(
+    circuit: &mut Circuit<T, C>,
+    bit: VariableReference,
+  ) -> Bit {
     let l = bit;
     let bit = circuit.unchecked_value(l);
     let r = circuit.add_secret_input(bit.map(|bit| bit - C::F::ONE));
@@ -43,7 +47,10 @@ impl Bit {
   }
 
   /// Create a new bit from a choice.
-  pub fn new_from_choice<C: Ciphersuite>(circuit: &mut Circuit<C>, choice: Option<Choice>) -> Bit {
+  pub fn new_from_choice<T: Transcript, C: Ciphersuite>(
+    circuit: &mut Circuit<T, C>,
+    choice: Option<Choice>,
+  ) -> Bit {
     let bit = choice.map(|choice| C::F::from(u64::from(choice.unwrap_u8())));
     let var = circuit.add_secret_input(bit);
     Self::new_from_var(circuit, var)
@@ -51,9 +58,9 @@ impl Bit {
 
   /// Select a variable based on the value of this bit.
   // This uses two gates and one constraint.
-  pub fn select<C: Ciphersuite>(
+  pub fn select<T: Transcript, C: Ciphersuite>(
     &self,
-    circuit: &mut Circuit<C>,
+    circuit: &mut Circuit<T, C>,
     if_false: VariableReference,
     if_true: VariableReference,
   ) -> VariableReference {
@@ -87,9 +94,9 @@ impl Bit {
   }
 
   /// Select a constant based on the value of this bit.
-  pub fn select_constant<C: Ciphersuite>(
+  pub fn select_constant<T: Transcript, C: Ciphersuite>(
     &self,
-    circuit: &mut Circuit<C>,
+    circuit: &mut Circuit<T, C>,
     if_false: C::F,
     if_true: C::F,
   ) -> VariableReference {

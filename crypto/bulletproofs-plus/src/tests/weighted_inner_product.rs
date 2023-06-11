@@ -11,7 +11,7 @@ use ciphersuite::{
 };
 
 use crate::{
-  ScalarVector, PointVector,
+  ScalarVector,
   weighted_inner_product::{WipStatement, WipWitness},
   weighted_inner_product,
   tests::generators,
@@ -20,19 +20,9 @@ use crate::{
 #[test]
 fn test_zero_weighted_inner_product() {
   let P = <Ristretto as Ciphersuite>::G::identity();
-  let g_bold = PointVector::<Ristretto>::new(1);
-  let h_bold = PointVector::<Ristretto>::new(1);
-
   let y = <Ristretto as Ciphersuite>::F::random(&mut OsRng);
 
-  let statement = WipStatement::<Ristretto>::new(
-    <Ristretto as Ciphersuite>::G::identity(),
-    <Ristretto as Ciphersuite>::G::identity(),
-    g_bold,
-    h_bold,
-    P,
-    y,
-  );
+  let statement = WipStatement::<_, Ristretto>::new(generators(1).reduce(1, false), P, y);
   let witness = WipWitness::<Ristretto>::new(
     ScalarVector::<Ristretto>::new(1),
     ScalarVector::<Ristretto>::new(1),
@@ -51,8 +41,10 @@ fn test_zero_weighted_inner_product() {
 fn test_weighted_inner_product() {
   // P = sum(g_bold * a, h_bold * b, g * (a * y * b), h * alpha)
   let mut verifier = BatchVerifier::new(6);
+  let generators = generators(32);
   for i in [1, 2, 4, 8, 16, 32] {
-    let (g, h, g_bold, h_bold, _, _) = generators(i);
+    let generators = generators.clone().reduce(i, false);
+    let (g, h, g_bold, h_bold) = generators.clone().decompose();
 
     let mut a = ScalarVector::<Ristretto>::new(i);
     let mut b = ScalarVector::<Ristretto>::new(i);
@@ -75,7 +67,7 @@ fn test_weighted_inner_product() {
       (g * weighted_inner_product(&a, &b, &y_vec)) +
       (h * alpha);
 
-    let statement = WipStatement::<Ristretto>::new(g, h, g_bold, h_bold, P, y);
+    let statement = WipStatement::<_, Ristretto>::new(generators, P, y);
     let witness = WipWitness::<Ristretto>::new(a, b, alpha);
 
     let mut transcript = RecommendedTranscript::new(b"WIP Test");

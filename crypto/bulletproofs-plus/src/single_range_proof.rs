@@ -11,18 +11,15 @@ use ciphersuite::{
 };
 
 use crate::{
-  RANGE_PROOF_BITS, ScalarVector, PointVector, RangeCommitment,
+  RANGE_PROOF_BITS, ScalarVector, PointVector, Generators, RangeCommitment,
   weighted_inner_product::{WipStatement, WipWitness, WipProof},
   u64_decompose,
 };
 
 // Figure 2
 #[derive(Clone, Debug, Zeroize)]
-pub struct SingleRangeStatement<C: Ciphersuite> {
-  g: C::G,
-  h: C::G,
-  g_bold: PointVector<C>,
-  h_bold: PointVector<C>,
+pub struct SingleRangeStatement<T: Transcript, C: Ciphersuite> {
+  generators: Generators<T, C>,
   V: C::G,
 }
 
@@ -44,20 +41,17 @@ pub struct SingleRangeProof<C: Ciphersuite> {
   wip: WipProof<C>,
 }
 
-impl<C: Ciphersuite> SingleRangeStatement<C> {
-  pub fn new(g: C::G, h: C::G, g_bold: PointVector<C>, h_bold: PointVector<C>, V: C::G) -> Self {
-    assert_eq!(g_bold.len(), RANGE_PROOF_BITS);
-    assert_eq!(g_bold.len(), h_bold.len());
-
-    Self { g, h, g_bold, h_bold, V }
+impl<T: Transcript, C: Ciphersuite> SingleRangeStatement<T, C> {
+  pub fn new(generators: Generators<T, C>, V: C::G) -> Self {
+    Self { generators, V }
   }
 
-  fn initial_transcript<T: Transcript>(&self, transcript: &mut T) {
+  fn initial_transcript(&self, transcript: &mut T) {
     transcript.domain_separate(b"single_range_proof");
     transcript.append_message(b"commitment", self.V.to_bytes());
   }
 
-  fn transcript_A<T: Transcript>(transcript: &mut T, A: C::G) -> (C::F, C::F) {
+  fn transcript_A(transcript: &mut T, A: C::G) -> (C::F, C::F) {
     transcript.append_message(b"A", A.to_bytes());
 
     let y = C::hash_to_F(b"single_range_proof", transcript.challenge(b"y").as_ref());
@@ -73,7 +67,7 @@ impl<C: Ciphersuite> SingleRangeStatement<C> {
     (y, z)
   }
 
-  fn A_hat<T: Transcript>(
+  fn A_hat(
     transcript: &mut T,
     g: C::G,
     g_bold: &PointVector<C>,
@@ -81,16 +75,12 @@ impl<C: Ciphersuite> SingleRangeStatement<C> {
     V: C::G,
     A: C::G,
   ) -> (C::F, ScalarVector<C>, C::F, ScalarVector<C>, C::G) {
+    assert_eq!(g_bold.len(), RANGE_PROOF_BITS);
+
     // TODO: First perform the WIP transcript before acquiring challenges
     let (y, z) = Self::transcript_A(transcript, A);
 
     let two_pows = ScalarVector::powers(C::F::from(2), RANGE_PROOF_BITS);
-    debug_assert_eq!(two_pows[0], C::F::ONE);
-    debug_assert_eq!(
-      two_pows[RANGE_PROOF_BITS - 1],
-      C::F::from(2).pow([u64::try_from(RANGE_PROOF_BITS).unwrap() - 1])
-    );
-    debug_assert!(two_pows.0.get(RANGE_PROOF_BITS).is_none());
     // Collapse of [1; RANGE_PROOF_BITS] * z
     let z_vec = ScalarVector(vec![z; RANGE_PROOF_BITS]);
 
@@ -119,18 +109,20 @@ impl<C: Ciphersuite> SingleRangeStatement<C> {
     )
   }
 
-  pub fn prove<R: RngCore + CryptoRng, T: Transcript>(
+  pub fn prove<R: RngCore + CryptoRng>(
     self,
     rng: &mut R,
     transcript: &mut T,
     witness: SingleRangeWitness<C>,
   ) -> SingleRangeProof<C> {
-    assert_eq!(
-      RangeCommitment::<C>::new(witness.value, witness.gamma).calculate(self.g, self.h),
-      self.V
-    );
-
     self.initial_transcript(transcript);
+
+    let Self { generators, V } = self;
+    debug_assert_eq!(
+      RangeCommitment::<C>::new(witness.value, witness.gamma)
+        .calculate(generators.g(), generators.h()),
+      V
+    );
 
     let alpha = C::F::random(&mut *rng);
     let a_l = u64_decompose::<C>(witness.value);
@@ -141,10 +133,11 @@ impl<C: Ciphersuite> SingleRangeStatement<C> {
     let a_r = a_l.sub(C::F::ONE);
     debug_assert!(bool::from(a_l.inner_product(&a_r).is_zero()));
 
-    let Self { g, h, g_bold, h_bold, V } = self;
-    let A = g_bold.mul_vec(&a_l).sum() + h_bold.mul_vec(&a_r).sum() + (self.h * alpha);
+    let g_bold = generators.g_bold();
+    let h_bold = generators.h_bold();
+    let A = g_bold.mul_vec(&a_l).sum() + h_bold.mul_vec(&a_r).sum() + (generators.h() * alpha);
     let (y, two_descending_y, y_n_plus_one, z_vec, A_hat) =
-      Self::A_hat(transcript, g, &g_bold, &h_bold, V, A);
+      Self::A_hat(transcript, generators.g(), g_bold, h_bold, V, A);
 
     let a_l = a_l.sub_vec(&z_vec);
     let a_r = a_r.add_vec(&two_descending_y).add_vec(&z_vec);
@@ -152,7 +145,7 @@ impl<C: Ciphersuite> SingleRangeStatement<C> {
 
     SingleRangeProof {
       A,
-      wip: WipStatement::new(g, h, g_bold, h_bold, A_hat, y).prove(
+      wip: WipStatement::new(generators, A_hat, y).prove(
         rng,
         transcript,
         WipWitness::new(a_l, a_r, alpha),
@@ -160,7 +153,7 @@ impl<C: Ciphersuite> SingleRangeStatement<C> {
     }
   }
 
-  pub fn verify<R: RngCore + CryptoRng, T: Transcript>(
+  pub fn verify<R: RngCore + CryptoRng>(
     self,
     rng: &mut R,
     verifier: &mut BatchVerifier<(), C::G>,
@@ -169,9 +162,9 @@ impl<C: Ciphersuite> SingleRangeStatement<C> {
   ) {
     self.initial_transcript(transcript);
 
-    let Self { g, h, g_bold, h_bold, V } = self;
-    let (y, _, _, _, A_hat) = Self::A_hat(transcript, g, &g_bold, &h_bold, V, proof.A);
-    (WipStatement::new(g, h, g_bold, h_bold, A_hat, y))
-      .verify(rng, verifier, transcript, proof.wip);
+    let Self { generators, V } = self;
+    let (y, _, _, _, A_hat) =
+      Self::A_hat(transcript, generators.g(), generators.g_bold(), generators.h_bold(), V, proof.A);
+    (WipStatement::new(generators, A_hat, y)).verify(rng, verifier, transcript, proof.wip);
   }
 }
