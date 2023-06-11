@@ -38,6 +38,12 @@ impl<C: Ciphersuite> WipWitness<C> {
   }
 }
 
+#[derive(Clone)]
+struct TrackedScalarVector<C: Ciphersuite> {
+  raw: Vec<C::F>,
+  positions: Vec<Vec<usize>>,
+}
+
 #[derive(Clone, PartialEq, Eq, Debug, Zeroize)]
 pub struct WipProof<C: Ciphersuite> {
   L: Vec<C::G>,
@@ -124,6 +130,67 @@ impl<T: Transcript, C: Ciphersuite> WipStatement<T, C> {
     P += multiexp_vartime(&[(e_square, L), (inv_e_square, R)]);
 
     (e, inv_e, e_square, inv_e_square, PointVector(new_g_bold), PointVector(new_h_bold), P)
+  }
+
+  // TODO: This is O(n log n). It should be feasible to make O(n) (specifically 2n)
+  fn next_G_H_P_without_permutation(
+    transcript: &mut T,
+    mut g_bold: TrackedScalarVector<C>,
+    mut h_bold: TrackedScalarVector<C>,
+    mut P_terms: Vec<(C::F, C::G)>,
+    L: C::G,
+    R: C::G,
+    y_inv_n_hat: C::F,
+  ) -> (TrackedScalarVector<C>, TrackedScalarVector<C>, Vec<(C::F, C::G)>) {
+    assert_eq!(g_bold.positions.len(), h_bold.positions.len());
+    if (g_bold.positions.len() % 2) == 1 {
+      g_bold.positions.push(vec![]);
+    }
+    if (h_bold.positions.len() % 2) == 1 {
+      h_bold.positions.push(vec![]);
+    }
+
+    let e = Self::transcript_L_R(transcript, L, R);
+    let inv_e = e.invert().unwrap();
+
+    let e_y_inv = e * y_inv_n_hat;
+
+    let section_len = g_bold.positions.len() / 2;
+    let scale_section = |generators: &mut TrackedScalarVector<C>, section, scalar| {
+      for s in (section * section_len) .. ((section + 1) * section_len) {
+        for pos in &generators.positions[s] {
+          let pos: &usize = pos;
+          generators.raw[*pos] *= scalar;
+        }
+      }
+    };
+    // g_bold1
+    scale_section(&mut g_bold, 0, inv_e);
+    // g_bold2
+    scale_section(&mut g_bold, 1, e_y_inv);
+    // h_bold1
+    scale_section(&mut h_bold, 0, e);
+    // h_bold2
+    scale_section(&mut h_bold, 1, inv_e);
+
+    // Now merge their positions
+    let merge_positions = |generators: &mut TrackedScalarVector<_>| {
+      let high = generators.positions.len() / 2;
+      for i in 1 ..= high {
+        let mut popped = generators.positions.pop().unwrap();
+        generators.positions[high - i].append(&mut popped);
+      }
+      assert_eq!(generators.positions.len(), high);
+    };
+    merge_positions(&mut g_bold);
+    merge_positions(&mut h_bold);
+
+    let e_square = e.square();
+    let inv_e_square = inv_e.square();
+    P_terms.push((e_square, L));
+    P_terms.push((inv_e_square, R));
+
+    (g_bold, h_bold, P_terms)
   }
 
   pub fn prove<R: RngCore + CryptoRng>(
@@ -270,11 +337,17 @@ impl<T: Transcript, C: Ciphersuite> WipStatement<T, C> {
   ) {
     self.initial_transcript(transcript);
 
-    let WipStatement { generators, mut P, y } = self;
+    let WipStatement { generators, P, y } = self;
     let (g, h, mut g_bold, mut h_bold) = generators.decompose();
 
     assert!(!g_bold.0.is_empty());
     assert_eq!(g_bold.len(), h_bold.len());
+
+    let mut tracked_g_bold = TrackedScalarVector::<C> {
+      raw: vec![C::F::ONE; g_bold.len() + (g_bold.len() % 2)],
+      positions: (0 .. g_bold.len()).map(|i| vec![i]).collect(),
+    };
+    let mut tracked_h_bold = tracked_g_bold.clone();
 
     // Verify the L/R lengths
     {
@@ -286,20 +359,38 @@ impl<T: Transcript, C: Ciphersuite> WipStatement<T, C> {
       assert_eq!(proof.R.len(), lr_len);
     }
 
+    // The commented version saves does intermediary multiexp's to save on a variety of scalar ops
+    // A proper comparative benchmark has yet to be performed
+    /*
+    let mut P_terms = vec![];
     for (L, R) in proof.L.iter().zip(proof.R.iter()) {
-      let (_e, _inv_e, _e_square, _inv_e_square);
-      let (g_bold1, g_bold2) = g_bold.split();
-      let (h_bold1, h_bold2) = h_bold.split();
-
-      let n_hat = g_bold1.len();
+      let n_hat = (tracked_g_bold.positions.len() + (tracked_g_bold.positions.len() % 2)) / 2;
       let y_n_hat = y[n_hat - 1];
       let y_inv_n_hat = y_n_hat.invert().unwrap();
 
-      (_e, _inv_e, _e_square, _inv_e_square, g_bold, h_bold, P) =
-        Self::next_G_H_P(transcript, g_bold1, g_bold2, h_bold1, h_bold2, P, *L, *R, y_inv_n_hat);
+      (tracked_g_bold, tracked_h_bold, P_terms) = Self::next_G_H_P_without_permutation(
+        transcript,
+        tracked_g_bold,
+        tracked_h_bold,
+        P_terms,
+        *L,
+        *R,
+        y_inv_n_hat,
+      );
     }
-    debug_assert_eq!(g_bold.len(), 1);
-    debug_assert_eq!(h_bold.len(), 1);
+    let P = P + multiexp_vartime(&P_terms);
+
+    let mut g_bold_res = vec![];
+    for (i, point) in g_bold.0.drain(..).enumerate() {
+      g_bold_res.push((tracked_g_bold.raw[i], point));
+    }
+    let g_bold = multiexp_vartime(&g_bold_res);
+
+    let mut h_bold_res = vec![];
+    for (i, point) in h_bold.0.drain(..).enumerate() {
+      h_bold_res.push((tracked_h_bold.raw[i], point));
+    }
+    let h_bold = multiexp_vartime(&h_bold_res);
 
     let e = Self::transcript_A_B(transcript, proof.A, proof.B);
     verifier.queue(
@@ -308,12 +399,56 @@ impl<T: Transcript, C: Ciphersuite> WipStatement<T, C> {
       [
         (-e.square(), P),
         (-e, proof.A),
-        (proof.r_answer * e, g_bold[0]),
-        (proof.s_answer * e, h_bold[0]),
+        (proof.r_answer * e, g_bold),
+        (proof.s_answer * e, h_bold),
         (proof.r_answer * y[0] * proof.s_answer, g),
         (proof.delta_answer, h),
         (-C::F::ONE, proof.B),
       ],
     );
+    */
+
+    let mut P_terms = Vec::with_capacity(6 + g_bold.len() + h_bold.len() + proof.L.len());
+    for (L, R) in proof.L.iter().zip(proof.R.iter()) {
+      let n_hat = (tracked_g_bold.positions.len() + (tracked_g_bold.positions.len() % 2)) / 2;
+      let y_n_hat = y[n_hat - 1];
+      let y_inv_n_hat = y_n_hat.invert().unwrap();
+
+      (tracked_g_bold, tracked_h_bold, P_terms) = Self::next_G_H_P_without_permutation(
+        transcript,
+        tracked_g_bold,
+        tracked_h_bold,
+        P_terms,
+        *L,
+        *R,
+        y_inv_n_hat,
+      );
+    }
+
+    let e = Self::transcript_A_B(transcript, proof.A, proof.B);
+    let neg_e_square = -e.square();
+
+    let mut multiexp = P_terms;
+    for (scalar, _) in multiexp.iter_mut() {
+      *scalar *= neg_e_square;
+    }
+    multiexp.push((neg_e_square, P));
+
+    let re = proof.r_answer * e;
+    for (i, point) in g_bold.0.drain(..).enumerate() {
+      multiexp.push((tracked_g_bold.raw[i] * re, point));
+    }
+
+    let se = proof.s_answer * e;
+    for (i, point) in h_bold.0.drain(..).enumerate() {
+      multiexp.push((tracked_h_bold.raw[i] * se, point));
+    }
+
+    multiexp.push((-e, proof.A));
+    multiexp.push((proof.r_answer * y[0] * proof.s_answer, g));
+    multiexp.push((proof.delta_answer, h));
+    multiexp.push((-C::F::ONE, proof.B));
+
+    verifier.queue(rng, (), multiexp);
   }
 }
