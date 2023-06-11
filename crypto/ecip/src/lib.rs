@@ -442,23 +442,30 @@ impl<C: Ecip> Divisor<C> {
       zero_coefficient: -C::FieldElement::from(C::B),
     };
 
-    let mut res = divs.pop().unwrap();
-    for div in divs {
-      let (a, a_div) = res;
-      let (b, b_div) = div;
+    while divs.len() > 1 {
+      let mut next_divs = vec![];
 
-      let c = Self::initial(a, b);
-      res = (
-        a + b,
-        a_div
-          .add(&b_div, &modulus)
-          .add(&c, &modulus)
-          .sub(&Self::initial(a, -a), &modulus)
-          .sub(&Self::initial(b, -b), &modulus),
-      );
+      while let Some((a, a_div)) = divs.pop() {
+        let Some((b, b_div)) = divs.pop() else {
+          next_divs.push((a, a_div));
+          break;
+        };
+
+        let c = Self::initial(a, b);
+        next_divs.push((
+          a + b,
+          a_div
+            .add(&b_div, &modulus)
+            .add(&c, &modulus)
+            .sub(&Self::initial(a, -a), &modulus)
+            .sub(&Self::initial(b, -b), &modulus),
+        ));
+      }
+
+      divs = next_divs;
     }
 
-    let Divisor { numerator, denominator } = res.1;
+    let Divisor { numerator, denominator } = divs.remove(0).1;
     let (res, rem) = numerator.div_rem(&denominator);
     debug_assert_eq!(rem, Poly::zero());
 
