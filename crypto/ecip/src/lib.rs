@@ -397,7 +397,7 @@ impl<C: Ecip> Divisor<C> {
     }
   }
 
-  fn add(self, other: &Self, modulus: &Poly<C::FieldElement>) -> Self {
+  fn mul(self, other: &Self, modulus: &Poly<C::FieldElement>) -> Self {
     let Divisor { numerator, denominator } = self;
     Self {
       numerator: numerator.mul(&other.numerator, modulus),
@@ -405,7 +405,7 @@ impl<C: Ecip> Divisor<C> {
     }
   }
 
-  fn sub(self, other: &Self, modulus: &Poly<C::FieldElement>) -> Self {
+  fn div(self, other: &Self, modulus: &Poly<C::FieldElement>) -> Self {
     let Divisor { numerator, denominator } = self;
     Self {
       numerator: numerator.mul(&other.denominator, modulus),
@@ -422,12 +422,14 @@ impl<C: Ecip> Divisor<C> {
     let mut divs = vec![];
     let mut iter = points.iter().copied();
     while let Some(a) = iter.next() {
-      let b = iter.next().unwrap();
+      let b = iter.next();
 
       assert!(a != C::G::identity());
-      assert!(b != C::G::identity());
+      if let Some(b) = b {
+        assert!(b != C::G::identity());
+      }
 
-      divs.push((a + b, Self::initial(a, b)));
+      divs.push((a + b.unwrap_or(C::G::identity()), Self::initial(a, b.unwrap_or(-a))));
     }
 
     // y^2 - x^3 - Ax - B
@@ -444,21 +446,20 @@ impl<C: Ecip> Divisor<C> {
 
     while divs.len() > 1 {
       let mut next_divs = vec![];
+      if (divs.len() % 2) == 1 {
+        next_divs.push(divs.pop().unwrap());
+      }
 
       while let Some((a, a_div)) = divs.pop() {
-        let Some((b, b_div)) = divs.pop() else {
-          next_divs.push((a, a_div));
-          break;
-        };
+        let (b, b_div) = divs.pop().unwrap();
 
-        let c = Self::initial(a, b);
         next_divs.push((
           a + b,
           a_div
-            .add(&b_div, &modulus)
-            .add(&c, &modulus)
-            .sub(&Self::initial(a, -a), &modulus)
-            .sub(&Self::initial(b, -b), &modulus),
+            .mul(&b_div, &modulus)
+            .mul(&Self::initial(a, b), &modulus)
+            .div(&Self::initial(a, -a), &modulus)
+            .div(&Self::initial(b, -b), &modulus),
         ));
       }
 
