@@ -22,6 +22,7 @@ macro_rules! kp_curve {
   ) => {
     impl Ciphersuite for $Ciphersuite {
       type F = $lib::Scalar;
+      type FI = crypto_bigint::U256;
       type G = $lib::ProjectivePoint;
       type H = Sha256;
 

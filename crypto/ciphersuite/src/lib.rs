@@ -47,6 +47,24 @@ mod pasta;
 #[cfg(feature = "pasta")]
 pub use pasta::*;
 
+pub trait UInt:
+  PartialEq + From<u8> + ConditionallySelectable + for<'a> crypto_bigint::CheckedAdd<&'a Self>
+{
+  const ZERO: Self;
+  const ONE: Self;
+
+  fn div_rem(&self, divisor: Self) -> (Self, Self);
+}
+
+impl<const BYTES: usize> UInt for crypto_bigint::Uint<BYTES> {
+  const ZERO: Self = crypto_bigint::Uint::ZERO;
+  const ONE: Self = crypto_bigint::Uint::ONE;
+
+  fn div_rem(&self, divisor: Self) -> (Self, Self) {
+    self.div_rem(&crypto_bigint::NonZero::new(divisor).unwrap())
+  }
+}
+
 /// Unified trait defining a ciphersuite around an elliptic curve.
 pub trait Ciphersuite:
   'static + Send + Sync + Clone + Copy + PartialEq + Eq + Debug + Zeroize
@@ -54,6 +72,8 @@ pub trait Ciphersuite:
   /// Scalar field element type.
   // This is available via G::Scalar yet `C::G::Scalar` is ambiguous, forcing horrific accesses
   type F: PrimeField + PrimeFieldBits + Zeroize;
+  /// crypto-bigint UInt which can fit this curve's scalar type.
+  type FI: UInt;
   /// Group element type.
   type G: Group<Scalar = Self::F>
     + GroupOps

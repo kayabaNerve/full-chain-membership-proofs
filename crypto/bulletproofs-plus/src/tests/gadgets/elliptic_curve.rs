@@ -6,7 +6,7 @@ use pasta_curves::arithmetic::CurveAffine;
 use multiexp::BatchVerifier;
 use ciphersuite::{
   group::{
-    ff::{Field, PrimeField, PrimeFieldBits},
+    ff::{Field, PrimeField},
     Group, Curve,
   },
   Ciphersuite, Pallas, Vesta,
@@ -14,9 +14,8 @@ use ciphersuite::{
 
 use crate::{
   arithmetic_circuit::Circuit,
-  gadgets::{
-    Bit,
-    elliptic_curve::{DLogTable, EmbeddedCurveOperations},
+  gadgets::elliptic_curve::{
+    Trit, DLogTable, EmbeddedCurveOperations, scalar_to_trits, trits_to_scalar,
   },
   tests::generators,
 };
@@ -83,6 +82,26 @@ fn test_incomplete_addition() {
 }
 
 #[test]
+fn test_trinary() {
+  let mut scalar = <Pallas as Ciphersuite>::F::ZERO;
+  for _ in 0 ..= 13 {
+    assert_eq!(trits_to_scalar::<Pallas>(&scalar_to_trits::<Pallas>(scalar)), scalar);
+    scalar += <Pallas as Ciphersuite>::F::ONE;
+  }
+  assert_eq!(scalar, <Pallas as Ciphersuite>::F::from(14));
+
+  for _ in 0 .. 100 {
+    let scalar = <Pallas as Ciphersuite>::F::random(&mut OsRng);
+    assert_eq!(trits_to_scalar::<Pallas>(&scalar_to_trits::<Pallas>(scalar)), scalar);
+  }
+
+  assert_eq!(
+    trits_to_scalar::<Pallas>(&scalar_to_trits::<Pallas>(-<Pallas as Ciphersuite>::F::ONE)),
+    -<Pallas as Ciphersuite>::F::ONE
+  );
+}
+
+#[test]
 fn test_dlog_pok() {
   let (g, h, g_bold1, g_bold2, h_bold1, h_bold2) = generators(64 * 256);
   let (additional_g_1, additional_g_2, additional_hs_1, additional_hs_2, _, _) =
@@ -94,7 +113,7 @@ fn test_dlog_pok() {
 
   let G_table = DLogTable::<Pallas>::new(<Pallas as Ciphersuite>::G::generator());
 
-  let gadget = |circuit: &mut Circuit<Vesta>, point: (_, _), dlog: Vec<u8>| {
+  let gadget = |circuit: &mut Circuit<Vesta>, point: (_, _), dlog| {
     let prover = circuit.prover();
 
     let point_x = circuit.add_secret_input(Some(point.0).filter(|_| prover));
@@ -102,16 +121,10 @@ fn test_dlog_pok() {
 
     let point = <Vesta as EmbeddedCurveOperations>::constrain_on_curve(circuit, point_x, point_y);
 
-    let mut bits = vec![];
-    for bit in &dlog {
-      bits.push(Bit::new_from_choice(circuit, Some((*bit).into()).filter(|_| prover)));
-    }
-    assert_eq!(u32::try_from(bits.len()).unwrap(), <Pallas as Ciphersuite>::F::CAPACITY);
-
-    <Vesta as EmbeddedCurveOperations>::dlog_pok(&mut OsRng, circuit, &G_table, point, &bits);
+    <Vesta as EmbeddedCurveOperations>::dlog_pok(&mut OsRng, circuit, &G_table, point, dlog);
   };
 
-  let test = |point: (_, _), dlog: Vec<_>| {
+  let test = |point: (_, _), dlog| {
     let mut circuit = Circuit::new(
       g,
       h,
@@ -122,7 +135,7 @@ fn test_dlog_pok() {
       true,
       None,
     );
-    gadget(&mut circuit, point, dlog.clone());
+    gadget(&mut circuit, point, Some(dlog));
     let (_, commitments, proof, proofs) = circuit.prove_with_vector_commitments(
       &mut OsRng,
       &mut transcript.clone(),
@@ -140,7 +153,7 @@ fn test_dlog_pok() {
       false,
       Some(commitments),
     );
-    gadget(&mut circuit, point, dlog);
+    gadget(&mut circuit, point, None);
 
     let mut verifier = BatchVerifier::new(5);
     circuit.verify_with_vector_commitments(
@@ -160,53 +173,23 @@ fn test_dlog_pok() {
   {
     let point = <Pallas as Ciphersuite>::G::generator().to_affine().coordinates().unwrap();
     let point = (*point.x(), *point.y());
-
-    let dlog = <Vesta as Ciphersuite>::F::ONE;
-    let mut dlog = dlog.to_le_bits().iter().map(|bit| u8::from(*bit)).collect::<Vec<_>>();
-    dlog.truncate(
-      <Pallas as Ciphersuite>::F::CAPACITY
-        .min(<Vesta as Ciphersuite>::F::CAPACITY)
-        .try_into()
-        .unwrap(),
-    );
-
-    test(point, dlog);
+    test(point, <Pallas as Ciphersuite>::F::ONE);
   }
 
   for _ in 0 .. 8 {
-    let (dlog, bits) = loop {
+    let dlog = loop {
       let dlog = <Pallas as Ciphersuite>::F::random(&mut OsRng);
-      let mut bits = dlog.to_le_bits().iter().map(|bit| u8::from(*bit)).collect::<Vec<_>>();
-      for bit in bits.iter().skip(<Pallas as Ciphersuite>::F::CAPACITY.try_into().unwrap()) {
-        if *bit == 1 {
-          continue;
-        }
-      }
-      bits.truncate(
-        <Pallas as Ciphersuite>::F::CAPACITY
-          .min(<Vesta as Ciphersuite>::F::CAPACITY)
-          .try_into()
-          .unwrap(),
-      );
-
-      let mut count = 0;
-      for bit in &bits {
-        if *bit == 1 {
-          count += 1;
-        }
-      }
       // TODO: Remove once the ecip lib supports odd amounts of points
-      if (count % 2) != 1 {
+      if (scalar_to_trits::<Pallas>(dlog).iter().filter(|i| **i != Trit::Zero).count() % 2) != 1 {
         continue;
       }
-
-      break (dlog, bits);
+      break dlog;
     };
 
     let point = (<Pallas as Ciphersuite>::G::generator() * dlog).to_affine().coordinates().unwrap();
     let point = (*point.x(), *point.y());
 
-    test(point, bits);
+    test(point, dlog);
   }
 
   // TODO: Test every bit being set

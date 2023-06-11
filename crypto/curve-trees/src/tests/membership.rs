@@ -9,7 +9,9 @@ use ciphersuite::{
 };
 
 use ecip::Ecip;
-use bulletproofs_plus::{arithmetic_circuit::Circuit, tests::generators};
+use bulletproofs_plus::{
+  arithmetic_circuit::Circuit, gadgets::elliptic_curve::DLogTable, tests::generators,
+};
 
 use crate::{
   CurveCycle, permissible::Permissible, tree::Tree, tests::Pasta, new_blind, membership_gadget,
@@ -18,7 +20,7 @@ use crate::{
 #[test]
 fn test_membership() {
   let (pallas_g, pallas_h, pallas_g_bold1, pallas_g_bold2, pallas_h_bold1, pallas_h_bold2) =
-    generators::<Pallas>(2048 * 4);
+    generators::<Pallas>(1536 * 4);
   let (
     pallas_additional_g_0,
     pallas_additional_g_1,
@@ -26,12 +28,12 @@ fn test_membership() {
     pallas_additional_hs_1,
     _,
     _,
-  ) = generators::<Pallas>(2048 * 4);
+  ) = generators::<Pallas>(1536 * 4);
   let pallas_additional_gs = (pallas_additional_g_0, pallas_additional_g_1);
   let pallas_additional_hs = (pallas_additional_hs_0.0.clone(), pallas_additional_hs_1.0.clone());
 
   let (vesta_g, vesta_h, vesta_g_bold1, vesta_g_bold2, vesta_h_bold1, vesta_h_bold2) =
-    generators::<Vesta>(2048 * 4);
+    generators::<Vesta>(1536 * 4);
   let (
     vesta_additional_g_0,
     vesta_additional_g_1,
@@ -39,7 +41,7 @@ fn test_membership() {
     vesta_additional_hs_1,
     _,
     _,
-  ) = generators::<Vesta>(2048 * 4);
+  ) = generators::<Vesta>(1536 * 4);
   let vesta_additional_gs = (vesta_additional_g_0, vesta_additional_g_1);
   let vesta_additional_hs = (vesta_additional_hs_0.0.clone(), vesta_additional_hs_1.0.clone());
 
@@ -75,7 +77,8 @@ fn test_membership() {
       }
     }
 
-    let (blind_c1, blind_c2) = new_blind::<_, Pallas, Vesta>(&mut OsRng, 0);
+    let blind_c1 =
+      new_blind::<_, Pallas, Vesta>(&mut OsRng, DLogTable::<Pallas>::new(pallas_h).trits(), 0).0;
     let point = leaves[usize::try_from(OsRng.next_u64() % (1 << 30)).unwrap() % leaves.len()];
     assert!(permissible_c1.point(point));
     let blinded_point = point - (pallas_h * blind_c1);
@@ -87,7 +90,7 @@ fn test_membership() {
         circuit_c2,
         &tree,
         blinded_point,
-        Some((blind_c1, blind_c2)).filter(|_| circuit_c1.prover()),
+        Some(blind_c1).filter(|_| circuit_c1.prover()),
       );
     };
 

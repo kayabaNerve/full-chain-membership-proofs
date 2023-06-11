@@ -15,6 +15,7 @@ macro_rules! pasta_curve {
   ) => {
     impl Ciphersuite for $Ciphersuite {
       type F = pasta_curves::$lib::Scalar;
+      type FI = crypto_bigint::U256;
       type G = pasta_curves::$lib::Point;
       type H = Blake2b512;
 

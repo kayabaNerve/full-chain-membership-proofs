@@ -57,6 +57,7 @@ impl HashMarker for Shake256_114 {}
 pub struct Ed448;
 impl Ciphersuite for Ed448 {
   type F = Scalar;
+  type FI = crypto_bigint::U448;
   type G = Point;
   type H = Shake256_114;
 

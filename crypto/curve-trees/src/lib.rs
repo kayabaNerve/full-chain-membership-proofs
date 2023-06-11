@@ -2,11 +2,10 @@
 
 use core::marker::PhantomData;
 
-use subtle::{ConditionallySelectable, Choice};
 use rand_core::{RngCore, CryptoRng};
 
 use ciphersuite::{
-  group::ff::{Field, PrimeField, PrimeFieldBits},
+  group::ff::{Field, PrimeField},
   Ciphersuite,
 };
 
@@ -14,8 +13,7 @@ use ecip::Ecip;
 use bulletproofs_plus::{
   arithmetic_circuit::*,
   gadgets::{
-    Bit,
-    elliptic_curve::{DLogTable, EmbeddedCurveOperations},
+    elliptic_curve::{Trit, DLogTable, EmbeddedCurveOperations, scalar_to_trits},
     set_membership::assert_variable_in_set_gadget,
   },
 };
@@ -63,25 +61,21 @@ impl<C: CurveCycle> CurveCycle for FlipCurveCycle<C> {
 
 pub fn new_blind<R: RngCore + CryptoRng, C1: Ciphersuite, C2: Ciphersuite>(
   rng: &mut R,
+  mutual_trits: usize,
   offset: u64,
 ) -> (C1::F, C2::F) {
-  let capacity = C1::F::CAPACITY.min(C2::F::CAPACITY);
-  let mut res = C1::F::ZERO;
-  let mut pow = C1::F::ONE;
-  // Only generate bits up to the mutual capacity
-  for _ in 0 .. capacity {
-    res += C1::F::conditional_select(
-      &C1::F::ZERO,
-      &pow,
-      u8::try_from(rng.next_u64() % 2).unwrap().into(),
-    );
-    pow = pow.double();
-  }
-
-  // TODO: Support divisors when we have an odd amount of points and remove this
-  if ((res + C1::F::from(offset)).to_le_bits().iter().filter(|bit| **bit).count() % 2) != 1 {
-    return new_blind::<_, C1, C2>(rng, offset);
-  }
+  // Generate a candidate within the mutual trit capacity
+  let res = loop {
+    let candidate = C1::F::random(&mut *rng);
+    let trits = scalar_to_trits::<C1>(candidate + C1::F::from(offset));
+    if trits.len() <= mutual_trits {
+      // TODO: Support divisors when we have an odd amount of points and remove this
+      if (trits.iter().filter(|trit| **trit != Trit::Zero).count() % 2) != 1 {
+        continue;
+      }
+      break candidate;
+    }
+  };
 
   let mut c2_repr = <C2::F as PrimeField>::Repr::default();
   c2_repr.as_mut().copy_from_slice(res.to_repr().as_ref());
@@ -95,19 +89,15 @@ pub fn layer_gadget<R: RngCore + CryptoRng, C: CurveCycle>(
   H: &DLogTable<C::C1>,
   pedersen_generators: &[<C::C2 as Ciphersuite>::G],
   blinded_point: <C::C1 as Ciphersuite>::G,
-  blind: Option<<C::C2 as Ciphersuite>::F>,
+  blind: Option<<C::C1 as Ciphersuite>::F>,
   permissibility_offset: u64,
   elements: Vec<Option<<C::C2 as Ciphersuite>::F>>,
   last: bool,
-) -> (Option<<C::C1 as Ciphersuite>::F>, <C::C2 as Ciphersuite>::G) {
+) -> (Option<<C::C2 as Ciphersuite>::F>, <C::C2 as Ciphersuite>::G) {
   // Unblind the point
   let unblinded = {
     let (blind_x, blind_y) = if let Some(blind) = blind {
-      let mut repr = <<C::C1 as Ciphersuite>::F as PrimeField>::Repr::default();
-      repr.as_mut().copy_from_slice(blind.to_repr().as_ref());
-
-      let coords =
-        C::c1_coords(H.generator() * <C::C1 as Ciphersuite>::F::from_repr(repr).unwrap());
+      let coords = C::c1_coords(H.generator() * blind);
       (Some(coords.0), Some(coords.1))
     } else {
       (None, None)
@@ -118,32 +108,7 @@ pub fn layer_gadget<R: RngCore + CryptoRng, C: CurveCycle>(
 
     // Prove we know the DLog of the point we're unblinding by to prevent unblinding by arbitrary
     // points
-    {
-      let capacity = usize::try_from(
-        <C::C1 as Ciphersuite>::F::CAPACITY.min(<C::C2 as Ciphersuite>::F::CAPACITY),
-      )
-      .unwrap();
-      let raw_bits = if let Some(blind) = blind {
-        let mut bits = blind
-          .to_le_bits()
-          .iter()
-          .map(|bit| Some(Choice::from(u8::try_from(*bit).unwrap())))
-          .collect::<Vec<_>>();
-        for bit in &bits[capacity ..] {
-          assert_eq!(bit.unwrap().unwrap_u8(), 0);
-        }
-        bits.truncate(capacity);
-        bits
-      } else {
-        vec![None; capacity]
-      };
-
-      let mut dlog = vec![];
-      for bit in raw_bits {
-        dlog.push(Bit::new_from_choice(circuit, bit));
-      }
-      C::C2::dlog_pok(&mut *rng, circuit, H, blind_var, &dlog);
-    }
+    C::C2::dlog_pok(&mut *rng, circuit, H, blind_var, blind);
 
     // Perform the addition
     C::C2::incomplete_add_constant(circuit, blind_var, blinded_point)
@@ -190,19 +155,17 @@ pub fn layer_gadget<R: RngCore + CryptoRng, C: CurveCycle>(
 
     let blind = Some(if last {
       // If this is the last hash, just use the final permissibility offset
-      (<C::C1 as Ciphersuite>::F::ZERO, -<C::C2 as Ciphersuite>::F::from(permissibility_offset))
+      -<C::C2 as Ciphersuite>::F::from(permissibility_offset)
     } else {
-      let (mut b1, b2) = new_blind::<_, C::C1, C::C2>(rng, permissibility_offset);
-      // Add the permissibility offset so the 'unblinded' Pedersen hash has the blind needed to be
-      // permissible
-      // TODO: Adding this offset may make b1 no longer mutual
-      b1 += <C::C1 as Ciphersuite>::F::from(permissibility_offset);
-      (b1, b2)
+      new_blind::<_, C::C1, C::C2>(rng, H.trits(), permissibility_offset).1
     })
     .filter(|_| circuit.prover());
     (
-      blind.map(|blind| blind.0),
-      circuit.finalize_commitment(commitment, blind.map(|blind| -blind.1)),
+      // Add the permissibility offset so the 'unblinded' Pedersen hash has the blind needed to be
+      // permissible
+      // TODO: Adding this offset may make the blind no longer mutual
+      blind.map(|blind| blind + <C::C2 as Ciphersuite>::F::from(permissibility_offset)),
+      circuit.finalize_commitment(commitment, blind.map(|blind| -blind)),
     )
   }
 }
@@ -213,15 +176,16 @@ pub fn membership_gadget<R: RngCore + CryptoRng, C: CurveCycle>(
   circuit_c2: &mut Circuit<C::C2>,
   tree: &Tree<C>,
   blinded_point: <C::C1 as Ciphersuite>::G,
-  blind: Option<(<C::C1 as Ciphersuite>::F, <C::C2 as Ciphersuite>::F)>,
+  blind: Option<<C::C1 as Ciphersuite>::F>,
 ) {
   let mut membership =
-    blind.map(|blind| tree.membership(blinded_point + (circuit_c1.h() * blind.0)).unwrap());
+    blind.map(|blind| tree.membership(blinded_point + (circuit_c1.h() * blind)).unwrap());
 
   let mut blinded_point = Hash::Even(blinded_point);
-  let mut even_blind = Some(blind.map(|blind| blind.1));
-  let mut odd_blind = None;
+  let mut even_blind = None;
+  let mut odd_blind = Some(blind);
 
+  // TODO: Create these out of gadget (inside tree?)
   let c1_h = DLogTable::<C::C1>::new(circuit_c1.h());
   let c2_h = DLogTable::<C::C2>::new(circuit_c2.h());
 
@@ -250,14 +214,14 @@ pub fn membership_gadget<R: RngCore + CryptoRng, C: CurveCycle>(
         &c1_h,
         tree.odd_generators(i).unwrap(),
         this_blinded_point,
-        even_blind.take().unwrap(),
+        odd_blind.take().unwrap(),
         permissibility_offset,
         elems,
         i == tree.depth(),
       );
 
       blinded_point = Hash::Odd(point);
-      odd_blind = Some(blind);
+      even_blind = Some(blind);
     } else {
       let Hash::Odd(this_blinded_point) = blinded_point else {
         panic!("blinded_point was even at even layer")
@@ -282,14 +246,14 @@ pub fn membership_gadget<R: RngCore + CryptoRng, C: CurveCycle>(
         &c2_h,
         tree.even_generators(i).unwrap(),
         this_blinded_point,
-        odd_blind.take().unwrap(),
+        even_blind.take().unwrap(),
         permissibility_offset,
         elems,
         i == tree.depth(),
       );
 
       blinded_point = Hash::Even(point);
-      even_blind = Some(blind);
+      odd_blind = Some(blind);
     }
   }
 

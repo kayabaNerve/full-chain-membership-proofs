@@ -49,7 +49,8 @@ fn test_layer_gadget() {
     formatted_elems.push(Some(x));
   }
 
-  let (blind_c1, blind_c2) = new_blind::<_, Pallas, Vesta>(&mut OsRng, 0);
+  let H_table = DLogTable::new(H);
+  let blind_c1 = new_blind::<_, Pallas, Vesta>(&mut OsRng, H_table.trits(), 0).0;
   let point = elems[usize::try_from(OsRng.next_u64() % 4).unwrap()];
   // Uses - so the blind is added back
   let blinded_point = point - (H * blind_c1);
@@ -59,10 +60,10 @@ fn test_layer_gadget() {
       &mut OsRng,
       circuit,
       &permissible,
-      &DLogTable::new(H),
+      &H_table,
       &pedersen_generators,
       blinded_point,
-      Some(blind_c2).filter(|_| circuit.prover()),
+      Some(blind_c1).filter(|_| circuit.prover()),
       0,
       formatted_elems.iter().cloned().map(|x| x.filter(|_| circuit.prover())).collect(),
       false,

@@ -139,6 +139,7 @@ name = "bulletproofs-plus"
 version = "0.1.0"
 dependencies = [
  "ciphersuite",
+ "crypto-bigint",
  "ecip",
  "flexible-transcript",
  "multiexp",
@@ -216,6 +217,7 @@ name = "ciphersuite"
 version = "0.3.0"
 dependencies = [
  "blake2",
+ "crypto-bigint",
  "dalek-ff-group",
  "digest 0.10.6",
  "elliptic-curve",

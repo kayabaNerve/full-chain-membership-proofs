@@ -1,6 +1,6 @@
 use rand_core::{RngCore, CryptoRng};
 
-use subtle::ConditionallySelectable;
+use subtle::Choice;
 
 use ciphersuite::{
   group::{
@@ -16,6 +16,9 @@ use crate::{
   arithmetic_circuit::{VariableReference, Constraint, Circuit},
   gadgets::{Bit, assert_non_zero_gadget, set_membership::set_with_constant},
 };
+
+mod trinary;
+pub use trinary::*;
 
 /// An on-curve point which is not identity.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -35,37 +38,60 @@ impl OnCurvePoint {
 
 /// A table for efficient proofs of knowledge of discrete logarithms over a specified generator.
 
-// Creating a bit takes one gate.
-// Selecting a constant can be done in zero gates.
-//
-// This means for a 255 bit DLog PoK, there's a 255 gate cost leading into the DLog PoK function.
-// Then there's a 255 * 1.75 gate cost inside that function, for 255 + 446.25 gates.
-//
-// We can move from a base-2 system to a base-4 system with two bits, allowing us to reduce the
-// amount of points via a two-bit table. This would have the same gate cost leading into the
-// function.
-//
-// The issue is that once we perform the constant selection, we need to perform 127 ZK
-// selections and evaluate a 128-point divisor. This would be (127 * 2) + (128 * 1.75) = 478
-// gates. That isn't better.
-//
-// A base-3 system requires 2 gates per trit. Despite this, it'd only require 1 gate to select
-// -P, identity, or P. We'd need 161 trits/points.
-//
-// (161 * 2) + (161 * 1) + (161 * 1.75) = 764.75. This is even worse.
-//
-// TL;DR Addition is so efficient, tabling is a performance loss.
-pub struct DLogTable<C: Ciphersuite>(Vec<C::G>);
-impl<C: Ciphersuite> DLogTable<C> {
+/*
+  Creating a bit takes one gate. Selecting a zero-knowledge variable takes one gate.
+
+  The current DLog PoK takes in 255 bits (each costing 1 gate to be created each) and performs
+  addition for 255 points, each addition costing 1.75 gates. This means without tabling, the DLog
+  PoK costs 255 + (255 * 1.75) = 701.25 gates.
+
+  If we created 3-wide tables, we'd need 2 bits to perform the selection (1 bit for 0 or 1, 1 bit
+  for the result of the prior operation or 2). This not only adds a gate to create the second bit,
+  yet also one for the second selection (which is ZK or constant). This would be (2 * 255) +
+  (161 * 1.75) = 791.75 gates.
+
+  If we used a 3-set membership, it would only take n - 1 gates, AKA 2 gates. This would be
+  ((3 - 1) * 161) + (1.75 * 161) = 603.75 gates. Unfortunately, the DLog PoK gadget cannot be laid
+  out as compatible with set membership (TODO: Further work on this?).
+
+  The DLog PoK works by creating a divisor which interpolates a series of points which sum to 0.
+  Notably, we only check their x coordinates interpolate to 0. This allows malleability.
+
+  Instead of proving A + B + C = 0, a 'malicious' prover can prove A - B + C sums to 0.
+  This isn't an issue as anyone who knows the DLog with negatives can calculate the DLog without
+  negatives. Therefore, knowledge of the DLog with negatives implies knowledge of the DLog without
+  them.
+
+  We take advantage of this by proving knowledge of some sum of G*3**i. Using a trinary system of
+  [-1, 0, 1], we can prove a 2**256 DLog in just 161 points with just 161 bits for selections.
+
+  161 + (1.75 * 161) = 442.75
+*/
+// TODO: Transcript this
+pub struct DLogTable<C: Ecip>(Vec<C::G>, usize);
+impl<C: Ecip> DLogTable<C> {
   pub fn new(point: C::G) -> DLogTable<C> {
     assert!(point != C::G::identity());
 
-    let bits = usize::try_from(C::F::CAPACITY).unwrap();
-    let mut G_pow_2 = vec![point; bits];
-    for i in 1 .. bits {
-      G_pow_2[i] = G_pow_2[i - 1].double();
+    // Mutual amount of bits
+    // TODO: This assumes this is being used in a cycle, not a tower
+    let CAPACITY = C::F::CAPACITY.min(C::FieldElement::CAPACITY);
+    // Maximum value representable in this mutual amount of bits
+    let max = C::F::from(2).pow([u64::from(CAPACITY)]) - C::F::ONE;
+    // Trits needed for this maximum value
+    // TODO: Technically, this is a bit indirect
+    // It should be the amount of trits which will fit into both fields, not the amount of trits
+    // which will fit into the mutual capacity of both fields
+    let trits = scalar_to_trits::<C>(max).len();
+    let mut G_pow_3 = vec![point; trits];
+    for i in 1 .. trits {
+      G_pow_3[i] = G_pow_3[i - 1].double() + G_pow_3[i - 1];
     }
-    DLogTable(G_pow_2)
+    DLogTable(G_pow_3, trits)
+  }
+
+  pub fn trits(&self) -> usize {
+    self.0.len()
   }
 
   pub fn generator(&self) -> C::G {
@@ -333,8 +359,8 @@ pub trait EmbeddedCurveOperations: Ciphersuite {
   // This is more than twice as performant as incomplete addition and is closer to being complete
   // (only identity is unsupported)
   //
-  // Ideally, it's 1.5 gates per point, plus a constant 3 (if an O(1) divisor-non-zero check is
-  // implemented)
+  // Ideally, it's 1 gates per point, plus a constant 4 (if an O(1) divisor-non-zero check is
+  // implemented with section 5.3)
   //
   // TODO: The currently implemented vector commitment scheme, if used, multiplies the gate count
   // by 7 due to adding 2 gates per item (with 3 items per gate (left, right, output))
@@ -348,30 +374,51 @@ pub trait EmbeddedCurveOperations: Ciphersuite {
     circuit: &mut Circuit<Self>,
     G: &DLogTable<Self::Embedded>,
     p: OnCurvePoint,
-    dlog: &[Bit],
+    dlog: Option<<Self::Embedded as Ciphersuite>::F>,
   ) {
-    let CAPACITY = <Self::Embedded as Ciphersuite>::F::CAPACITY.min(Self::F::CAPACITY);
-    assert_eq!(u32::try_from(dlog.len()).unwrap(), CAPACITY);
-
-    let Gs = if circuit.prover() {
-      let mut Gs = vec![];
-      for (i, bit) in dlog.iter().enumerate() {
-        Gs.push(<Self::Embedded as Ciphersuite>::G::conditional_select(
-          &<Self::Embedded as Ciphersuite>::G::identity(),
-          &G.0[i],
-          bit.value.unwrap(),
-        ));
+    let (bits, Gs) = if circuit.prover() {
+      {
+        let (x, y) = Self::Embedded::to_xy(G.0[0] * dlog.unwrap());
+        assert_eq!(circuit.unchecked_value(p.x).unwrap(), x);
+        assert_eq!(circuit.unchecked_value(p.y).unwrap(), y);
       }
-      Some(Gs)
+
+      let mut trits = scalar_to_trits::<Self::Embedded>(dlog.unwrap());
+      while trits.len() < G.1 {
+        trits.push(Trit::Zero);
+      }
+      assert_eq!(trits.len(), G.1);
+
+      let mut bits = vec![];
+      let mut Gs = vec![];
+      for (i, trit) in trits.iter().enumerate() {
+        // TODO: This is not constant time
+        bits.push(Some(Choice::from(match trit {
+          Trit::NegOne => 1,
+          Trit::Zero => 0,
+          Trit::One => 1,
+        })));
+        Gs.push(match trit {
+          Trit::NegOne => -G.0[i],
+          Trit::Zero => <Self::Embedded as Ciphersuite>::G::identity(),
+          Trit::One => G.0[i],
+        });
+      }
+      (bits, Some(Gs))
     } else {
-      None
+      (vec![None; G.1], None)
     };
+
+    let mut dlog = Vec::with_capacity(bits.len());
+    for bit in bits {
+      dlog.push(Bit::new_from_choice(circuit, bit));
+    }
 
     // These yx len checks should be the correct formulas...
     let yx_coeffs = |points| if points <= 4 { None } else { Some((points / 2) - 2) };
     let x_coeffs = |points| points / 2;
 
-    let points = usize::try_from(CAPACITY + 1).unwrap();
+    let points = G.1 + 1;
 
     // Create the divisor
     let (y_coefficient, yx_coefficients, x_coefficients, zero_coefficient) = if circuit.prover() {
@@ -518,12 +565,15 @@ pub trait EmbeddedCurveOperations: Ciphersuite {
     };
 
     // Also transcript the DLog
-    for bit in dlog {
-      // TODO: This requires the DLog bit not be prior bound. How safe is that?
+    for bit in &dlog {
       // Note: We can only bind a single element, the re-composition of the DLog, if desirable
       // It'd be a single sharable gate and one constraint
       transcript.push(circuit.variable_to_product(bit.variable).unwrap());
     }
+
+    // And finally the point itself
+    transcript.push(circuit.variable_to_product(p.x).unwrap());
+    transcript.push(circuit.variable_to_product(p.y).unwrap());
 
     // Create the commitment
     let commitment = circuit.allocate_vector_commitment();

@@ -19,6 +19,7 @@ macro_rules! dalek_curve {
 
     impl Ciphersuite for $Ciphersuite {
       type F = Scalar;
+      type FI = crypto_bigint::U256;
       type G = $Point;
       type H = Sha512;
 
