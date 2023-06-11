@@ -359,8 +359,8 @@ pub trait EmbeddedCurveOperations: Ciphersuite {
   // This is more than twice as performant as incomplete addition and is closer to being complete
   // (only identity is unsupported)
   //
-  // Ideally, it's 1 gates per point, plus a constant 4 (if an O(1) divisor-non-zero check is
-  // implemented with section 5.3)
+  // Ideally, it's 1.5 gates per point, plus a constant 3 (if an O(1) divisor-non-zero check is
+  // implemented)
   //
   // TODO: The currently implemented vector commitment scheme, if used, multiplies the gate count
   // by 7 due to adding 2 gates per item (with 3 items per gate (left, right, output))
@@ -655,8 +655,6 @@ pub trait EmbeddedCurveOperations: Ciphersuite {
     // identity if that bit wasn't set
 
     // GC: 1 per point
-
-    // TODO: Can we use Eagen's sectiton 5.3 to more efficiently prove this?
     let mut accum = None;
     for (bit, G) in dlog.iter().zip(G.0.iter()).take(points - 1) {
       let this_rhs =
