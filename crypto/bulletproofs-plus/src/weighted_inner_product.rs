@@ -4,7 +4,7 @@ use zeroize::{Zeroize, ZeroizeOnDrop};
 
 use transcript::Transcript;
 
-use multiexp::{multiexp, multiexp_vartime, BatchVerifier};
+use multiexp::{multiexp, multiexp_vartime, Point as MultiexpPoint, BatchVerifier};
 use ciphersuite::{
   group::{
     ff::{Field, PrimeField},
@@ -67,11 +67,13 @@ impl<T: Transcript, C: Ciphersuite> WipStatement<T, C> {
     Self { generators, P, y: y_vec }
   }
 
-  fn initial_transcript(&mut self, transcript: &mut T) {
+  fn initial_transcript(&mut self, transcript: &mut T) -> T::Challenge {
     transcript.domain_separate(b"weighted_inner_product");
-    transcript.append_message(b"generators", self.generators.transcript.challenge(b"summary"));
+    let gen_transcript = self.generators.transcript.challenge(b"summary");
+    transcript.append_message(b"generators", gen_transcript.as_ref());
     transcript.append_message(b"P", self.P.to_bytes());
     transcript.append_message(b"y", self.y[0].to_repr());
+    gen_transcript
   }
 
   fn transcript_L_R(transcript: &mut T, L: C::G, R: C::G) -> C::F {
@@ -96,17 +98,22 @@ impl<T: Transcript, C: Ciphersuite> WipStatement<T, C> {
     e
   }
 
-  fn next_G_H_P(
+  // Prover's variant of the shared code block to calculate G/H/P when n > 1
+  // Returns each permutation of G/H since the prover needs to do operation on each permutation
+  // P is dropped as it's unused in the prover's path
+  // TODO: It'd still probably be faster to keep in terms of the original generators, both between
+  // the reduced amount of group operations and the potential tabling of the generators under
+  // multiexp
+  fn next_G_H(
     transcript: &mut T,
     mut g_bold1: PointVector<C>,
     mut g_bold2: PointVector<C>,
     mut h_bold1: PointVector<C>,
     mut h_bold2: PointVector<C>,
-    mut P: C::G,
     L: C::G,
     R: C::G,
     y_inv_n_hat: C::F,
-  ) -> (C::F, C::F, C::F, C::F, PointVector<C>, PointVector<C>, C::G) {
+  ) -> (C::F, C::F, C::F, C::F, PointVector<C>, PointVector<C>) {
     assert_eq!(g_bold1.len(), g_bold2.len());
     assert_eq!(h_bold1.len(), h_bold2.len());
     assert_eq!(g_bold1.len(), h_bold1.len());
@@ -114,6 +121,7 @@ impl<T: Transcript, C: Ciphersuite> WipStatement<T, C> {
     let e = Self::transcript_L_R(transcript, L, R);
     let inv_e = e.invert().unwrap();
 
+    // This vartime is safe as all of these arguments are public
     let mut new_g_bold = vec![];
     let e_y_inv = e * y_inv_n_hat;
     for g_bold in g_bold1.0.drain(..).zip(g_bold2.0.drain(..)) {
@@ -127,21 +135,20 @@ impl<T: Transcript, C: Ciphersuite> WipStatement<T, C> {
 
     let e_square = e.square();
     let inv_e_square = inv_e.square();
-    P += multiexp_vartime(&[(e_square, L), (inv_e_square, R)]);
 
-    (e, inv_e, e_square, inv_e_square, PointVector(new_g_bold), PointVector(new_h_bold), P)
+    (e, inv_e, e_square, inv_e_square, PointVector(new_g_bold), PointVector(new_h_bold))
   }
 
   // TODO: This is O(n log n). It should be feasible to make O(n) (specifically 2n)
   fn next_G_H_P_without_permutation(
     transcript: &mut T,
-    mut g_bold: TrackedScalarVector<C>,
-    mut h_bold: TrackedScalarVector<C>,
-    mut P_terms: Vec<(C::F, C::G)>,
+    g_bold: &mut TrackedScalarVector<C>,
+    h_bold: &mut TrackedScalarVector<C>,
+    mut P_terms: Vec<(C::F, MultiexpPoint<C::G>)>,
     L: C::G,
     R: C::G,
     y_inv_n_hat: C::F,
-  ) -> (TrackedScalarVector<C>, TrackedScalarVector<C>, Vec<(C::F, C::G)>) {
+  ) -> Vec<(C::F, MultiexpPoint<C::G>)> {
     assert_eq!(g_bold.positions.len(), h_bold.positions.len());
     if (g_bold.positions.len() % 2) == 1 {
       g_bold.positions.push(vec![]);
@@ -151,6 +158,7 @@ impl<T: Transcript, C: Ciphersuite> WipStatement<T, C> {
     }
 
     let e = Self::transcript_L_R(transcript, L, R);
+    // TODO: Create all e challenges, then use a batch inversion
     let inv_e = e.invert().unwrap();
 
     let e_y_inv = e * y_inv_n_hat;
@@ -165,13 +173,13 @@ impl<T: Transcript, C: Ciphersuite> WipStatement<T, C> {
       }
     };
     // g_bold1
-    scale_section(&mut g_bold, 0, inv_e);
+    scale_section(g_bold, 0, inv_e);
     // g_bold2
-    scale_section(&mut g_bold, 1, e_y_inv);
+    scale_section(g_bold, 1, e_y_inv);
     // h_bold1
-    scale_section(&mut h_bold, 0, e);
+    scale_section(h_bold, 0, e);
     // h_bold2
-    scale_section(&mut h_bold, 1, inv_e);
+    scale_section(h_bold, 1, inv_e);
 
     // Now merge their positions
     let merge_positions = |generators: &mut TrackedScalarVector<_>| {
@@ -182,15 +190,15 @@ impl<T: Transcript, C: Ciphersuite> WipStatement<T, C> {
       }
       assert_eq!(generators.positions.len(), high);
     };
-    merge_positions(&mut g_bold);
-    merge_positions(&mut h_bold);
+    merge_positions(g_bold);
+    merge_positions(h_bold);
 
     let e_square = e.square();
     let inv_e_square = inv_e.square();
-    P_terms.push((e_square, L));
-    P_terms.push((inv_e_square, R));
+    P_terms.push((e_square, MultiexpPoint::Variable(L)));
+    P_terms.push((inv_e_square, MultiexpPoint::Variable(R)));
 
-    (g_bold, h_bold, P_terms)
+    P_terms
   }
 
   pub fn prove<R: RngCore + CryptoRng>(
@@ -201,7 +209,7 @@ impl<T: Transcript, C: Ciphersuite> WipStatement<T, C> {
   ) -> WipProof<C> {
     self.initial_transcript(transcript);
 
-    let WipStatement { generators, mut P, mut y } = self;
+    let WipStatement { generators, P, mut y } = self;
     let (g, h, mut g_bold, mut h_bold) = generators.decompose();
 
     // Check P has the expected relationship
@@ -255,6 +263,7 @@ impl<T: Transcript, C: Ciphersuite> WipStatement<T, C> {
       let c_l = weighted_inner_product(&a1, &b2, &y);
       let c_r = weighted_inner_product(&(a2.mul(y_n_hat)), &b1, &y);
 
+      // TODO: Calculate these with a batch inversion
       let y_inv_n_hat = y_n_hat.invert().unwrap();
 
       let mut L_terms = a1
@@ -284,8 +293,8 @@ impl<T: Transcript, C: Ciphersuite> WipStatement<T, C> {
       R_terms.zeroize();
 
       let (e, inv_e, e_square, inv_e_square);
-      (e, inv_e, e_square, inv_e_square, g_bold, h_bold, P) =
-        Self::next_G_H_P(transcript, g_bold1, g_bold2, h_bold1, h_bold2, P, L, R, y_inv_n_hat);
+      (e, inv_e, e_square, inv_e_square, g_bold, h_bold) =
+        Self::next_G_H(transcript, g_bold1, g_bold2, h_bold1, h_bold2, L, R, y_inv_n_hat);
 
       a = a1.mul(e).add_vec(&a2.mul(y_n_hat * inv_e));
       b = b1.mul(inv_e).add_vec(&b2.mul(e));
@@ -335,7 +344,7 @@ impl<T: Transcript, C: Ciphersuite> WipStatement<T, C> {
     transcript: &mut T,
     proof: WipProof<C>,
   ) {
-    self.initial_transcript(transcript);
+    let gen_label = self.initial_transcript(transcript);
 
     let WipStatement { generators, P, y } = self;
     let (g, h, mut g_bold, mut h_bold) = generators.decompose();
@@ -412,12 +421,13 @@ impl<T: Transcript, C: Ciphersuite> WipStatement<T, C> {
     for (L, R) in proof.L.iter().zip(proof.R.iter()) {
       let n_hat = (tracked_g_bold.positions.len() + (tracked_g_bold.positions.len() % 2)) / 2;
       let y_n_hat = y[n_hat - 1];
+      // TODO: Calculate these with a batch inversion
       let y_inv_n_hat = y_n_hat.invert().unwrap();
 
-      (tracked_g_bold, tracked_h_bold, P_terms) = Self::next_G_H_P_without_permutation(
+      P_terms = Self::next_G_H_P_without_permutation(
         transcript,
-        tracked_g_bold,
-        tracked_h_bold,
+        &mut tracked_g_bold,
+        &mut tracked_h_bold,
         P_terms,
         *L,
         *R,
@@ -432,22 +442,35 @@ impl<T: Transcript, C: Ciphersuite> WipStatement<T, C> {
     for (scalar, _) in multiexp.iter_mut() {
       *scalar *= neg_e_square;
     }
-    multiexp.push((neg_e_square, P));
+    multiexp.push((neg_e_square, MultiexpPoint::Variable(P)));
 
     let re = proof.r_answer * e;
     for (i, point) in g_bold.0.drain(..).enumerate() {
-      multiexp.push((tracked_g_bold.raw[i] * re, point));
+      let mut label = b"g_bold".to_vec();
+      label.extend(gen_label.as_ref());
+      label.extend(&u32::try_from(i).unwrap().to_le_bytes());
+      multiexp.push((tracked_g_bold.raw[i] * re, MultiexpPoint::Constant(label, point)));
     }
 
     let se = proof.s_answer * e;
     for (i, point) in h_bold.0.drain(..).enumerate() {
-      multiexp.push((tracked_h_bold.raw[i] * se, point));
+      let mut label = b"h_bold".to_vec();
+      label.extend(gen_label.as_ref());
+      label.extend(&u32::try_from(i).unwrap().to_le_bytes());
+      multiexp.push((tracked_h_bold.raw[i] * se, MultiexpPoint::Constant(label, point)));
     }
 
-    multiexp.push((-e, proof.A));
-    multiexp.push((proof.r_answer * y[0] * proof.s_answer, g));
-    multiexp.push((proof.delta_answer, h));
-    multiexp.push((-C::F::ONE, proof.B));
+    multiexp.push((-e, MultiexpPoint::Variable(proof.A)));
+
+    // TODO: Move these labels/MultiexpPoint constructions into Generators
+    let mut g_label = gen_label.as_ref().to_vec();
+    g_label.push(0);
+    multiexp.push((proof.r_answer * y[0] * proof.s_answer, MultiexpPoint::Constant(g_label, g)));
+
+    let mut h_label = gen_label.as_ref().to_vec();
+    h_label.push(1);
+    multiexp.push((proof.delta_answer, MultiexpPoint::Constant(h_label, h)));
+    multiexp.push((-C::F::ONE, MultiexpPoint::Variable(proof.B)));
 
     verifier.queue(rng, (), multiexp);
   }

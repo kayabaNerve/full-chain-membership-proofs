@@ -1,36 +1,67 @@
-use std_shims::vec::Vec;
+use std_shims::{vec::Vec, collections::HashMap};
 
 use rand_core::{RngCore, CryptoRng};
 
 use zeroize::{Zeroize, Zeroizing};
 
 use ff::{Field, PrimeFieldBits};
-use group::Group;
+use group::{Group, GroupEncoding};
 
 use crate::{multiexp, multiexp_vartime};
 
+#[derive(Clone, Zeroize)]
+pub enum Point<G: Group> {
+  Constant(Vec<u8>, G),
+  Variable(G),
+}
+
 // Flatten the contained statements to a single Vec.
 // Wrapped in Zeroizing in case any of the included statements contain private values.
+// Merges scalars for common generators.
 #[allow(clippy::type_complexity)]
-fn flat<Id: Copy + Zeroize, G: Group + Zeroize>(
-  slice: &[(Id, Vec<(G::Scalar, G)>)],
+fn flat<Id: Copy + Zeroize, G: Group + GroupEncoding + Zeroize>(
+  slice: &[(Id, Vec<(G::Scalar, Point<G>)>)],
 ) -> Zeroizing<Vec<(G::Scalar, G)>>
 where
   <G as Group>::Scalar: PrimeFieldBits + Zeroize,
 {
-  Zeroizing::new(slice.iter().flat_map(|pairs| pairs.1.iter()).cloned().collect::<Vec<_>>())
+  let mut res: Zeroizing<Vec<(G::Scalar, G)>> = Zeroizing::new(Vec::with_capacity(slice.len()));
+
+  let mut merged: HashMap<Vec<u8>, (G::Scalar, G)> = HashMap::new();
+  for item in slice.iter().flat_map(|pairs| pairs.1.iter()).cloned() {
+    let (label, point) = match item.1 {
+      Point::Constant(label, point) => (label, point),
+      Point::Variable(point) => {
+        res.push((item.0, point));
+        continue;
+      }
+    };
+
+    if let Some(inserted) = merged.get_mut(&label) {
+      debug_assert_eq!(inserted.1, point);
+      inserted.0 += item.0;
+    } else {
+      merged.insert(label, (item.0, point));
+    }
+  }
+
+  for item in merged.drain() {
+    res.push(item.1);
+  }
+
+  res
 }
 
 /// A batch verifier intended to verify a series of statements are each equivalent to zero.
 #[allow(clippy::type_complexity)]
 #[derive(Clone, Zeroize)]
-pub struct BatchVerifier<Id: Copy + Zeroize, G: Group + Zeroize>(
-  Zeroizing<Vec<(Id, Vec<(G::Scalar, G)>)>>,
+pub struct BatchVerifier<Id: Copy + Zeroize, G: Group + GroupEncoding + Zeroize>(
+  Zeroizing<Vec<(Id, Vec<(G::Scalar, Point<G>)>)>>,
 )
 where
   <G as Group>::Scalar: PrimeFieldBits + Zeroize;
 
-impl<Id: Copy + Zeroize, G: Group + Zeroize> BatchVerifier<Id, G>
+impl<Id: Copy + Zeroize, G: Group + GroupEncoding + Zeroize> BatchVerifier<Id, G>
 where
   <G as Group>::Scalar: PrimeFieldBits + Zeroize,
 {
@@ -41,7 +72,7 @@ where
   }
 
   /// Queue a statement for batch verification.
-  pub fn queue<R: RngCore + CryptoRng, I: IntoIterator<Item = (G::Scalar, G)>>(
+  pub fn queue<R: RngCore + CryptoRng, I: IntoIterator<Item = (G::Scalar, Point<G>)>>(
     &mut self,
     rng: &mut R,
     id: Id,
@@ -123,7 +154,25 @@ where
 
     slice
       .get(0)
-      .filter(|(_, value)| !bool::from(multiexp_vartime(value).is_identity()))
+      .filter(|(_, value)| {
+        !bool::from(
+          multiexp_vartime(
+            &value
+              .iter()
+              .map(|pair| {
+                (
+                  pair.0,
+                  match pair.1 {
+                    Point::Constant(_, g) => g,
+                    Point::Variable(g) => g,
+                  },
+                )
+              })
+              .collect::<Vec<_>>(),
+          )
+          .is_identity(),
+        )
+      })
       .map(|(id, _)| *id)
   }
 

@@ -22,7 +22,7 @@ use pippenger::*;
 #[cfg(feature = "batch")]
 mod batch;
 #[cfg(feature = "batch")]
-pub use batch::BatchVerifier;
+pub use batch::{Point, BatchVerifier};
 
 #[cfg(test)]
 mod tests;
