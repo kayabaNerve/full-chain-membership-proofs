@@ -66,7 +66,21 @@ impl OnCurvePoint {
   We take advantage of this by proving knowledge of some sum of G*3**i. Using a trinary system of
   [-1, 0, 1], we can prove a 2**256 DLog in just 161 points with just 161 bits for selections.
 
+  3 ** 161 ~= 2 ** 256
   161 + (1.75 * 161) = 442.75
+
+  TODO: The curve trees paper describes a 3-bit lookup with just 5 gates, beating the above
+  commentary which was n - 1.
+
+  2 ** 3 = 8
+  The set of 0G ..= 7G + -(0G ..= 7G) has 15 elements.
+  15 ** 65 ~= 2 ** 256
+  (5 * 65) + (1.75 * 65) = 438.75
+
+  We'd save 4 gates by implementing it.
+
+  If a 2-bit lookup can be done with three gates, it'd save 10 gates. It'd save 101 if it can be
+  done with just two gates. Arkwork's implementativon uses three gates.
 */
 // TODO: Transcript this
 pub struct DLogTable<C: Ecip>(Vec<C::G>, usize);
