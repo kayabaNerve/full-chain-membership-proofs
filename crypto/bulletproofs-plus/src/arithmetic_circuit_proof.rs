@@ -161,6 +161,8 @@ impl<T: Transcript, C: Ciphersuite> ArithmeticCircuitStatement<T, C> {
       WL_y_z.clone(),
       WR_y_z.clone(),
       WO_y_z.clone(),
+      // TODO: Merge these multiexps
+      // TODO: Can we remove `P` from the Wip transcript and do this multiexp at the very end?
       A + self.generators.g_bold().multiexp_vartime(&WR_y_z) +
         self.generators.h_bold().multiexp_vartime(&WL_y_z) +
         self
