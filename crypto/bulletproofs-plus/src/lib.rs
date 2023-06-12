@@ -1,6 +1,6 @@
 #![allow(non_snake_case)]
 
-use std::collections::HashSet;
+use std::{sync::{Arc, RwLock}, collections::HashSet};
 
 use zeroize::{Zeroize, ZeroizeOnDrop};
 
@@ -54,7 +54,7 @@ pub struct Generators<T: Transcript, C: Ciphersuite> {
   proving_h_bolds: Option<(Vec<MultiexpPoint<C::G>>, Vec<MultiexpPoint<C::G>>)>,
 
   // Uses a Vec<u8> since C::G doesn't impl Hash
-  set: HashSet<Vec<u8>>,
+  set: Arc<RwLock<HashSet<Vec<u8>>>>,
   transcript: T,
 }
 impl<T: Transcript, C: Ciphersuite> Zeroize for Generators<T, C> {
@@ -145,7 +145,7 @@ impl<T: Transcript, C: Ciphersuite> Generators<T, C> {
       proving_gs: None,
       proving_h_bolds: None,
 
-      set,
+      set: Arc::new(RwLock::new(set)),
       transcript,
     }
   }
@@ -158,11 +158,12 @@ impl<T: Transcript, C: Ciphersuite> Generators<T, C> {
   ) {
     self.transcript.domain_separate(b"vector_commitment_proving_generators");
 
+    let mut set = self.set.write().unwrap();
     let mut add_generator = |label, generator: &C::G| {
       assert!(!bool::from(generator.is_identity()));
       let bytes = generator.to_bytes();
       self.transcript.append_message(label, bytes.as_ref());
-      assert!(self.set.insert(bytes.as_ref().to_vec()));
+      assert!(set.insert(bytes.as_ref().to_vec()));
     };
 
     add_generator(b"g0", &gs.0);
@@ -277,7 +278,7 @@ impl<T: Transcript, C: Ciphersuite> Generators<T, C> {
     self.transcript.append_message(b"index", u32::try_from(index).unwrap().to_le_bytes());
     self.transcript.append_message(b"generator", bytes);
 
-    assert!(self.set.insert(bytes.as_ref().to_vec()));
+    assert!(!self.set.read().unwrap().contains(bytes.as_ref()));
 
     // TODO: Take in a MultiexpPoint
     (match list {
