@@ -32,6 +32,7 @@ pub mod tests;
 
 pub const RANGE_PROOF_BITS: usize = 64;
 
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub(crate) enum GeneratorsList {
   GBold1,
   GBold2,
@@ -48,6 +49,9 @@ pub struct Generators<T: Transcript, C: Ciphersuite> {
   h_bold1: PointVector<C>,
   h_bold2: PointVector<C>,
 
+  proving_gs: Option<(C::G, C::G)>,
+  proving_h_bolds: Option<(Vec<C::G>, Vec<C::G>)>,
+
   // Uses a Vec<u8> since C::G doesn't impl Hash
   set: HashSet<Vec<u8>>,
   transcript: T,
@@ -60,9 +64,16 @@ impl<T: Transcript, C: Ciphersuite> Zeroize for Generators<T, C> {
     self.g_bold2.zeroize();
     self.h_bold1.zeroize();
     self.h_bold2.zeroize();
+
+    self.proving_gs.zeroize();
+    self.proving_h_bolds.zeroize();
+
+    // Since we don't zeroize set, this is of arguable practicality
   }
 }
 
+// TODO: This is a monolithic type which makes a ton of assumptions about its usage flow
+// It needs to be split into distinct types which clearly documented valid use cases
 impl<T: Transcript, C: Ciphersuite> Generators<T, C> {
   pub fn new(
     g: C::G,
@@ -110,55 +121,112 @@ impl<T: Transcript, C: Ciphersuite> Generators<T, C> {
       g_bold2: PointVector(g_bold2),
       h_bold1: PointVector(h_bold1),
       h_bold2: PointVector(h_bold2),
+
+      proving_gs: None,
+      proving_h_bolds: None,
+
       set,
       transcript,
     }
   }
 
-  pub(crate) fn new_without_secondaries(
-    g: C::G,
-    h: C::G,
-    g_bold1: Vec<C::G>,
-    h_bold1: Vec<C::G>,
-  ) -> Self {
-    assert!(!g_bold1.is_empty());
-    assert_eq!(g_bold1.len(), h_bold1.len());
+  // Add generators used for proving the vector commitments validity
+  pub fn add_vector_commitment_proving_generators(
+    &mut self,
+    gs: (C::G, C::G),
+    h_bold1: (Vec<C::G>, Vec<C::G>),
+  ) {
+    self.transcript.domain_separate(b"vector_commitment_proving_generators");
 
-    let mut transcript = T::new(b"Bulletproofs+ Generators without secondaries");
-
-    transcript.domain_separate(b"generators");
-    let mut set = HashSet::new();
     let mut add_generator = |label, generator: &C::G| {
       assert!(!bool::from(generator.is_identity()));
       let bytes = generator.to_bytes();
-      transcript.append_message(label, bytes);
-      assert!(set.insert(bytes.as_ref().to_vec()));
+      self.transcript.append_message(label, bytes.as_ref());
+      assert!(self.set.insert(bytes.as_ref().to_vec()));
     };
 
-    add_generator(b"g", &g);
-    add_generator(b"h", &h);
-    for g in &g_bold1 {
-      add_generator(b"g_bold1", g);
+    add_generator(b"g0", &gs.0);
+    add_generator(b"g1", &gs.1);
+
+    for h_bold in &h_bold1.0 {
+      add_generator(b"h_bold0", h_bold);
     }
-    for h in &h_bold1 {
-      add_generator(b"h_bold1", h);
+    for h_bold in &h_bold1.1 {
+      add_generator(b"h_bold1", h_bold);
     }
 
-    Generators {
-      g,
-      h,
-      g_bold1: PointVector(g_bold1),
+    self.proving_gs = Some(gs);
+    self.proving_h_bolds = Some(h_bold1);
+  }
+
+  fn vector_commitment_generators(
+    &self,
+    vc_generators: Vec<(GeneratorsList, usize)>,
+  ) -> (Self, Self) {
+    let gs = self.proving_gs.unwrap();
+    let (h_bold0, h_bold1) = self.proving_h_bolds.clone().unwrap();
+
+    let mut g_bold1 = vec![];
+    let mut transcript = self.transcript.clone();
+    transcript.domain_separate(b"vector_commitment_proving_generators");
+    for (list, i) in vc_generators {
+      transcript.append_message(
+        b"list",
+        match list {
+          GeneratorsList::GBold1 => {
+            g_bold1.push(self.g_bold1[i]);
+            b"g_bold1"
+          }
+          GeneratorsList::HBold1 => {
+            g_bold1.push(self.h_bold1[i]);
+            b"h_bold1"
+          }
+          GeneratorsList::GBold2 => {
+            g_bold1.push(self.g_bold2[i]);
+            b"g_bold2"
+          }
+        },
+      );
+      transcript
+        .append_message(b"vector_commitment_generator", u32::try_from(i).unwrap().to_le_bytes());
+    }
+
+    let mut generators_0 = Generators {
+      g: gs.0,
+      h: self.h,
+      g_bold1: PointVector(g_bold1.clone()),
+      g_bold2: PointVector(vec![]),
+      h_bold1: PointVector(h_bold0),
+      h_bold2: PointVector(vec![]),
+      proving_gs: None,
+      proving_h_bolds: None,
+      set: self.set.clone(),
+      transcript: transcript.clone(),
+    };
+    generators_0.transcript.append_message(b"generators", "0");
+
+    let mut generators_1 = Generators {
+      g: gs.1,
+      h: self.h,
+      g_bold1: PointVector(g_bold1.clone()),
       g_bold2: PointVector(vec![]),
       h_bold1: PointVector(h_bold1),
       h_bold2: PointVector(vec![]),
-      set,
+      proving_gs: None,
+      proving_h_bolds: None,
+      set: self.set.clone(),
       transcript,
-    }
+    };
+    generators_1.transcript.append_message(b"generators", "1");
+
+    (generators_0, generators_1)
   }
 
-  pub(crate) fn insert_generator(&mut self, list: GeneratorsList, index: usize, generator: C::G) {
+  pub(crate) fn insert_generator(&mut self, gen: (GeneratorsList, usize), generator: C::G) {
     // Make sure this hasn't been used yet
     assert!(!self.g_bold2.0.is_empty());
+
+    let (list, index) = gen;
 
     assert!(!bool::from(generator.is_identity()));
 
@@ -230,10 +298,6 @@ impl<T: Transcript, C: Ciphersuite> Generators<T, C> {
 
   pub(crate) fn h_bold2(&self) -> &PointVector<C> {
     &self.h_bold2
-  }
-
-  pub(crate) fn debug_does_not_have(&self, other: C::G) {
-    debug_assert!(!self.set.contains(other.to_bytes().as_ref()));
   }
 
   pub fn decompose(self) -> (C::G, C::G, PointVector<C>, PointVector<C>) {

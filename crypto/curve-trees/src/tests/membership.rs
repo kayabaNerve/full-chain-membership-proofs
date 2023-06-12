@@ -22,21 +22,9 @@ use crate::{
 fn test_membership() {
   let pallas_generators = generators_fn::<Pallas>(512 * 4);
   let pallas_h = pallas_generators.h();
-  let (
-    pallas_additional_g_0,
-    pallas_additional_g_1,
-    pallas_additional_hs_0,
-    pallas_additional_hs_1,
-  ) = generators_fn::<Pallas>(1536 * 4).reduce(1536 * 4, false).decompose();
-  let pallas_additional_gs = (pallas_additional_g_0, pallas_additional_g_1);
-  let pallas_additional_hs = (pallas_additional_hs_0.0.clone(), pallas_additional_hs_1.0.clone());
 
   let vesta_generators = generators_fn::<Vesta>(512 * 4);
   let vesta_h = vesta_generators.h();
-  let (vesta_additional_g_0, vesta_additional_g_1, vesta_additional_hs_0, vesta_additional_hs_1) =
-    generators_fn::<Vesta>(1536 * 4).reduce(1536 * 4, false).decompose();
-  let vesta_additional_gs = (vesta_additional_g_0, vesta_additional_g_1);
-  let vesta_additional_hs = (vesta_additional_hs_0.0.clone(), vesta_additional_hs_1.0.clone());
 
   let permissible_c1 = Permissible::<<Pasta as CurveCycle>::C1> {
     h: pallas_h,
@@ -94,20 +82,10 @@ fn test_membership() {
     gadget(&mut circuit_c1, &mut circuit_c2);
 
     let mut prove_transcript = transcript.clone();
-    let (_, pallas_commitments, pallas_proof, pallas_proofs) = circuit_c1
-      .prove_with_vector_commitments(
-        &mut OsRng,
-        &mut prove_transcript,
-        pallas_additional_gs,
-        pallas_additional_hs.clone(),
-      );
-    let (_, vesta_commitments, vesta_proof, vesta_proofs) = circuit_c2
-      .prove_with_vector_commitments(
-        &mut OsRng,
-        &mut prove_transcript,
-        vesta_additional_gs,
-        vesta_additional_hs.clone(),
-      );
+    let (_, pallas_commitments, pallas_proof, pallas_proofs) =
+      circuit_c1.prove_with_vector_commitments(&mut OsRng, &mut prove_transcript);
+    let (_, vesta_commitments, vesta_proof, vesta_proofs) =
+      circuit_c2.prove_with_vector_commitments(&mut OsRng, &mut prove_transcript);
 
     let mut circuit_c1 = Circuit::new(pallas_generators.clone(), false, Some(pallas_commitments));
     let mut circuit_c2 = Circuit::new(vesta_generators.clone(), false, Some(vesta_commitments));
@@ -117,8 +95,6 @@ fn test_membership() {
       &mut OsRng,
       &mut verifier_c1,
       &mut transcript,
-      pallas_additional_gs,
-      pallas_additional_hs.clone(),
       pallas_proof,
       pallas_proofs,
     );
@@ -126,8 +102,6 @@ fn test_membership() {
       &mut OsRng,
       &mut verifier_c2,
       &mut transcript,
-      vesta_additional_gs,
-      vesta_additional_hs.clone(),
       vesta_proof,
       vesta_proofs,
     );

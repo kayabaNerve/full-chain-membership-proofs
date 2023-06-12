@@ -22,10 +22,6 @@ use crate::{
 #[test]
 fn test_layer_gadget() {
   let generators = generators_fn::<Vesta>(2048);
-  let (additional_g_0, additional_g_1, additional_hs_0, additional_hs_1) =
-    generators_fn::<Vesta>(2048).reduce(2048, false).decompose();
-  let additional_gs = (additional_g_0, additional_g_1);
-  let additional_hs = (additional_hs_0.0.clone(), additional_hs_1.0.clone());
 
   let permissible = Permissible::<<Pasta as CurveCycle>::C1> {
     h: <<Pasta as CurveCycle>::C1 as Ciphersuite>::G::random(&mut OsRng),
@@ -75,12 +71,8 @@ fn test_layer_gadget() {
 
   let mut circuit = Circuit::new(generators.clone(), true, None);
   gadget(&mut circuit);
-  let (blinds, commitments, proof, proofs) = circuit.prove_with_vector_commitments(
-    &mut OsRng,
-    &mut transcript.clone(),
-    additional_gs,
-    additional_hs.clone(),
-  );
+  let (blinds, commitments, proof, proofs) =
+    circuit.prove_with_vector_commitments(&mut OsRng, &mut transcript.clone());
 
   assert_eq!(commitments.len(), 2);
   assert_eq!(
@@ -91,14 +83,6 @@ fn test_layer_gadget() {
   let mut circuit = Circuit::new(generators, false, Some(commitments));
   gadget(&mut circuit);
   let mut verifier = BatchVerifier::new(5);
-  circuit.verify_with_vector_commitments(
-    &mut OsRng,
-    &mut verifier,
-    &mut transcript,
-    additional_gs,
-    additional_hs,
-    proof,
-    proofs,
-  );
+  circuit.verify_with_vector_commitments(&mut OsRng, &mut verifier, &mut transcript, proof, proofs);
   assert!(verifier.verify_vartime());
 }

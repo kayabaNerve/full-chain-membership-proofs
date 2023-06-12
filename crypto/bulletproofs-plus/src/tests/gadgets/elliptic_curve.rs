@@ -95,10 +95,6 @@ fn test_trinary() {
 #[test]
 fn test_dlog_pok() {
   let generators = generators_fn(64 * 256);
-  let (additional_g_1, additional_g_2, additional_hs_1, additional_hs_2) =
-    generators_fn::<Vesta>(64 * 256).reduce(64 * 256, false).decompose();
-  let additional_gs = (additional_g_1, additional_g_2);
-  let additional_hs = (additional_hs_1.0.clone(), additional_hs_2.0.clone());
 
   let transcript = RecommendedTranscript::new(b"Point DLog PoK Circuit Test");
 
@@ -118,12 +114,8 @@ fn test_dlog_pok() {
   let test = |point: (_, _), dlog| {
     let mut circuit = Circuit::new(generators.clone(), true, None);
     gadget(&mut circuit, point, Some(dlog));
-    let (_, commitments, proof, proofs) = circuit.prove_with_vector_commitments(
-      &mut OsRng,
-      &mut transcript.clone(),
-      additional_gs,
-      additional_hs.clone(),
-    );
+    let (_, commitments, proof, proofs) =
+      circuit.prove_with_vector_commitments(&mut OsRng, &mut transcript.clone());
 
     let mut circuit = Circuit::new(generators.clone(), false, Some(commitments));
     gadget(&mut circuit, point, None);
@@ -133,8 +125,6 @@ fn test_dlog_pok() {
       &mut OsRng,
       &mut verifier,
       &mut transcript.clone(),
-      additional_gs,
-      additional_hs.clone(),
       proof,
       proofs,
     );

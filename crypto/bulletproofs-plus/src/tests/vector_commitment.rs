@@ -16,10 +16,6 @@ use crate::{
 #[test]
 fn test_vector_commitment() {
   let generators = generators_fn(8);
-  let (additional_g_1, additional_g_2, additional_hs_1, additional_hs_2) =
-    generators_fn::<Ristretto>(8).reduce(8, false).decompose();
-  let additional_gs = (additional_g_1, additional_g_2);
-  let additional_hs = (additional_hs_1.0.clone(), additional_hs_2.0.clone());
 
   let x_bind = <Ristretto as Ciphersuite>::G::random(&mut OsRng);
   let y_bind = <Ristretto as Ciphersuite>::G::random(&mut OsRng);
@@ -27,63 +23,71 @@ fn test_vector_commitment() {
   let z_bind = <Ristretto as Ciphersuite>::G::random(&mut OsRng);
   let a_bind = <Ristretto as Ciphersuite>::G::random(&mut OsRng);
 
-  fn gadget(
-    circuit: &mut Circuit<RecommendedTranscript, Ristretto>,
-    binds_x_y: (<Ristretto as Ciphersuite>::G, <Ristretto as Ciphersuite>::G),
-    x_y: Option<(<Ristretto as Ciphersuite>::F, <Ristretto as Ciphersuite>::F)>,
-    binds_z_a: (<Ristretto as Ciphersuite>::G, <Ristretto as Ciphersuite>::G),
-    z_a: Option<(<Ristretto as Ciphersuite>::F, <Ristretto as Ciphersuite>::F)>,
-  ) {
-    let x_var = circuit.add_secret_input(x_y.as_ref().map(|xy| xy.0));
-    let y_var = circuit.add_secret_input(x_y.as_ref().map(|xy| xy.1));
-    let z_var = circuit.add_secret_input(z_a.as_ref().map(|za| za.0));
-    let a_var = circuit.add_secret_input(z_a.as_ref().map(|za| za.1));
-
-    let ((product_l, product_r, _), _) = circuit.product(x_var, y_var);
-    let vc = circuit.allocate_vector_commitment();
-    circuit.bind(vc, product_l, Some(binds_x_y.0));
-    circuit.bind(vc, product_r, Some(binds_x_y.1));
-
-    let ((product_l, _, product_o), _) = circuit.product(z_var, a_var);
-    let vc = circuit.allocate_vector_commitment();
-    circuit.bind(vc, product_l, Some(binds_z_a.0));
-    circuit.bind(vc, product_o, Some(binds_z_a.1));
-
-    circuit.constrain(Constraint::new("empty"));
-  }
-
   let x = <Ristretto as Ciphersuite>::F::random(&mut OsRng);
   let y = <Ristretto as Ciphersuite>::F::random(&mut OsRng);
   let z = <Ristretto as Ciphersuite>::F::random(&mut OsRng);
   let a = <Ristretto as Ciphersuite>::F::random(&mut OsRng);
 
+  let mut expected_commitment_0 = None;
+  let mut expected_commitment_1 = None;
+
+  let mut gadget =
+    |circuit: &mut Circuit<RecommendedTranscript, Ristretto>,
+     x_y: Option<(<Ristretto as Ciphersuite>::F, <Ristretto as Ciphersuite>::F)>,
+     z_a: Option<(<Ristretto as Ciphersuite>::F, <Ristretto as Ciphersuite>::F)>| {
+      let x_var = circuit.add_secret_input(x_y.as_ref().map(|xy| xy.0));
+      let y_var = circuit.add_secret_input(x_y.as_ref().map(|xy| xy.1));
+      let z_var = circuit.add_secret_input(z_a.as_ref().map(|za| za.0));
+      let a_var = circuit.add_secret_input(z_a.as_ref().map(|za| za.1));
+
+      let ((product_l, product_r, _), _) = circuit.product(x_var, y_var);
+      let vc = circuit.allocate_vector_commitment();
+      circuit.bind(vc, product_l, Some(x_bind));
+      circuit.bind(vc, product_r, Some(y_bind));
+      // TODO: Panic if a circuit doesn't finalize VCs
+      {
+        let blind = <Ristretto as Ciphersuite>::F::random(&mut OsRng);
+        expected_commitment_0 =
+          expected_commitment_0.or(Some((x_bind * x) + (y_bind * y) + (generators.h() * blind)));
+        assert_eq!(
+          circuit.finalize_commitment(vc, Some(blind).filter(|_| circuit.prover())),
+          expected_commitment_0.unwrap()
+        );
+      }
+
+      let ((product_l, _, product_o), _) = circuit.product(z_var, a_var);
+      let vc = circuit.allocate_vector_commitment();
+      circuit.bind(vc, product_l, Some(z_bind));
+      circuit.bind(vc, product_o, Some(a_bind));
+      {
+        let blind = <Ristretto as Ciphersuite>::F::random(&mut OsRng);
+        expected_commitment_1 = expected_commitment_1
+          .or(Some((z_bind * z) + (a_bind * (z * a)) + (generators.h() * blind)));
+        assert_eq!(
+          circuit.finalize_commitment(vc, Some(blind).filter(|_| circuit.prover()),),
+          expected_commitment_1.unwrap()
+        );
+      }
+
+      circuit.constrain(Constraint::new("empty"));
+    };
+
   let mut transcript = RecommendedTranscript::new(b"Vector Commitment Test");
 
   let mut circuit = Circuit::new(generators.clone(), true, None);
-  gadget(&mut circuit, (x_bind, y_bind), Some((x, y)), (z_bind, a_bind), Some((z, a)));
-  let (blinds, commitments, proof, proofs) = circuit.prove_with_vector_commitments(
-    &mut OsRng,
-    &mut transcript.clone(),
-    additional_gs,
-    additional_hs.clone(),
-  );
+  gadget(&mut circuit, Some((x, y)), Some((z, a)));
+  let (blinds, commitments, proof, proofs) =
+    circuit.prove_with_vector_commitments(&mut OsRng, &mut transcript.clone());
   assert_eq!(blinds.len(), 2);
   assert_eq!(commitments.len(), 2);
   assert_eq!(proofs.len(), 3);
-  assert_eq!(commitments[0], (x_bind * x) + (y_bind * y) + (generators.h() * blinds[0]));
-  assert_eq!(commitments[1], (z_bind * z) + (a_bind * (z * a)) + (generators.h() * blinds[1]));
 
-  let mut circuit = Circuit::new(generators, false, Some(commitments));
-  gadget(&mut circuit, (x_bind, y_bind), None, (z_bind, a_bind), None);
+  let mut circuit = Circuit::new(generators.clone(), false, Some(commitments.clone()));
+  gadget(&mut circuit, None, None);
   let mut verifier = BatchVerifier::new(5);
-  circuit.verify_with_vector_commitments(
-    &mut OsRng,
-    &mut verifier,
-    &mut transcript,
-    additional_gs,
-    additional_hs,
-    proof,
-    proofs,
-  );
+  circuit.verify_with_vector_commitments(&mut OsRng, &mut verifier, &mut transcript, proof, proofs);
   assert!(verifier.verify_vartime());
+
+  assert_eq!(commitments[0], expected_commitment_0.unwrap());
+  assert_eq!(commitments[1], expected_commitment_1.unwrap());
 }

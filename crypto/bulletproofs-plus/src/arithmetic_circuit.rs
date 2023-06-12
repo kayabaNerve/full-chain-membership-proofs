@@ -1,4 +1,4 @@
-use std::collections::{HashSet, HashMap, BTreeMap};
+use std::collections::{HashSet, HashMap, BTreeSet};
 
 use zeroize::{Zeroize, ZeroizeOnDrop};
 use rand_core::{RngCore, CryptoRng};
@@ -52,7 +52,7 @@ pub enum Variable<C: Ciphersuite> {
 
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug, Zeroize)]
 pub struct VariableReference(usize);
-// TODO: Remove Ord and usage of HashMaps/BTreeMaps
+// TODO: Remove Ord and usage of HashMaps/BTreeSets
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug, Zeroize)]
 pub enum ProductReference {
   Left { product: usize, variable: usize },
@@ -139,7 +139,7 @@ pub struct Circuit<T: Transcript, C: Ciphersuite> {
   pub(crate) variables: Vec<Variable<C>>,
 
   products: Vec<Product>,
-  bound_products: Vec<BTreeMap<ProductReference, Option<C::G>>>,
+  bound_products: Vec<BTreeSet<ProductReference>>,
   finalized_commitments: HashMap<VectorCommitmentReference, Option<C::F>>,
   vector_commitments: Option<Vec<C::G>>,
 
@@ -358,7 +358,7 @@ impl<T: Transcript, C: Ciphersuite> Circuit<T, C> {
   /// Allocate a vector commitment ID.
   pub fn allocate_vector_commitment(&mut self) -> VectorCommitmentReference {
     let res = VectorCommitmentReference(self.bound_products.len());
-    self.bound_products.push(BTreeMap::new());
+    self.bound_products.push(BTreeSet::new());
     res
   }
 
@@ -366,6 +366,7 @@ impl<T: Transcript, C: Ciphersuite> Circuit<T, C> {
   ///
   /// If no generator is specified, the proof's existing generator will be used. This allows
   /// isolating the variable, prior to the circuit, without caring for how it was isolated.
+  // TODO: Batch bind, taking in a new VectorCommitmentsStruct for the generators
   pub fn bind(
     &mut self,
     vector_commitment: VectorCommitmentReference,
@@ -374,11 +375,22 @@ impl<T: Transcript, C: Ciphersuite> Circuit<T, C> {
   ) {
     assert!(!self.finalized_commitments.contains_key(&vector_commitment));
 
-    // TODO: Check generators are unique (likely best done in the Wip itself)
     for bound in &self.bound_products {
-      assert!(!bound.contains_key(&product));
+      assert!(!bound.contains(&product));
     }
-    self.bound_products[vector_commitment.0].insert(product, generator);
+    self.bound_products[vector_commitment.0].insert(product);
+
+    if let Some(generator) = generator {
+      // TODO: PR -> (GenList, usize) helper
+      self.generators.insert_generator(
+        match product {
+          ProductReference::Left { product, .. } => (GeneratorsList::GBold1, product),
+          ProductReference::Right { product, .. } => (GeneratorsList::HBold1, product),
+          ProductReference::Output { product, .. } => (GeneratorsList::GBold2, product),
+        },
+        generator,
+      );
+    }
   }
 
   /// Finalize a vector commitment, returning it, preventing further binding.
@@ -391,19 +403,16 @@ impl<T: Transcript, C: Ciphersuite> Circuit<T, C> {
       // Calculate and return the vector commitment
       // TODO: Use a multiexp here
       let mut commitment = self.generators.h() * blind.unwrap();
-      for (product, generator) in self.bound_products[vector_commitment.0].clone() {
+      for product in self.bound_products[vector_commitment.0].clone() {
         commitment += match product {
           ProductReference::Left { product, variable } => {
-            generator.unwrap_or(self.generators.g_bold()[product]) *
-              self.variables[variable].value().unwrap()
+            self.generators.g_bold()[product] * self.variables[variable].value().unwrap()
           }
           ProductReference::Right { product, variable } => {
-            generator.unwrap_or(self.generators.h_bold()[product]) *
-              self.variables[variable].value().unwrap()
+            self.generators.h_bold()[product] * self.variables[variable].value().unwrap()
           }
           ProductReference::Output { product, variable } => {
-            generator.unwrap_or(self.generators.g_bold2()[product]) *
-              self.variables[variable].value().unwrap()
+            self.generators.g_bold2()[product] * self.variables[variable].value().unwrap()
           }
         };
       }
@@ -419,11 +428,11 @@ impl<T: Transcript, C: Ciphersuite> Circuit<T, C> {
   // TODO: This can be optimized with post-processing passes
   // TODO: Don't run this on every single prove/verify. It should only be run once at compile time
   fn compile(
-    mut self,
+    self,
   ) -> (
     ArithmeticCircuitStatement<T, C>,
-    Vec<Vec<(Option<C::F>, C::G)>>,
-    Vec<(Option<C::F>, C::G)>,
+    Vec<Vec<(Option<C::F>, (GeneratorsList, usize))>>,
+    Vec<(Option<C::F>, (GeneratorsList, usize))>,
     Option<ArithmeticCircuitWitness<C>>,
   ) {
     let witness = if self.prover {
@@ -529,70 +538,58 @@ impl<T: Transcript, C: Ciphersuite> Circuit<T, C> {
     let mut vector_commitments = vec![vec![]; self.bound_products.len()];
     let mut others = vec![];
     for (vc, bindings) in self.bound_products.iter().enumerate() {
-      for (product, g) in bindings {
-        let g = *g;
+      for product in bindings {
         match *product {
           ProductReference::Left { product, .. } => {
-            if let Some(g) = g {
-              self.generators.insert_generator(GeneratorsList::GBold1, product, g);
-            }
-            let g = g.unwrap_or(self.generators.g_bold()[product]);
-            vc_used.insert(('l', product));
-            vector_commitments[vc].push((witness.as_ref().map(|witness| witness.aL[product]), g));
+            let gen = (GeneratorsList::GBold1, product);
+            vc_used.insert(gen);
+            vector_commitments[vc].push((witness.as_ref().map(|witness| witness.aL[product]), gen));
           }
           ProductReference::Right { product, .. } => {
-            if let Some(g) = g {
-              self.generators.insert_generator(GeneratorsList::HBold1, product, g);
-            }
-            let g = g.unwrap_or(self.generators.h_bold()[product]);
-            vc_used.insert(('r', product));
-            vector_commitments[vc].push((witness.as_ref().map(|witness| witness.aR[product]), g));
+            let gen = (GeneratorsList::HBold1, product);
+            vc_used.insert(gen);
+            vector_commitments[vc].push((witness.as_ref().map(|witness| witness.aR[product]), gen));
           }
           ProductReference::Output { product, .. } => {
-            if let Some(g) = g {
-              self.generators.insert_generator(GeneratorsList::GBold2, product, g);
-            }
-            let g = g.unwrap_or(self.generators.g_bold2()[product]);
-            vc_used.insert(('o', product));
-            vector_commitments[vc]
-              .push((witness.as_ref().map(|witness| witness.aL[product] * witness.aR[product]), g));
+            let gen = (GeneratorsList::GBold2, product);
+            vc_used.insert(gen);
+            vector_commitments[vc].push((
+              witness.as_ref().map(|witness| witness.aL[product] * witness.aR[product]),
+              gen,
+            ));
           }
         }
       }
     }
 
     fn add_to_others<C: Ciphersuite, I: Iterator<Item = Option<C::F>>>(
-      label: char,
+      list: GeneratorsList,
       vars: I,
-      gens: &[C::G],
-      vc_used: &HashSet<(char, usize)>,
-      others: &mut Vec<(Option<C::F>, C::G)>,
+      vc_used: &HashSet<(GeneratorsList, usize)>,
+      others: &mut Vec<(Option<C::F>, (GeneratorsList, usize))>,
     ) {
       for (p, var) in vars.enumerate() {
-        if !vc_used.contains(&(label, p)) {
-          others.push((var, gens[p]));
+        if !vc_used.contains(&(list, p)) {
+          others.push((var, (list, p)));
         }
       }
     }
     add_to_others::<C, _>(
-      'l',
+      GeneratorsList::GBold1,
       (0 .. self.products.len()).map(|i| witness.as_ref().map(|witness| witness.aL[i])),
-      &self.generators.g_bold().0,
       &vc_used,
       &mut others,
     );
     add_to_others::<C, _>(
-      'r',
+      GeneratorsList::HBold1,
       (0 .. self.products.len()).map(|i| witness.as_ref().map(|witness| witness.aR[i])),
-      &self.generators.h_bold().0,
       &vc_used,
       &mut others,
     );
     add_to_others::<C, _>(
-      'o',
+      GeneratorsList::GBold2,
       (0 .. self.products.len())
         .map(|i| witness.as_ref().map(|witness| witness.aL[i] * witness.aR[i])),
-      &self.generators.g_bold2().0,
       &vc_used,
       &mut others,
     );
@@ -658,13 +655,11 @@ impl<T: Transcript, C: Ciphersuite> Circuit<T, C> {
     self,
     rng: &mut R,
     transcript: &mut T,
-    additional_proving_gs: (C::G, C::G),
-    additional_proving_hs: (Vec<C::G>, Vec<C::G>),
   ) -> (Vec<C::F>, Vec<C::G>, ArithmeticCircuitProof<C>, Vec<(WipProof<C>, WipProof<C>)>) {
     assert!(self.prover);
 
     let finalized_commitments = self.finalized_commitments.clone();
-    let h = self.generators.h();
+    let proof_generators = self.generators.clone();
     let (statement, mut vector_commitments, others, witness) = self.compile();
     assert!(!vector_commitments.is_empty());
     let witness = witness.unwrap();
@@ -713,12 +708,7 @@ impl<T: Transcript, C: Ciphersuite> Circuit<T, C> {
       assert!(alt_generators_1.g_bold2().0.is_empty());
       assert!(alt_generators_1.h_bold2().0.is_empty());
 
-      debug_assert_eq!(alt_generators_1.h(), alt_generators_2.h());
-      debug_assert_eq!(alt_generators_1.g_bold(), alt_generators_2.g_bold());
-      alt_generators_2.debug_does_not_have(alt_generators_1.g());
-      for h in &alt_generators_1.h_bold().0 {
-        alt_generators_2.debug_does_not_have(*h);
-      }
+      let scalars_len = scalars.len();
 
       // TODO: Use a multiexp here
       let mut commitment = alt_generators_1.h() * blind;
@@ -734,7 +724,7 @@ impl<T: Transcript, C: Ciphersuite> Circuit<T, C> {
         (
           {
             let statement = Circuit::<T, C>::vector_commitment_statement(
-              alt_generators_1,
+              alt_generators_1.reduce(scalars_len, false),
               transcript,
               commitment,
             );
@@ -742,7 +732,7 @@ impl<T: Transcript, C: Ciphersuite> Circuit<T, C> {
           },
           {
             let statement = Circuit::<T, C>::vector_commitment_statement(
-              alt_generators_2,
+              alt_generators_2.reduce(scalars_len, false),
               transcript,
               commitment,
             );
@@ -758,9 +748,9 @@ impl<T: Transcript, C: Ciphersuite> Circuit<T, C> {
     for (vc, vector_commitment) in vector_commitments.drain(..).enumerate() {
       let mut scalars = vec![];
       let mut generators = vec![];
-      for (var, point) in vector_commitment {
+      for (var, gen) in vector_commitment {
         scalars.push(var.unwrap());
-        generators.push(point);
+        generators.push(gen);
       }
       blinds.push(
         finalized_commitments
@@ -770,21 +760,11 @@ impl<T: Transcript, C: Ciphersuite> Circuit<T, C> {
           .unwrap(),
       );
 
+      let vc_generators = proof_generators.vector_commitment_generators(generators);
       let (commitment, proof) = well_formed::<_, C, _>(
         &mut *rng,
-        // TODO: Cache this
-        Generators::new_without_secondaries(
-          additional_proving_gs.0,
-          h,
-          generators.clone(),
-          additional_proving_hs.0[.. generators.len()].to_vec(),
-        ),
-        Generators::new_without_secondaries(
-          additional_proving_gs.1,
-          h,
-          generators.clone(),
-          additional_proving_hs.1[.. generators.len()].to_vec(),
-        ),
+        vc_generators.0,
+        vc_generators.1,
         transcript,
         scalars,
         blinds[blinds.len() - 1],
@@ -804,23 +784,12 @@ impl<T: Transcript, C: Ciphersuite> Circuit<T, C> {
         scalars.push(scalar.unwrap());
         generators.push(generator);
       }
+      let vc_generators = proof_generators.vector_commitment_generators(generators);
       let proof;
-      let gens_len = generators.len();
       (other_commitment, proof) = well_formed::<_, C, _>(
         &mut *rng,
-        // TODO: Cache this
-        Generators::new_without_secondaries(
-          additional_proving_gs.0,
-          h,
-          generators.clone(),
-          additional_proving_hs.0[.. gens_len].to_vec(),
-        ),
-        Generators::new_without_secondaries(
-          additional_proving_gs.1,
-          h,
-          generators,
-          additional_proving_hs.1[.. gens_len].to_vec(),
-        ),
+        vc_generators.0,
+        vc_generators.1,
         transcript,
         scalars,
         other_blind,
@@ -844,37 +813,27 @@ impl<T: Transcript, C: Ciphersuite> Circuit<T, C> {
     rng: &mut R,
     verifier: &mut BatchVerifier<(), C::G>,
     transcript: &mut T,
-    additional_proving_gs: (C::G, C::G),
-    additional_proving_hs: (Vec<C::G>, Vec<C::G>),
     proof: ArithmeticCircuitProof<C>,
     mut vc_proofs: Vec<(WipProof<C>, WipProof<C>)>,
   ) {
     assert!(!self.prover);
     let vector_commitments = self.vector_commitments.clone().unwrap();
-    let h = self.generators.h();
+    let proof_generators = self.generators.clone();
     let (statement, mut vector_commitments_data, mut others, _) = self.compile();
     assert_eq!(vector_commitments.len(), vector_commitments_data.len());
 
     let mut verify_proofs = |generators: Vec<_>, commitment, proofs: (_, _)| {
+      let gens_len = generators.len();
+      let vc_generators = proof_generators.vector_commitment_generators(generators);
       let wip_statement = Self::vector_commitment_statement(
-        Generators::new_without_secondaries(
-          additional_proving_gs.0,
-          h,
-          generators.clone(),
-          additional_proving_hs.0[.. generators.len()].to_vec(),
-        ),
+        vc_generators.0.reduce(gens_len, false),
         transcript,
         commitment,
       );
       wip_statement.verify(rng, verifier, transcript, proofs.0);
 
       let wip_statement = Self::vector_commitment_statement(
-        Generators::new_without_secondaries(
-          additional_proving_gs.1,
-          h,
-          generators.clone(),
-          additional_proving_hs.1[.. generators.len()].to_vec(),
-        ),
+        vc_generators.1.reduce(gens_len, false),
         transcript,
         commitment,
       );
@@ -887,13 +846,13 @@ impl<T: Transcript, C: Ciphersuite> Circuit<T, C> {
       .zip(vector_commitments_data.drain(..))
       .zip(vc_proofs.drain(.. (vc_proofs.len() - 1)))
     {
-      verify_proofs(data.drain(..).map(|(_, g)| g).collect(), *commitment, proofs);
+      verify_proofs(data.drain(..).map(|(_, gen)| gen).collect(), *commitment, proofs);
     }
 
     {
       assert_eq!(vc_proofs.len(), 1);
       verify_proofs(
-        others.drain(..).map(|(_, g)| g).collect(),
+        others.drain(..).map(|(_, gen)| gen).collect(),
         proof.A - vector_commitments.iter().sum::<C::G>(),
         vc_proofs.swap_remove(0),
       );
