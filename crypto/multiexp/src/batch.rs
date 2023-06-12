@@ -9,7 +9,7 @@ use group::{Group, GroupEncoding};
 
 use crate::{multiexp, multiexp_vartime};
 
-#[derive(Clone, Zeroize)]
+#[derive(Clone, PartialEq, Eq, Debug, Zeroize)]
 pub enum Point<G: Group> {
   Constant(Vec<u8>, G),
   Variable(G),

@@ -15,11 +15,17 @@ use ciphersuite::{
 
 use crate::{ScalarVector, PointVector, Generators, weighted_inner_product};
 
+#[derive(Clone, PartialEq, Eq, Debug, Zeroize)]
+enum P<C: Ciphersuite> {
+  Point(C::G),
+  Terms(Vec<(C::F, MultiexpPoint<C::G>)>),
+}
+
 // Figure 1
 #[derive(Clone, Debug, Zeroize)]
 pub struct WipStatement<T: Transcript, C: Ciphersuite> {
   generators: Generators<T, C>,
-  P: C::G,
+  P: P<C>,
   y: ScalarVector<C>,
 }
 
@@ -64,14 +70,28 @@ impl<T: Transcript, C: Ciphersuite> WipStatement<T, C> {
       y_vec[i] = y_vec[i - 1] * y;
     }
 
-    Self { generators, P, y: y_vec }
+    Self { generators, P: P::Point(P), y: y_vec }
+  }
+
+  // TODO: Merge with new
+  pub fn new_without_P_transcript(generators: Generators<T, C>, P: Vec<(C::F, MultiexpPoint<C::G>)>, y: C::F) -> Self {
+    // y ** n
+    let mut y_vec = ScalarVector::new(generators.g_bold1.len());
+    y_vec[0] = y;
+    for i in 1 .. y_vec.len() {
+      y_vec[i] = y_vec[i - 1] * y;
+    }
+
+    Self { generators, P: P::Terms(P), y: y_vec }
   }
 
   fn initial_transcript(&mut self, transcript: &mut T) -> T::Challenge {
     transcript.domain_separate(b"weighted_inner_product");
     let gen_transcript = self.generators.transcript.challenge(b"summary");
     transcript.append_message(b"generators", gen_transcript.as_ref());
-    transcript.append_message(b"P", self.P.to_bytes());
+    if let P::Point(P) = &self.P {
+      transcript.append_message(b"P", P.to_bytes());
+    }
     transcript.append_message(b"y", self.y[0].to_repr());
     gen_transcript
   }
@@ -144,11 +164,11 @@ impl<T: Transcript, C: Ciphersuite> WipStatement<T, C> {
     transcript: &mut T,
     g_bold: &mut TrackedScalarVector<C>,
     h_bold: &mut TrackedScalarVector<C>,
-    mut P_terms: Vec<(C::F, MultiexpPoint<C::G>)>,
+    P_terms: &mut Vec<(C::F, MultiexpPoint<C::G>)>,
     L: C::G,
     R: C::G,
     y_inv_n_hat: C::F,
-  ) -> Vec<(C::F, MultiexpPoint<C::G>)> {
+  ) {
     assert_eq!(g_bold.positions.len(), h_bold.positions.len());
     if (g_bold.positions.len() % 2) == 1 {
       g_bold.positions.push(vec![]);
@@ -197,8 +217,6 @@ impl<T: Transcript, C: Ciphersuite> WipStatement<T, C> {
     let inv_e_square = inv_e.square();
     P_terms.push((e_square, MultiexpPoint::Variable(L)));
     P_terms.push((inv_e_square, MultiexpPoint::Variable(R)));
-
-    P_terms
   }
 
   pub fn prove<R: RngCore + CryptoRng>(
@@ -213,18 +231,20 @@ impl<T: Transcript, C: Ciphersuite> WipStatement<T, C> {
     let (g, h, mut g_bold, mut h_bold) = generators.decompose();
 
     // Check P has the expected relationship
-    let mut P_terms = witness
-      .a
-      .0
-      .iter()
-      .copied()
-      .zip(g_bold.0.iter().copied())
-      .chain(witness.b.0.iter().copied().zip(h_bold.0.iter().copied()))
-      .collect::<Vec<_>>();
-    P_terms.push((weighted_inner_product(&witness.a, &witness.b, &y), g));
-    P_terms.push((witness.alpha, h));
-    debug_assert_eq!(multiexp(&P_terms), P);
-    P_terms.zeroize();
+    if let P::Point(P) = &P {
+      let mut P_terms = witness
+        .a
+        .0
+        .iter()
+        .copied()
+        .zip(g_bold.0.iter().copied())
+        .chain(witness.b.0.iter().copied().zip(h_bold.0.iter().copied()))
+        .collect::<Vec<_>>();
+      P_terms.push((weighted_inner_product(&witness.a, &witness.b, &y), g));
+      P_terms.push((witness.alpha, h));
+      debug_assert_eq!(multiexp(&P_terms), *P);
+      P_terms.zeroize();
+    }
 
     let mut a = witness.a.clone();
     let mut b = witness.b.clone();
@@ -417,18 +437,22 @@ impl<T: Transcript, C: Ciphersuite> WipStatement<T, C> {
     );
     */
 
-    let mut P_terms = Vec::with_capacity(6 + g_bold.len() + h_bold.len() + proof.L.len());
+    let mut P_terms = match P {
+      P::Point(point) => vec![(C::F::ONE, MultiexpPoint::Variable(point))],
+      P::Terms(terms) => terms,
+    };
+    P_terms.reserve(6 + g_bold.len() + h_bold.len() + proof.L.len());
     for (L, R) in proof.L.iter().zip(proof.R.iter()) {
       let n_hat = (tracked_g_bold.positions.len() + (tracked_g_bold.positions.len() % 2)) / 2;
       let y_n_hat = y[n_hat - 1];
       // TODO: Calculate these with a batch inversion
       let y_inv_n_hat = y_n_hat.invert().unwrap();
 
-      P_terms = Self::next_G_H_P_without_permutation(
+      Self::next_G_H_P_without_permutation(
         transcript,
         &mut tracked_g_bold,
         &mut tracked_h_bold,
-        P_terms,
+        &mut P_terms,
         *L,
         *R,
         y_inv_n_hat,
@@ -442,7 +466,6 @@ impl<T: Transcript, C: Ciphersuite> WipStatement<T, C> {
     for (scalar, _) in multiexp.iter_mut() {
       *scalar *= neg_e_square;
     }
-    multiexp.push((neg_e_square, MultiexpPoint::Variable(P)));
 
     let re = proof.r_answer * e;
     for (i, point) in g_bold.0.drain(..).enumerate() {

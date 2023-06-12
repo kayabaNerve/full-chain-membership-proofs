@@ -4,7 +4,7 @@ use zeroize::{Zeroize, ZeroizeOnDrop};
 
 use transcript::Transcript;
 
-use multiexp::{multiexp, BatchVerifier};
+use multiexp::{multiexp, Point as MultiexpPoint, BatchVerifier};
 use ciphersuite::{
   group::{ff::Field, GroupEncoding},
   Ciphersuite,
@@ -120,7 +120,15 @@ impl<T: Transcript, C: Ciphersuite> ArithmeticCircuitStatement<T, C> {
     &self,
     transcript: &mut T,
     A: C::G,
-  ) -> (C::F, C::F, ScalarVector<C>, ScalarVector<C>, ScalarVector<C>, ScalarVector<C>, C::G) {
+  ) -> (
+    C::F,
+    C::F,
+    ScalarVector<C>,
+    ScalarVector<C>,
+    ScalarVector<C>,
+    ScalarVector<C>,
+    Vec<(C::F, MultiexpPoint<C::G>)>,
+  ) {
     // TODO: First perform the WIP transcript before acquiring challenges
     let (y, z) = Self::transcript_A(transcript, A);
 
@@ -154,26 +162,28 @@ impl<T: Transcript, C: Ciphersuite> ArithmeticCircuitStatement<T, C> {
     let z_q_WV = self.WV.mul_vec(&z_q);
     assert_eq!(z_q_WV.len(), self.V.len());
 
-    (
-      y,
-      *inv_y_n.last().unwrap(),
-      z_q_WV.clone(),
-      WL_y_z.clone(),
-      WR_y_z.clone(),
-      WO_y_z.clone(),
-      // TODO: Merge these multiexps
-      // TODO: Can we remove `P` from the Wip transcript and do this multiexp at the very end?
-      A + self.generators.g_bold().multiexp_vartime(&WR_y_z) +
-        self.generators.h_bold().multiexp_vartime(&WL_y_z) +
-        self
-          .generators
-          .h_bold2()
-          .multiexp_vartime(&WO_y_z.sub(C::F::ONE).mul(inv_y_n.last().unwrap())) +
-        self.V.multiexp_vartime(&z_q_WV) +
-        (self.generators.g() *
-          (z_q.inner_product(&self.c) +
-            weighted_inner_product(&WR_y_z, &WL_y_z, &ScalarVector(y_n)))),
-    )
+    // TODO: Move to constants once the generators object handles constant labelling
+    let mut A_terms = Vec::with_capacity(1 + (3 * self.c.len()) + self.V.len() + 1);
+    A_terms.push((C::F::ONE, MultiexpPoint::Variable(A)));
+    for pair in WR_y_z.0.iter().zip(self.generators.g_bold().0.iter()) {
+      A_terms.push((*pair.0, MultiexpPoint::Variable(*pair.1)));
+    }
+    for pair in WL_y_z.0.iter().zip(self.generators.h_bold().0.iter()) {
+      A_terms.push((*pair.0, MultiexpPoint::Variable(*pair.1)));
+    }
+    for pair in WO_y_z.0.iter().zip(self.generators.h_bold2().0.iter()) {
+      A_terms
+        .push(((*pair.0 - C::F::ONE) * inv_y_n.last().unwrap(), MultiexpPoint::Variable(*pair.1)));
+    }
+    for pair in z_q_WV.0.iter().zip(self.V.0.iter()) {
+      A_terms.push((*pair.0, MultiexpPoint::Variable(*pair.1)));
+    }
+    A_terms.push((
+      z_q.inner_product(&self.c) + weighted_inner_product(&WR_y_z, &WL_y_z, &ScalarVector(y_n)),
+      MultiexpPoint::Variable(self.generators.g()),
+    ));
+
+    (y, *inv_y_n.last().unwrap(), z_q_WV, WL_y_z, WR_y_z, WO_y_z, A_terms)
   }
 
   pub fn prove_with_blind<R: RngCore + CryptoRng>(
@@ -220,13 +230,15 @@ impl<T: Transcript, C: Ciphersuite> ArithmeticCircuitStatement<T, C> {
     aR.0.append(&mut WO_y_z.sub(C::F::ONE).mul(inv_y_n).0);
     let alpha = alpha + z_q_WV.inner_product(&witness.gamma);
 
+    // Safe to not transcript A_hat since A_hat is solely derivative of transcripted values
     ArithmeticCircuitProof {
       A,
-      wip: WipStatement::new(self.generators.reduce(self.WL.width(), true), A_hat, y).prove(
-        rng,
-        transcript,
-        WipWitness::new(aL, aR, alpha),
-      ),
+      wip: WipStatement::new_without_P_transcript(
+        self.generators.reduce(self.WL.width(), true),
+        A_hat,
+        y,
+      )
+      .prove(rng, transcript, WipWitness::new(aL, aR, alpha)),
     }
   }
 
@@ -251,7 +263,11 @@ impl<T: Transcript, C: Ciphersuite> ArithmeticCircuitStatement<T, C> {
     self.initial_transcript(transcript);
 
     let (y, _, _, _, _, _, A_hat) = self.compute_A_hat(transcript, proof.A);
-    (WipStatement::new(self.generators.reduce(self.WL.width(), true), A_hat, y))
-      .verify(rng, verifier, transcript, proof.wip);
+    (WipStatement::new_without_P_transcript(
+      self.generators.reduce(self.WL.width(), true),
+      A_hat,
+      y,
+    ))
+    .verify(rng, verifier, transcript, proof.wip);
   }
 }
