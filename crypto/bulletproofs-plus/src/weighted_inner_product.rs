@@ -74,7 +74,11 @@ impl<T: Transcript, C: Ciphersuite> WipStatement<T, C> {
   }
 
   // TODO: Merge with new
-  pub fn new_without_P_transcript(generators: Generators<T, C>, P: Vec<(C::F, MultiexpPoint<C::G>)>, y: C::F) -> Self {
+  pub fn new_without_P_transcript(
+    generators: Generators<T, C>,
+    P: Vec<(C::F, MultiexpPoint<C::G>)>,
+    y: C::F,
+  ) -> Self {
     // y ** n
     let mut y_vec = ScalarVector::new(generators.g_bold1.len());
     y_vec[0] = y;
@@ -85,15 +89,13 @@ impl<T: Transcript, C: Ciphersuite> WipStatement<T, C> {
     Self { generators, P: P::Terms(P), y: y_vec }
   }
 
-  fn initial_transcript(&mut self, transcript: &mut T) -> T::Challenge {
+  fn initial_transcript(&mut self, transcript: &mut T) {
     transcript.domain_separate(b"weighted_inner_product");
-    let gen_transcript = self.generators.transcript.challenge(b"summary");
-    transcript.append_message(b"generators", gen_transcript.as_ref());
+    transcript.append_message(b"generators", self.generators.transcript.challenge(b"summary"));
     if let P::Point(P) = &self.P {
       transcript.append_message(b"P", P.to_bytes());
     }
     transcript.append_message(b"y", self.y[0].to_repr());
-    gen_transcript
   }
 
   fn transcript_L_R(transcript: &mut T, L: C::G, R: C::G) -> C::F {
@@ -364,12 +366,12 @@ impl<T: Transcript, C: Ciphersuite> WipStatement<T, C> {
     transcript: &mut T,
     proof: WipProof<C>,
   ) {
-    let gen_label = self.initial_transcript(transcript);
+    self.initial_transcript(transcript);
 
     let WipStatement { generators, P, y } = self;
-    let (g, h, mut g_bold, mut h_bold) = generators.decompose();
+    let (g, h, mut g_bold, mut h_bold) = generators.multiexp_decompose();
 
-    assert!(!g_bold.0.is_empty());
+    assert!(!g_bold.is_empty());
     assert_eq!(g_bold.len(), h_bold.len());
 
     let mut tracked_g_bold = TrackedScalarVector::<C> {
@@ -468,31 +470,18 @@ impl<T: Transcript, C: Ciphersuite> WipStatement<T, C> {
     }
 
     let re = proof.r_answer * e;
-    for (i, point) in g_bold.0.drain(..).enumerate() {
-      let mut label = b"g_bold".to_vec();
-      label.extend(gen_label.as_ref());
-      label.extend(&u32::try_from(i).unwrap().to_le_bytes());
-      multiexp.push((tracked_g_bold.raw[i] * re, MultiexpPoint::Constant(label, point)));
+    for (i, point) in g_bold.drain(..).enumerate() {
+      multiexp.push((tracked_g_bold.raw[i] * re, point));
     }
 
     let se = proof.s_answer * e;
-    for (i, point) in h_bold.0.drain(..).enumerate() {
-      let mut label = b"h_bold".to_vec();
-      label.extend(gen_label.as_ref());
-      label.extend(&u32::try_from(i).unwrap().to_le_bytes());
-      multiexp.push((tracked_h_bold.raw[i] * se, MultiexpPoint::Constant(label, point)));
+    for (i, point) in h_bold.drain(..).enumerate() {
+      multiexp.push((tracked_h_bold.raw[i] * se, point));
     }
 
     multiexp.push((-e, MultiexpPoint::Variable(proof.A)));
-
-    // TODO: Move these labels/MultiexpPoint constructions into Generators
-    let mut g_label = gen_label.as_ref().to_vec();
-    g_label.push(0);
-    multiexp.push((proof.r_answer * y[0] * proof.s_answer, MultiexpPoint::Constant(g_label, g)));
-
-    let mut h_label = gen_label.as_ref().to_vec();
-    h_label.push(1);
-    multiexp.push((proof.delta_answer, MultiexpPoint::Constant(h_label, h)));
+    multiexp.push((proof.r_answer * y[0] * proof.s_answer, g));
+    multiexp.push((proof.delta_answer, h));
     multiexp.push((-C::F::ONE, MultiexpPoint::Variable(proof.B)));
 
     verifier.queue(rng, (), multiexp);

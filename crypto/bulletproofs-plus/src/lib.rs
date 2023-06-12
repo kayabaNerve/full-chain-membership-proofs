@@ -7,6 +7,7 @@ use zeroize::{Zeroize, ZeroizeOnDrop};
 use rand_core::{RngCore, CryptoRng};
 
 use transcript::Transcript;
+use multiexp::{Point as MultiexpPoint};
 use ciphersuite::{
   group::{ff::Field, Group, GroupEncoding},
   Ciphersuite,
@@ -42,15 +43,15 @@ pub(crate) enum GeneratorsList {
 // TODO: Table these
 #[derive(Clone, Debug)]
 pub struct Generators<T: Transcript, C: Ciphersuite> {
-  pub(crate) g: C::G,
-  pub(crate) h: C::G,
-  pub(crate) g_bold1: PointVector<C>,
-  pub(crate) g_bold2: PointVector<C>,
-  h_bold1: PointVector<C>,
-  h_bold2: PointVector<C>,
+  pub(crate) g: MultiexpPoint<C::G>,
+  pub(crate) h: MultiexpPoint<C::G>,
+  pub(crate) g_bold1: Vec<MultiexpPoint<C::G>>,
+  pub(crate) g_bold2: Vec<MultiexpPoint<C::G>>,
+  h_bold1: Vec<MultiexpPoint<C::G>>,
+  h_bold2: Vec<MultiexpPoint<C::G>>,
 
-  proving_gs: Option<(C::G, C::G)>,
-  proving_h_bolds: Option<(Vec<C::G>, Vec<C::G>)>,
+  proving_gs: Option<(MultiexpPoint<C::G>, MultiexpPoint<C::G>)>,
+  proving_h_bolds: Option<(Vec<MultiexpPoint<C::G>>, Vec<MultiexpPoint<C::G>>)>,
 
   // Uses a Vec<u8> since C::G doesn't impl Hash
   set: HashSet<Vec<u8>>,
@@ -72,16 +73,23 @@ impl<T: Transcript, C: Ciphersuite> Zeroize for Generators<T, C> {
   }
 }
 
+type MultiexpDecompose<C> = (
+  MultiexpPoint<<C as Ciphersuite>::G>,
+  MultiexpPoint<<C as Ciphersuite>::G>,
+  Vec<MultiexpPoint<<C as Ciphersuite>::G>>,
+  Vec<MultiexpPoint<<C as Ciphersuite>::G>>,
+);
+
 // TODO: This is a monolithic type which makes a ton of assumptions about its usage flow
 // It needs to be split into distinct types which clearly documented valid use cases
 impl<T: Transcript, C: Ciphersuite> Generators<T, C> {
   pub fn new(
     g: C::G,
     h: C::G,
-    g_bold1: Vec<C::G>,
-    g_bold2: Vec<C::G>,
-    h_bold1: Vec<C::G>,
-    h_bold2: Vec<C::G>,
+    mut g_bold1: Vec<C::G>,
+    mut g_bold2: Vec<C::G>,
+    mut h_bold1: Vec<C::G>,
+    mut h_bold2: Vec<C::G>,
   ) -> Self {
     assert!(!g_bold1.is_empty());
     assert_eq!(g_bold1.len(), g_bold2.len());
@@ -115,12 +123,24 @@ impl<T: Transcript, C: Ciphersuite> Generators<T, C> {
     }
 
     Generators {
-      g,
-      h,
-      g_bold1: PointVector(g_bold1),
-      g_bold2: PointVector(g_bold2),
-      h_bold1: PointVector(h_bold1),
-      h_bold2: PointVector(h_bold2),
+      g: MultiexpPoint::Constant(g.to_bytes().as_ref().to_vec(), g),
+      h: MultiexpPoint::Constant(h.to_bytes().as_ref().to_vec(), h),
+      g_bold1: g_bold1
+        .drain(..)
+        .map(|point| MultiexpPoint::Constant(point.to_bytes().as_ref().to_vec(), point))
+        .collect(),
+      g_bold2: g_bold2
+        .drain(..)
+        .map(|point| MultiexpPoint::Constant(point.to_bytes().as_ref().to_vec(), point))
+        .collect(),
+      h_bold1: h_bold1
+        .drain(..)
+        .map(|point| MultiexpPoint::Constant(point.to_bytes().as_ref().to_vec(), point))
+        .collect(),
+      h_bold2: h_bold2
+        .drain(..)
+        .map(|point| MultiexpPoint::Constant(point.to_bytes().as_ref().to_vec(), point))
+        .collect(),
 
       proving_gs: None,
       proving_h_bolds: None,
@@ -134,7 +154,7 @@ impl<T: Transcript, C: Ciphersuite> Generators<T, C> {
   pub fn add_vector_commitment_proving_generators(
     &mut self,
     gs: (C::G, C::G),
-    h_bold1: (Vec<C::G>, Vec<C::G>),
+    mut h_bold1: (Vec<C::G>, Vec<C::G>),
   ) {
     self.transcript.domain_separate(b"vector_commitment_proving_generators");
 
@@ -155,15 +175,29 @@ impl<T: Transcript, C: Ciphersuite> Generators<T, C> {
       add_generator(b"h_bold1", h_bold);
     }
 
-    self.proving_gs = Some(gs);
-    self.proving_h_bolds = Some(h_bold1);
+    self.proving_gs = Some((
+      MultiexpPoint::Constant(gs.0.to_bytes().as_ref().to_vec(), gs.0),
+      MultiexpPoint::Constant(gs.1.to_bytes().as_ref().to_vec(), gs.1),
+    ));
+    self.proving_h_bolds = Some((
+      h_bold1
+        .0
+        .drain(..)
+        .map(|point| MultiexpPoint::Constant(point.to_bytes().as_ref().to_vec(), point))
+        .collect(),
+      h_bold1
+        .1
+        .drain(..)
+        .map(|point| MultiexpPoint::Constant(point.to_bytes().as_ref().to_vec(), point))
+        .collect(),
+    ));
   }
 
   fn vector_commitment_generators(
     &self,
     vc_generators: Vec<(GeneratorsList, usize)>,
   ) -> (Self, Self) {
-    let gs = self.proving_gs.unwrap();
+    let gs = self.proving_gs.clone().unwrap();
     let (h_bold0, h_bold1) = self.proving_h_bolds.clone().unwrap();
 
     let mut g_bold1 = vec![];
@@ -174,15 +208,15 @@ impl<T: Transcript, C: Ciphersuite> Generators<T, C> {
         b"list",
         match list {
           GeneratorsList::GBold1 => {
-            g_bold1.push(self.g_bold1[i]);
+            g_bold1.push(self.g_bold1[i].clone());
             b"g_bold1"
           }
           GeneratorsList::HBold1 => {
-            g_bold1.push(self.h_bold1[i]);
+            g_bold1.push(self.h_bold1[i].clone());
             b"h_bold1"
           }
           GeneratorsList::GBold2 => {
-            g_bold1.push(self.g_bold2[i]);
+            g_bold1.push(self.g_bold2[i].clone());
             b"g_bold2"
           }
         },
@@ -193,11 +227,11 @@ impl<T: Transcript, C: Ciphersuite> Generators<T, C> {
 
     let mut generators_0 = Generators {
       g: gs.0,
-      h: self.h,
-      g_bold1: PointVector(g_bold1.clone()),
-      g_bold2: PointVector(vec![]),
-      h_bold1: PointVector(h_bold0),
-      h_bold2: PointVector(vec![]),
+      h: self.h.clone(),
+      g_bold1: g_bold1.clone(),
+      g_bold2: vec![],
+      h_bold1: h_bold0,
+      h_bold2: vec![],
       proving_gs: None,
       proving_h_bolds: None,
       set: self.set.clone(),
@@ -207,11 +241,11 @@ impl<T: Transcript, C: Ciphersuite> Generators<T, C> {
 
     let mut generators_1 = Generators {
       g: gs.1,
-      h: self.h,
-      g_bold1: PointVector(g_bold1.clone()),
-      g_bold2: PointVector(vec![]),
-      h_bold1: PointVector(h_bold1),
-      h_bold2: PointVector(vec![]),
+      h: self.h.clone(),
+      g_bold1,
+      g_bold2: vec![],
+      h_bold1,
+      h_bold2: vec![],
       proving_gs: None,
       proving_h_bolds: None,
       set: self.set.clone(),
@@ -224,7 +258,7 @@ impl<T: Transcript, C: Ciphersuite> Generators<T, C> {
 
   pub(crate) fn insert_generator(&mut self, gen: (GeneratorsList, usize), generator: C::G) {
     // Make sure this hasn't been used yet
-    assert!(!self.g_bold2.0.is_empty());
+    assert!(!self.g_bold2.is_empty());
 
     let (list, index) = gen;
 
@@ -245,18 +279,19 @@ impl<T: Transcript, C: Ciphersuite> Generators<T, C> {
 
     assert!(self.set.insert(bytes.as_ref().to_vec()));
 
+    // TODO: Take in a MultiexpPoint
     (match list {
       GeneratorsList::GBold1 => &mut self.g_bold1,
       GeneratorsList::GBold2 => &mut self.g_bold2,
       GeneratorsList::HBold1 => &mut self.h_bold1,
-    })[index] = generator;
+    })[index] = MultiexpPoint::Constant(generator.to_bytes().as_ref().to_vec(), generator);
   }
 
   pub(crate) fn truncate(&mut self, generators: usize) {
-    self.g_bold1.0.truncate(generators);
-    self.g_bold2.0.truncate(generators);
-    self.h_bold1.0.truncate(generators);
-    self.h_bold2.0.truncate(generators);
+    self.g_bold1.truncate(generators);
+    self.g_bold2.truncate(generators);
+    self.h_bold1.truncate(generators);
+    self.h_bold2.truncate(generators);
     self
       .transcript
       .append_message(b"used_generators", u32::try_from(generators).unwrap().to_le_bytes());
@@ -266,42 +301,109 @@ impl<T: Transcript, C: Ciphersuite> Generators<T, C> {
     self.truncate(generators);
     if with_secondaries {
       self.transcript.append_message(b"secondaries", b"true");
-      self.g_bold1.0.append(&mut self.g_bold2.0);
-      self.h_bold1.0.append(&mut self.h_bold2.0);
+      self.g_bold1.append(&mut self.g_bold2);
+      self.h_bold1.append(&mut self.h_bold2);
     } else {
       self.transcript.append_message(b"secondaries", b"false");
-      self.g_bold2.0.clear();
-      self.h_bold2.0.clear();
+      self.g_bold2.clear();
+      self.h_bold2.clear();
     }
     self
   }
 
   pub(crate) fn g(&self) -> C::G {
-    self.g
+    let MultiexpPoint::Constant(_, g) = self.g.clone() else { unreachable!() };
+    g
   }
 
   pub fn h(&self) -> C::G {
-    self.h
+    let MultiexpPoint::Constant(_, h) = self.h.clone() else { unreachable!() };
+    h
   }
 
-  pub(crate) fn g_bold(&self) -> &PointVector<C> {
+  pub(crate) fn g_bold(&self) -> PointVector<C> {
+    PointVector(
+      self
+        .g_bold1
+        .iter()
+        .map(|point| {
+          let MultiexpPoint::Constant(_, g) = point.clone() else { unreachable!() };
+          g
+        })
+        .collect::<Vec<_>>(),
+    )
+  }
+
+  pub(crate) fn h_bold(&self) -> PointVector<C> {
+    PointVector(
+      self
+        .h_bold1
+        .iter()
+        .map(|point| {
+          let MultiexpPoint::Constant(_, g) = point.clone() else { unreachable!() };
+          g
+        })
+        .collect::<Vec<_>>(),
+    )
+  }
+
+  pub(crate) fn g_bold2(&self) -> PointVector<C> {
+    PointVector(
+      self
+        .g_bold2
+        .iter()
+        .map(|point| {
+          let MultiexpPoint::Constant(_, g) = point.clone() else { unreachable!() };
+          g
+        })
+        .collect::<Vec<_>>(),
+    )
+  }
+
+  pub(crate) fn h_bold2(&self) -> PointVector<C> {
+    PointVector(
+      self
+        .h_bold2
+        .iter()
+        .map(|point| {
+          let MultiexpPoint::Constant(_, g) = point.clone() else { unreachable!() };
+          g
+        })
+        .collect::<Vec<_>>(),
+    )
+  }
+
+  pub(crate) fn multiexp_g(&self) -> MultiexpPoint<C::G> {
+    self.g.clone()
+  }
+
+  pub(crate) fn multiexp_h(&self) -> MultiexpPoint<C::G> {
+    self.h.clone()
+  }
+
+  pub(crate) fn multiexp_g_bold(&self) -> &[MultiexpPoint<C::G>] {
     &self.g_bold1
   }
 
-  pub(crate) fn h_bold(&self) -> &PointVector<C> {
+  pub(crate) fn multiexp_h_bold(&self) -> &[MultiexpPoint<C::G>] {
     &self.h_bold1
   }
 
-  pub(crate) fn g_bold2(&self) -> &PointVector<C> {
+  pub(crate) fn multiexp_g_bold2(&self) -> &[MultiexpPoint<C::G>] {
     &self.g_bold2
   }
 
-  pub(crate) fn h_bold2(&self) -> &PointVector<C> {
+  pub(crate) fn multiexp_h_bold2(&self) -> &[MultiexpPoint<C::G>] {
     &self.h_bold2
   }
 
   pub fn decompose(self) -> (C::G, C::G, PointVector<C>, PointVector<C>) {
-    assert!(self.g_bold2.0.is_empty());
+    assert!(self.g_bold2.is_empty());
+    (self.g(), self.h(), self.g_bold(), self.h_bold())
+  }
+
+  pub fn multiexp_decompose(self) -> MultiexpDecompose<C> {
+    assert!(self.g_bold2.is_empty());
     (self.g, self.h, self.g_bold1, self.h_bold1)
   }
 }

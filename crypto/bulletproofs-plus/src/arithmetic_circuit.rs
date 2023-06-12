@@ -334,9 +334,7 @@ impl<T: Transcript, C: Ciphersuite> Circuit<T, C> {
   }
 
   pub fn constrain_equality(&mut self, a: ProductReference, b: ProductReference) {
-    if a == b {
-      return;
-    }
+    assert!(a != b);
 
     let mut constraint = Constraint::new("equality");
     constraint.weight(a, C::F::ONE);

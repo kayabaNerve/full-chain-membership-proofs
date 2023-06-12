@@ -165,22 +165,21 @@ impl<T: Transcript, C: Ciphersuite> ArithmeticCircuitStatement<T, C> {
     // TODO: Move to constants once the generators object handles constant labelling
     let mut A_terms = Vec::with_capacity(1 + (3 * self.c.len()) + self.V.len() + 1);
     A_terms.push((C::F::ONE, MultiexpPoint::Variable(A)));
-    for pair in WR_y_z.0.iter().zip(self.generators.g_bold().0.iter()) {
-      A_terms.push((*pair.0, MultiexpPoint::Variable(*pair.1)));
+    for pair in WR_y_z.0.iter().zip(self.generators.multiexp_g_bold().iter()) {
+      A_terms.push((*pair.0, pair.1.clone()));
     }
-    for pair in WL_y_z.0.iter().zip(self.generators.h_bold().0.iter()) {
-      A_terms.push((*pair.0, MultiexpPoint::Variable(*pair.1)));
+    for pair in WL_y_z.0.iter().zip(self.generators.multiexp_h_bold().iter()) {
+      A_terms.push((*pair.0, pair.1.clone()));
     }
-    for pair in WO_y_z.0.iter().zip(self.generators.h_bold2().0.iter()) {
-      A_terms
-        .push(((*pair.0 - C::F::ONE) * inv_y_n.last().unwrap(), MultiexpPoint::Variable(*pair.1)));
+    for pair in WO_y_z.0.iter().zip(self.generators.multiexp_h_bold2().iter()) {
+      A_terms.push(((*pair.0 - C::F::ONE) * inv_y_n.last().unwrap(), pair.1.clone()));
     }
     for pair in z_q_WV.0.iter().zip(self.V.0.iter()) {
       A_terms.push((*pair.0, MultiexpPoint::Variable(*pair.1)));
     }
     A_terms.push((
       z_q.inner_product(&self.c) + weighted_inner_product(&WR_y_z, &WL_y_z, &ScalarVector(y_n)),
-      MultiexpPoint::Variable(self.generators.g()),
+      self.generators.multiexp_g(),
     ));
 
     (y, *inv_y_n.last().unwrap(), z_q_WV, WL_y_z, WR_y_z, WO_y_z, A_terms)

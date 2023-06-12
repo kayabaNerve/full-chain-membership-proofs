@@ -137,7 +137,7 @@ impl<T: Transcript, C: Ciphersuite> SingleRangeStatement<T, C> {
     let h_bold = generators.h_bold();
     let A = g_bold.multiexp(&a_l) + h_bold.multiexp(&a_r) + (generators.h() * alpha);
     let (y, two_descending_y, y_n_plus_one, z_vec, A_hat) =
-      Self::A_hat(transcript, generators.g(), g_bold, h_bold, V, A);
+      Self::A_hat(transcript, generators.g(), &g_bold, &h_bold, V, A);
 
     let a_l = a_l.sub_vec(&z_vec);
     let a_r = a_r.add_vec(&two_descending_y).add_vec(&z_vec);
@@ -163,8 +163,14 @@ impl<T: Transcript, C: Ciphersuite> SingleRangeStatement<T, C> {
     self.initial_transcript(transcript);
 
     let Self { generators, V } = self;
-    let (y, _, _, _, A_hat) =
-      Self::A_hat(transcript, generators.g(), generators.g_bold(), generators.h_bold(), V, proof.A);
+    let (y, _, _, _, A_hat) = Self::A_hat(
+      transcript,
+      generators.g(),
+      &generators.g_bold(),
+      &generators.h_bold(),
+      V,
+      proof.A,
+    );
     (WipStatement::new(generators, A_hat, y)).verify(rng, verifier, transcript, proof.wip);
   }
 }
