@@ -21,7 +21,7 @@ impl Bit {
     bit: VariableReference,
   ) -> Bit {
     let l = bit;
-    let bit = circuit.unchecked_value(l);
+    let bit = if circuit.prover() { Some(circuit.unchecked_value(l)) } else { None };
     let r = circuit.add_secret_input(bit.map(|bit| bit - C::F::ONE));
 
     // Verify this is in fact a valid bit
@@ -64,13 +64,15 @@ impl Bit {
     if_false: VariableReference,
     if_true: VariableReference,
   ) -> VariableReference {
-    let false_var = circuit.unchecked_value(if_false);
-    let true_var = circuit.unchecked_value(if_true);
-    let chosen = Some(()).filter(|_| circuit.prover()).map(|_| {
-      C::F::conditional_select(&false_var.unwrap(), &true_var.unwrap(), self.value.unwrap())
+    let chosen = circuit.add_secret_input(if circuit.prover() {
+      Some(C::F::conditional_select(
+        &circuit.unchecked_value(if_false),
+        &circuit.unchecked_value(if_true),
+        self.value.unwrap(),
+      ))
+    } else {
+      None
     });
-
-    let chosen = circuit.add_secret_input(chosen);
 
     // (bit * if_true) + (-bit_minus_one * if_false)
     // If bit is 0, if_false. If bit is 1, if_true

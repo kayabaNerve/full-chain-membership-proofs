@@ -16,9 +16,15 @@ pub fn assert_non_zero_gadget<T: Transcript, C: Ciphersuite>(
   circuit: &mut Circuit<T, C>,
   var: VariableReference,
 ) {
-  // Any non-zero variable will have a multiplicative inverse.
-  let inv = circuit.unchecked_value(var).map(|val| val.invert().unwrap());
-  let inv = circuit.add_secret_input(inv);
+  // Any non-zero variable will have a multiplicative inverse
+  let inv = circuit.add_secret_input(if circuit.prover() {
+    Some(
+      Option::from(circuit.unchecked_value(var).invert())
+        .expect("prover is asserting zero is non-zero"),
+    )
+  } else {
+    None
+  });
   let ((_, _, one), _) = circuit.product(var, inv);
   circuit.equals_constant(one, C::F::ONE);
 }
@@ -31,8 +37,11 @@ pub fn is_non_zero_gadget<T: Transcript, C: Ciphersuite>(
 ) -> Bit {
   // Multiply against the inverse, or 1 if there is no inverse due to this being 0
   // This makes the output 0/1 for an honest prover
-  let inv = circuit.unchecked_value(var).map(|val| val.invert().unwrap_or(C::F::ONE));
-  let inv = circuit.add_secret_input(inv);
+  let inv = circuit.add_secret_input(if circuit.prover() {
+    Option::from(circuit.unchecked_value(var).invert().unwrap_or(C::F::ONE))
+  } else {
+    None
+  });
   let ((_, _, _), out) = circuit.product(var, inv);
 
   // Ensure this provided inverse wasn't 0

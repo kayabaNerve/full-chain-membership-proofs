@@ -22,7 +22,7 @@ fn test_is_non_zero_gadget() {
     let res = is_non_zero_gadget(circuit, value);
     if let Some(value) = value_arg {
       assert_eq!(
-        circuit.unchecked_value(res.variable).unwrap(),
+        circuit.unchecked_value(res.variable),
         if value == <Vesta as Ciphersuite>::F::ZERO {
           <Vesta as Ciphersuite>::F::ZERO
         } else {

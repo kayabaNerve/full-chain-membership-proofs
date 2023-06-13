@@ -53,14 +53,18 @@ pub fn trits_to_scalar<C: Ciphersuite>(trits: &[Trit]) -> C::F {
 pub fn scalar_to_trits<C: Ciphersuite>(scalar: C::F) -> Vec<Trit> {
   let mut uint = C::FI::ZERO;
   {
+    const ERR: &str = "uint for this ciphersuite's field couldn't store a number its field could";
     let mut base = C::FI::ONE;
     let bits = scalar.to_le_bits();
     for (i, bit) in bits.iter().enumerate() {
-      uint = uint
-        .checked_add(&C::FI::conditional_select(&C::FI::ZERO, &base, Choice::from(u8::from(*bit))))
-        .unwrap();
+      uint = Option::from(uint.checked_add(&C::FI::conditional_select(
+        &C::FI::ZERO,
+        &base,
+        Choice::from(u8::from(*bit)),
+      )))
+      .expect(ERR);
       if i != (bits.len() - 1) {
-        base = base.checked_add(&base).unwrap();
+        base = Option::from(base.checked_add(&base)).expect(ERR);
       }
     }
   }
@@ -91,6 +95,10 @@ pub fn scalar_to_trits<C: Ciphersuite>(scalar: C::F) -> Vec<Trit> {
   }
   res.push(Trit::conditional_select(&Trit::Zero, &Trit::One, carry));
 
-  debug_assert_eq!(scalar, trits_to_scalar::<C>(&res));
+  debug_assert_eq!(
+    scalar,
+    trits_to_scalar::<C>(&res),
+    "converted a scalar to trits we couldn't convert back"
+  );
   res
 }

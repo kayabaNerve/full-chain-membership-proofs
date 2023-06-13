@@ -45,8 +45,14 @@ impl<C: Ecip> Permissible<C> {
     circuit: &mut Circuit<T, C2>,
     y: VariableReference,
   ) {
-    let sqrt =
-      circuit.add_secret_input(circuit.unchecked_value(y).map(|y| self.u(y).sqrt().unwrap()));
+    let sqrt = circuit.add_secret_input(if circuit.prover() {
+      Some(
+        Option::from(self.u(circuit.unchecked_value(y)).sqrt())
+          .expect("proving a y coordinate is permissible despite it not having a sqrt"),
+      )
+    } else {
+      None
+    });
     let (l, r, o) = circuit.product(sqrt, sqrt).0;
     circuit.constrain_equality(l, r);
 

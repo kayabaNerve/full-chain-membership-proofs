@@ -182,8 +182,11 @@ impl<T: Transcript, C: Ciphersuite> Circuit<T, C> {
   }
 
   /// Obtain the underlying value from a variable reference.
-  pub fn unchecked_value(&self, variable: VariableReference) -> Option<C::F> {
-    self.variables[variable.0].value()
+  ///
+  /// Panics if not prover.
+  pub fn unchecked_value(&self, variable: VariableReference) -> C::F {
+    assert!(self.prover(), "verifier called for the unchecked_value");
+    self.variables[variable.0].value().expect("prover didn't have a variable's value")
   }
 
   pub fn variable(&self, product: ProductReference) -> VariableReference {
