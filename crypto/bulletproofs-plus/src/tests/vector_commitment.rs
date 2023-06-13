@@ -9,13 +9,14 @@ use ciphersuite::{
 };
 
 use crate::{
+  VectorCommitmentGenerators,
   arithmetic_circuit::{Constraint, Circuit},
   tests::generators as generators_fn,
 };
 
 #[test]
 fn test_vector_commitment() {
-  let generators = generators_fn(8);
+  let mut generators = generators_fn(8);
 
   let x_bind = <Ristretto as Ciphersuite>::G::random(&mut OsRng);
   let y_bind = <Ristretto as Ciphersuite>::G::random(&mut OsRng);
@@ -31,6 +32,11 @@ fn test_vector_commitment() {
   let mut expected_commitment_0 = None;
   let mut expected_commitment_1 = None;
 
+  let gens_0 = VectorCommitmentGenerators::new(&[x_bind, y_bind]);
+  generators.whitelist_vector_commitments(b"Vector Commitment 0", &gens_0);
+  let gens_1 = VectorCommitmentGenerators::new(&[z_bind, a_bind]);
+  generators.whitelist_vector_commitments(b"Vector Commitment 1", &gens_1);
+
   let mut gadget =
     |circuit: &mut Circuit<RecommendedTranscript, Ristretto>,
      x_y: Option<(<Ristretto as Ciphersuite>::F, <Ristretto as Ciphersuite>::F)>,
@@ -42,8 +48,7 @@ fn test_vector_commitment() {
 
       let ((product_l, product_r, _), _) = circuit.product(x_var, y_var);
       let vc = circuit.allocate_vector_commitment();
-      circuit.bind(vc, product_l, Some(x_bind));
-      circuit.bind(vc, product_r, Some(y_bind));
+      circuit.bind(vc, vec![product_l, product_r], Some(&gens_0));
       // TODO: Panic if a circuit doesn't finalize VCs
       {
         let blind = <Ristretto as Ciphersuite>::F::random(&mut OsRng);
@@ -57,8 +62,7 @@ fn test_vector_commitment() {
 
       let ((product_l, _, product_o), _) = circuit.product(z_var, a_var);
       let vc = circuit.allocate_vector_commitment();
-      circuit.bind(vc, product_l, Some(z_bind));
-      circuit.bind(vc, product_o, Some(a_bind));
+      circuit.bind(vc, vec![product_l, product_o], Some(&gens_1));
       {
         let blind = <Ristretto as Ciphersuite>::F::random(&mut OsRng);
         expected_commitment_1 = expected_commitment_1

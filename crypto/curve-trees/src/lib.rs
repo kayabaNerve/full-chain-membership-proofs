@@ -1,6 +1,6 @@
 #![allow(non_snake_case)]
 
-use core::marker::PhantomData;
+use core::{marker::PhantomData, fmt::Debug};
 
 use rand_core::{RngCore, CryptoRng};
 
@@ -12,6 +12,7 @@ use ciphersuite::{
 
 use ecip::Ecip;
 use bulletproofs_plus::{
+  VectorCommitmentGenerators,
   arithmetic_circuit::*,
   gadgets::{
     elliptic_curve::{Trit, DLogTable, EmbeddedCurveOperations, scalar_to_trits},
@@ -88,7 +89,7 @@ pub fn layer_gadget<R: RngCore + CryptoRng, T: Transcript, C: CurveCycle>(
   circuit: &mut Circuit<T, C::C2>,
   permissible: &Permissible<C::C1>,
   H: &DLogTable<C::C1>,
-  pedersen_generators: &[<C::C2 as Ciphersuite>::G],
+  pedersen_generators: &VectorCommitmentGenerators<T, C::C2>,
   blinded_point: <C::C1 as Ciphersuite>::G,
   blind: Option<<C::C1 as Ciphersuite>::F>,
   permissibility_offset: u64,
@@ -122,7 +123,7 @@ pub fn layer_gadget<R: RngCore + CryptoRng, T: Transcript, C: CurveCycle>(
   {
     // Add the elements in this hash
     let mut x_coords = vec![];
-    for elem in elements.clone() {
+    for elem in elements {
       x_coords.push(circuit.add_secret_input(elem));
     }
 
@@ -149,10 +150,8 @@ pub fn layer_gadget<R: RngCore + CryptoRng, T: Transcript, C: CurveCycle>(
 
     // Bind these to the branch hash
     let commitment = circuit.allocate_vector_commitment();
-    assert_eq!(pedersen_generators.len(), elements.len());
-    for i in 0 .. elements.len() {
-      circuit.bind(commitment, x_coords[i], Some(pedersen_generators[i]));
-    }
+    assert_eq!(pedersen_generators.len(), x_coords.len());
+    circuit.bind(commitment, x_coords, Some(pedersen_generators));
 
     let blind = Some(if last {
       // If this is the last hash, just use the final permissibility offset
@@ -175,10 +174,12 @@ pub fn membership_gadget<R: RngCore + CryptoRng, T: Transcript, C: CurveCycle>(
   rng: &mut R,
   circuit_c1: &mut Circuit<T, C::C1>,
   circuit_c2: &mut Circuit<T, C::C2>,
-  tree: &Tree<C>,
+  tree: &Tree<T, C>,
   blinded_point: <C::C1 as Ciphersuite>::G,
   blind: Option<<C::C1 as Ciphersuite>::F>,
-) {
+) where
+  T::Challenge: Debug,
+{
   let mut membership =
     blind.map(|blind| tree.membership(blinded_point + (circuit_c1.h() * blind)).unwrap());
 

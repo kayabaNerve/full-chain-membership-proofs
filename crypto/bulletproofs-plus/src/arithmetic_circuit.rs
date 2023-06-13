@@ -12,8 +12,8 @@ use ciphersuite::{
 };
 
 use crate::{
-  ScalarVector, ScalarMatrix, PointVector, GeneratorsList, Generators, weighted_inner_product::*,
-  arithmetic_circuit_proof,
+  ScalarVector, ScalarMatrix, PointVector, VectorCommitmentGenerators, GeneratorsList, Generators,
+  weighted_inner_product::*, arithmetic_circuit_proof,
 };
 pub use arithmetic_circuit_proof::*;
 
@@ -368,26 +368,28 @@ impl<T: Transcript, C: Ciphersuite> Circuit<T, C> {
   pub fn bind(
     &mut self,
     vector_commitment: VectorCommitmentReference,
-    product: ProductReference,
-    generator: Option<C::G>,
+    products: Vec<ProductReference>,
+    generators: Option<&VectorCommitmentGenerators<T, C>>,
   ) {
     assert!(!self.finalized_commitments.contains_key(&vector_commitment));
 
-    for bound in &self.bound_products {
-      assert!(!bound.contains(&product));
-    }
-    self.bound_products[vector_commitment.0].insert(product);
+    let mut to_replace = vec![];
+    for product in products {
+      for bound in &self.bound_products {
+        assert!(!bound.contains(&product));
+      }
+      self.bound_products[vector_commitment.0].insert(product);
 
-    if let Some(generator) = generator {
       // TODO: PR -> (GenList, usize) helper
-      self.generators.insert_generator(
-        match product {
-          ProductReference::Left { product, .. } => (GeneratorsList::GBold1, product),
-          ProductReference::Right { product, .. } => (GeneratorsList::HBold1, product),
-          ProductReference::Output { product, .. } => (GeneratorsList::GBold2, product),
-        },
-        generator,
-      );
+      to_replace.push(match product {
+        ProductReference::Left { product, .. } => (GeneratorsList::GBold1, product),
+        ProductReference::Right { product, .. } => (GeneratorsList::HBold1, product),
+        ProductReference::Output { product, .. } => (GeneratorsList::GBold2, product),
+      });
+    }
+
+    if let Some(generators) = generators {
+      self.generators.replace_generators(generators, &to_replace);
     }
   }
 

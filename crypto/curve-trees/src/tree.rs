@@ -1,13 +1,16 @@
+use core::fmt::Debug;
 use std::collections::HashMap;
 
+use transcript::Transcript;
 use ciphersuite::{
-  group::{Group, GroupEncoding},
+  group::{ff::Field, Group, GroupEncoding},
   Ciphersuite,
 };
 
 use ecip::Ecip;
+use bulletproofs_plus::{VectorCommitmentGenerators, Generators};
 
-use crate::{CurveCycle, pedersen_hash::pedersen_hash_vartime, permissible::Permissible};
+use crate::{CurveCycle, permissible::Permissible};
 
 #[derive(Clone, PartialEq, Eq, Debug)]
 enum Child<C: CurveCycle> {
@@ -33,15 +36,18 @@ struct Node<C: CurveCycle> {
 // Structured as having all of its branches filled out, even ones not in use, yet only active
 // leaves
 // When the tree reaches capacity, it has a parent node added, growing its capacity
-#[derive(Clone, PartialEq, Eq, Debug)]
-pub struct Tree<C: CurveCycle> {
+#[derive(Clone, Debug)]
+pub struct Tree<T: Transcript, C: CurveCycle>
+where
+  T::Challenge: Debug,
+{
   permissible_c1: Permissible<C::C1>,
   permissible_c2: Permissible<C::C2>,
   leaf_randomness: <C::C1 as Ciphersuite>::G,
 
   width: usize,
-  odd_generators: Vec<Vec<<C::C2 as Ciphersuite>::G>>,
-  even_generators: Vec<Vec<<C::C1 as Ciphersuite>::G>>,
+  odd_generators: Vec<VectorCommitmentGenerators<T, C::C2>>,
+  even_generators: Vec<VectorCommitmentGenerators<T, C::C1>>,
 
   node: Node<C>,
 
@@ -79,7 +85,10 @@ fn depth<C: CurveCycle>(node: &Node<C>) -> usize {
   }
 }
 
-impl<C: CurveCycle> Tree<C> {
+impl<T: Transcript, C: CurveCycle> Tree<T, C>
+where
+  T::Challenge: Debug,
+{
   pub fn new(
     permissible_c1: Permissible<C::C1>,
     permissible_c2: Permissible<C::C2>,
@@ -109,7 +118,7 @@ impl<C: CurveCycle> Tree<C> {
             &[l_bytes.as_ref(), i.to_le_bytes().as_ref()].concat(),
           ));
         }
-        odd_generators.push(next_gens);
+        odd_generators.push(VectorCommitmentGenerators::new(&next_gens));
       } else {
         let mut next_gens = vec![];
         for i in 0 .. width_u64 {
@@ -118,7 +127,7 @@ impl<C: CurveCycle> Tree<C> {
             &[l_bytes.as_ref(), i.to_le_bytes().as_ref()].concat(),
           ));
         }
-        even_generators.push(next_gens);
+        even_generators.push(VectorCommitmentGenerators::new(&next_gens));
       }
     }
 
@@ -133,6 +142,19 @@ impl<C: CurveCycle> Tree<C> {
 
       node: Node::new(false),
       paths: HashMap::new(),
+    }
+  }
+
+  pub fn whitelist_vector_commitments(
+    &self,
+    c1: &mut Generators<T, C::C1>,
+    c2: &mut Generators<T, C::C2>,
+  ) {
+    for odd_generators in &self.odd_generators {
+      c2.whitelist_vector_commitments(b"Curve Tree, Odd Generators", odd_generators);
+    }
+    for even_generators in &self.even_generators {
+      c1.whitelist_vector_commitments(b"Curve Tree, Even Generators", even_generators);
     }
   }
 
@@ -156,20 +178,20 @@ impl<C: CurveCycle> Tree<C> {
     self.node.hash
   }
 
-  pub fn even_generators(&self, layer: usize) -> Option<&[<C::C1 as Ciphersuite>::G]> {
+  pub fn even_generators(&self, layer: usize) -> Option<&VectorCommitmentGenerators<T, C::C1>> {
     if (layer % 2) != 0 {
       return None;
     }
     if layer < 2 {
       return None;
     }
-    self.even_generators.get((layer - 2) / 2).map(AsRef::as_ref)
+    self.even_generators.get((layer - 2) / 2)
   }
-  pub fn odd_generators(&self, layer: usize) -> Option<&[<C::C2 as Ciphersuite>::G]> {
+  pub fn odd_generators(&self, layer: usize) -> Option<&VectorCommitmentGenerators<T, C::C2>> {
     if (layer % 2) != 1 {
       return None;
     }
-    self.odd_generators.get(layer / 2).map(AsRef::as_ref)
+    self.odd_generators.get(layer / 2)
   }
 
   pub fn add_leaves(&mut self, leaves: &[<C::C1 as Ciphersuite>::G]) {
@@ -292,11 +314,11 @@ impl<C: CurveCycle> Tree<C> {
       self.paths.insert(leaf.to_bytes().as_ref().to_vec(), path.unwrap());
     }
 
-    fn clean<C: CurveCycle>(
+    fn clean<T: Transcript, C: CurveCycle>(
       permissible_c1: &Permissible<C::C1>,
       permissible_c2: &Permissible<C::C2>,
-      odd_generators: &[Vec<<C::C2 as Ciphersuite>::G>],
-      even_generators: &[Vec<<C::C1 as Ciphersuite>::G>],
+      odd_generators: &[VectorCommitmentGenerators<T, C::C2>],
+      even_generators: &[VectorCommitmentGenerators<T, C::C1>],
       node: &mut Node<C>,
     ) {
       if !node.dirty {
@@ -334,22 +356,26 @@ impl<C: CurveCycle> Tree<C> {
         Hash::Even(ref mut hash) => {
           assert!(even_elems.is_empty());
           assert_eq!(this_node_depth % 2, 0);
-          let permissioned = permissible_c1.make_permissible(pedersen_hash_vartime::<C::C1>(
-            &odd_elems,
-            // Even generators are 2, 4, 6
-            &even_generators[(this_node_depth - 2) / 2][.. odd_elems.len()],
-          ));
+          // Even generators are 2, 4, 6
+          let even_generators = &even_generators[(this_node_depth - 2) / 2];
+          while odd_elems.len() < even_generators.len() {
+            odd_elems.push(<C::C1 as Ciphersuite>::F::ZERO);
+          }
+          let permissioned =
+            permissible_c1.make_permissible(even_generators.commit_vartime(&odd_elems));
           *hash = permissioned.1;
           permissioned.0
         }
         Hash::Odd(ref mut hash) => {
           assert!(odd_elems.is_empty());
           assert_eq!(this_node_depth % 2, 1);
-          let permissioned = permissible_c2.make_permissible(pedersen_hash_vartime::<C::C2>(
-            &even_elems,
-            // Truncating division
-            &odd_generators[this_node_depth / 2][.. even_elems.len()],
-          ));
+          // Truncating division
+          let odd_generators = &odd_generators[this_node_depth / 2];
+          while even_elems.len() < odd_generators.len() {
+            even_elems.push(<C::C2 as Ciphersuite>::F::ZERO);
+          }
+          let permissioned =
+            permissible_c2.make_permissible(odd_generators.commit_vartime(&even_elems));
           *hash = permissioned.1;
           permissioned.0
         }

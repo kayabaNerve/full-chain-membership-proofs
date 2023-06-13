@@ -20,22 +20,6 @@ use crate::{
 
 #[test]
 fn test_membership() {
-  let pallas_generators = generators_fn::<Pallas>(512 * 4);
-  let pallas_h = pallas_generators.h();
-
-  let vesta_generators = generators_fn::<Vesta>(512 * 4);
-  let vesta_h = vesta_generators.h();
-
-  let permissible_c1 = Permissible::<<Pasta as CurveCycle>::C1> {
-    h: pallas_h,
-    alpha: <<Pasta as CurveCycle>::C1 as Ecip>::FieldElement::random(&mut OsRng),
-    beta: <<Pasta as CurveCycle>::C1 as Ecip>::FieldElement::random(&mut OsRng),
-  };
-  let permissible_c2 = Permissible::<<Pasta as CurveCycle>::C2> {
-    h: vesta_h,
-    alpha: <<Pasta as CurveCycle>::C2 as Ecip>::FieldElement::random(&mut OsRng),
-    beta: <<Pasta as CurveCycle>::C2 as Ecip>::FieldElement::random(&mut OsRng),
-  };
   let leaf_randomness = <<Pasta as CurveCycle>::C1 as Ciphersuite>::G::random(&mut OsRng);
 
   let mut verifier_c1 = BatchVerifier::new(3 + (3 * 4));
@@ -43,8 +27,32 @@ fn test_membership() {
 
   // Test with various widths
   for width in 2 ..= 4usize {
+    let mut pallas_generators = generators_fn::<Pallas>(512 * 4);
+    let mut vesta_generators = generators_fn::<Vesta>(512 * 4);
+
+    let pallas_h = pallas_generators.h();
+    let vesta_h = vesta_generators.h();
+
+    let permissible_c1 = Permissible::<<Pasta as CurveCycle>::C1> {
+      h: pallas_h,
+      alpha: <<Pasta as CurveCycle>::C1 as Ecip>::FieldElement::random(&mut OsRng),
+      beta: <<Pasta as CurveCycle>::C1 as Ecip>::FieldElement::random(&mut OsRng),
+    };
+    let permissible_c2 = Permissible::<<Pasta as CurveCycle>::C2> {
+      h: vesta_h,
+      alpha: <<Pasta as CurveCycle>::C2 as Ecip>::FieldElement::random(&mut OsRng),
+      beta: <<Pasta as CurveCycle>::C2 as Ecip>::FieldElement::random(&mut OsRng),
+    };
+
     let max = u64::try_from(width).unwrap().pow(4);
-    let mut tree = Tree::<Pasta>::new(permissible_c1, permissible_c2, leaf_randomness, width, max);
+    let mut tree = Tree::<RecommendedTranscript, Pasta>::new(
+      permissible_c1,
+      permissible_c2,
+      leaf_randomness,
+      width,
+      max,
+    );
+    tree.whitelist_vector_commitments(&mut pallas_generators, &mut vesta_generators);
 
     // Create a full tree
     let mut leaves = vec![];

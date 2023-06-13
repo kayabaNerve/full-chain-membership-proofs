@@ -1,13 +1,16 @@
 #![allow(non_snake_case)]
 
-use std::{sync::{Arc, RwLock}, collections::HashSet};
+use std::{
+  sync::{Arc, RwLock},
+  collections::HashSet,
+};
 
 use zeroize::{Zeroize, ZeroizeOnDrop};
 
 use rand_core::{RngCore, CryptoRng};
 
 use transcript::Transcript;
-use multiexp::{Point as MultiexpPoint};
+use multiexp::{multiexp_vartime, Point as MultiexpPoint};
 use ciphersuite::{
   group::{ff::Field, Group, GroupEncoding},
   Ciphersuite,
@@ -53,10 +56,12 @@ pub struct Generators<T: Transcript, C: Ciphersuite> {
   proving_gs: Option<(MultiexpPoint<C::G>, MultiexpPoint<C::G>)>,
   proving_h_bolds: Option<(Vec<MultiexpPoint<C::G>>, Vec<MultiexpPoint<C::G>>)>,
 
+  whitelisted_vector_commitments: Arc<RwLock<HashSet<Vec<u8>>>>,
   // Uses a Vec<u8> since C::G doesn't impl Hash
   set: Arc<RwLock<HashSet<Vec<u8>>>>,
   transcript: T,
 }
+
 impl<T: Transcript, C: Ciphersuite> Zeroize for Generators<T, C> {
   fn zeroize(&mut self) {
     self.g.zeroize();
@@ -69,7 +74,66 @@ impl<T: Transcript, C: Ciphersuite> Zeroize for Generators<T, C> {
     self.proving_gs.zeroize();
     self.proving_h_bolds.zeroize();
 
-    // Since we don't zeroize set, this is of arguable practicality
+    // Since we don't zeroize set/transcript, this is of arguable practicality
+  }
+}
+
+// TODO: Table these
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct VectorCommitmentGenerators<T: Transcript, C: Ciphersuite> {
+  generators: Vec<MultiexpPoint<C::G>>,
+  transcript: T::Challenge,
+}
+
+impl<T: Transcript, C: Ciphersuite> VectorCommitmentGenerators<T, C> {
+  pub fn new(generators: &[C::G]) -> Self {
+    assert!(!generators.is_empty());
+
+    let mut transcript = T::new(b"Bulletproofs+ Vector Commitments Generators");
+
+    transcript.domain_separate(b"generators");
+    let mut res = vec![];
+    let mut set = HashSet::new();
+    let mut add_generator = |generator: &C::G| {
+      assert!(!bool::from(generator.is_identity()));
+      let bytes = generator.to_bytes();
+      res.push(MultiexpPoint::Constant(bytes.as_ref().to_vec(), *generator));
+      transcript.append_message(b"generator", bytes);
+      assert!(set.insert(bytes.as_ref().to_vec()));
+    };
+
+    for generator in generators {
+      add_generator(generator);
+    }
+
+    Self { generators: res, transcript: transcript.challenge(b"summary") }
+  }
+
+  pub fn generators(&self) -> &[MultiexpPoint<C::G>] {
+    &self.generators
+  }
+
+  pub fn len(&self) -> usize {
+    self.generators.len()
+  }
+
+  pub fn commit_vartime(&self, vars: &[C::F]) -> C::G {
+    assert_eq!(self.len(), vars.len());
+
+    let mut multiexp = vec![];
+    for (var, point) in vars.iter().zip(self.generators().iter()) {
+      // TODO: Don't require this conversion here
+      let MultiexpPoint::Constant(_, point) = point else { unreachable!() };
+      multiexp.push((*var, *point));
+    }
+    multiexp_vartime(&multiexp)
+  }
+}
+
+impl<T: Transcript, C: Ciphersuite> Zeroize for VectorCommitmentGenerators<T, C> {
+  fn zeroize(&mut self) {
+    self.generators.zeroize();
+    // Since we don't zeroize transcript, this is of arguable practicality
   }
 }
 
@@ -146,6 +210,7 @@ impl<T: Transcript, C: Ciphersuite> Generators<T, C> {
       proving_h_bolds: None,
 
       set: Arc::new(RwLock::new(set)),
+      whitelisted_vector_commitments: Arc::new(RwLock::new(HashSet::new())),
       transcript,
     }
   }
@@ -194,6 +259,26 @@ impl<T: Transcript, C: Ciphersuite> Generators<T, C> {
     ));
   }
 
+  pub fn whitelist_vector_commitments(
+    &mut self,
+    label: &'static [u8],
+    generators: &VectorCommitmentGenerators<T, C>,
+  ) {
+    let mut set = self.set.write().unwrap();
+    for generator in &generators.generators {
+      let MultiexpPoint::Constant(bytes, _) = generator else { unreachable!() };
+      assert!(set.insert(bytes.clone()));
+    }
+
+    self.transcript.domain_separate(b"vector_commitment_generators");
+    self.transcript.append_message(label, generators.transcript.as_ref());
+    assert!(self
+      .whitelisted_vector_commitments
+      .write()
+      .unwrap()
+      .insert(generators.transcript.as_ref().to_vec()));
+  }
+
   fn vector_commitment_generators(
     &self,
     vc_generators: Vec<(GeneratorsList, usize)>,
@@ -236,6 +321,7 @@ impl<T: Transcript, C: Ciphersuite> Generators<T, C> {
       proving_gs: None,
       proving_h_bolds: None,
       set: self.set.clone(),
+      whitelisted_vector_commitments: Arc::new(RwLock::new(HashSet::new())),
       transcript: transcript.clone(),
     };
     generators_0.transcript.append_message(b"generators", "0");
@@ -250,6 +336,7 @@ impl<T: Transcript, C: Ciphersuite> Generators<T, C> {
       proving_gs: None,
       proving_h_bolds: None,
       set: self.set.clone(),
+      whitelisted_vector_commitments: Arc::new(RwLock::new(HashSet::new())),
       transcript,
     };
     generators_1.transcript.append_message(b"generators", "1");
@@ -257,35 +344,45 @@ impl<T: Transcript, C: Ciphersuite> Generators<T, C> {
     (generators_0, generators_1)
   }
 
-  pub(crate) fn insert_generator(&mut self, gen: (GeneratorsList, usize), generator: C::G) {
+  pub(crate) fn replace_generators(
+    &mut self,
+    from: &VectorCommitmentGenerators<T, C>,
+    to_replace: &[(GeneratorsList, usize)],
+  ) {
     // Make sure this hasn't been used yet
     assert!(!self.g_bold2.is_empty());
 
-    let (list, index) = gen;
+    debug_assert!(self
+      .whitelisted_vector_commitments
+      .read()
+      .unwrap()
+      .contains(from.transcript.as_ref()));
 
-    assert!(!bool::from(generator.is_identity()));
+    assert_eq!(from.generators.len(), to_replace.len());
 
-    let bytes = generator.to_bytes();
-    self.transcript.domain_separate(b"inserted_generator");
-    self.transcript.append_message(
-      b"list",
-      match list {
-        GeneratorsList::GBold1 => b"g_bold1",
-        GeneratorsList::GBold2 => b"g_bold2",
-        GeneratorsList::HBold1 => b"h_bold1",
-      },
-    );
-    self.transcript.append_message(b"index", u32::try_from(index).unwrap().to_le_bytes());
-    self.transcript.append_message(b"generator", bytes);
+    self.transcript.domain_separate(b"replaced_generators");
+    self.transcript.append_message(b"from", from.transcript.as_ref());
 
-    assert!(!self.set.read().unwrap().contains(bytes.as_ref()));
+    for (i, (list, index)) in to_replace.iter().enumerate() {
+      // TODO: Check not prior replaced
 
-    // TODO: Take in a MultiexpPoint
-    (match list {
-      GeneratorsList::GBold1 => &mut self.g_bold1,
-      GeneratorsList::GBold2 => &mut self.g_bold2,
-      GeneratorsList::HBold1 => &mut self.h_bold1,
-    })[index] = MultiexpPoint::Constant(generator.to_bytes().as_ref().to_vec(), generator);
+      self.transcript.append_message(
+        b"list",
+        match list {
+          GeneratorsList::GBold1 => b"g_bold1",
+          GeneratorsList::GBold2 => b"g_bold2",
+          GeneratorsList::HBold1 => b"h_bold1",
+        },
+      );
+      let index = *index;
+      self.transcript.append_message(b"index", u32::try_from(index).unwrap().to_le_bytes());
+
+      (match list {
+        GeneratorsList::GBold1 => &mut self.g_bold1,
+        GeneratorsList::GBold2 => &mut self.g_bold2,
+        GeneratorsList::HBold1 => &mut self.h_bold1,
+      })[index] = from.generators[i].clone();
+    }
   }
 
   pub(crate) fn truncate(&mut self, generators: usize) {
@@ -378,9 +475,11 @@ impl<T: Transcript, C: Ciphersuite> Generators<T, C> {
     self.g.clone()
   }
 
+  /*
   pub(crate) fn multiexp_h(&self) -> MultiexpPoint<C::G> {
     self.h.clone()
   }
+  */
 
   pub(crate) fn multiexp_g_bold(&self) -> &[MultiexpPoint<C::G>] {
     &self.g_bold1
@@ -390,9 +489,11 @@ impl<T: Transcript, C: Ciphersuite> Generators<T, C> {
     &self.h_bold1
   }
 
+  /*
   pub(crate) fn multiexp_g_bold2(&self) -> &[MultiexpPoint<C::G>] {
     &self.g_bold2
   }
+  */
 
   pub(crate) fn multiexp_h_bold2(&self) -> &[MultiexpPoint<C::G>] {
     &self.h_bold2

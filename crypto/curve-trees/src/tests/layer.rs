@@ -10,18 +10,15 @@ use ciphersuite::{
 
 use ecip::Ecip;
 use bulletproofs_plus::{
-  arithmetic_circuit::Circuit, gadgets::elliptic_curve::DLogTable,
+  VectorCommitmentGenerators, arithmetic_circuit::Circuit, gadgets::elliptic_curve::DLogTable,
   tests::generators as generators_fn,
 };
 
-use crate::{
-  CurveCycle, pedersen_hash::pedersen_hash_vartime, permissible::Permissible, new_blind,
-  layer_gadget, tests::Pasta,
-};
+use crate::{CurveCycle, permissible::Permissible, new_blind, layer_gadget, tests::Pasta};
 
 #[test]
 fn test_layer_gadget() {
-  let generators = generators_fn::<Vesta>(2048);
+  let mut generators = generators_fn::<Vesta>(2048);
 
   let permissible = Permissible::<<Pasta as CurveCycle>::C1> {
     h: <<Pasta as CurveCycle>::C1 as Ciphersuite>::G::random(&mut OsRng),
@@ -35,6 +32,8 @@ fn test_layer_gadget() {
   for _ in 0 .. 4 {
     pedersen_generators.push(<Vesta as Ciphersuite>::G::random(&mut OsRng));
   }
+  let pedersen_generators = VectorCommitmentGenerators::new(&pedersen_generators);
+  generators.whitelist_vector_commitments(b"Pedersen Hash Generators", &pedersen_generators);
 
   let mut elems = vec![];
   let mut raw_elems = vec![];
@@ -77,7 +76,7 @@ fn test_layer_gadget() {
   assert_eq!(commitments.len(), 2);
   assert_eq!(
     *commitments.last().unwrap() - (generators.h() * blinds.last().unwrap()),
-    pedersen_hash_vartime::<Vesta>(&raw_elems, &pedersen_generators)
+    pedersen_generators.commit_vartime(&raw_elems),
   );
 
   let mut circuit = Circuit::new(generators, false, Some(commitments));

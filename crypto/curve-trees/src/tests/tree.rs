@@ -1,11 +1,14 @@
 use rand_core::OsRng;
 
+use transcript::{Transcript, RecommendedTranscript};
+use multiexp::{Point as MultiexpPoint};
 use ciphersuite::{
   group::{ff::Field, Group},
   Ciphersuite,
 };
 
 use ecip::Ecip;
+use bulletproofs_plus::VectorCommitmentGenerators;
 
 use crate::{
   CurveCycle,
@@ -15,7 +18,10 @@ use crate::{
   permissible::Permissible,
 };
 
-fn check_path(tree: &Tree<Pasta>, leaf: <<Pasta as CurveCycle>::C1 as Ciphersuite>::G) {
+fn check_path(
+  tree: &Tree<RecommendedTranscript, Pasta>,
+  leaf: <<Pasta as CurveCycle>::C1 as Ciphersuite>::G,
+) {
   let path = tree.membership(leaf).unwrap();
 
   let mut depth = 1;
@@ -52,7 +58,14 @@ fn check_path(tree: &Tree<Pasta>, leaf: <<Pasta as CurveCycle>::C1 as Ciphersuit
           .permissible_c2()
           .make_permissible(pedersen_hash_vartime::<<Pasta as CurveCycle>::C2>(
             &even,
-            &tree.odd_generators(depth).unwrap()[.. even.len()],
+            &tree.odd_generators(depth).unwrap().generators()[.. even.len()]
+              .iter()
+              .cloned()
+              .map(|point| {
+                let MultiexpPoint::Constant(_, point) = point else { unreachable!() };
+                point
+              })
+              .collect::<Vec<_>>(),
           ))
           .1,
       );
@@ -62,7 +75,14 @@ fn check_path(tree: &Tree<Pasta>, leaf: <<Pasta as CurveCycle>::C1 as Ciphersuit
           .permissible_c1()
           .make_permissible(pedersen_hash_vartime::<<Pasta as CurveCycle>::C1>(
             &odd,
-            &tree.even_generators(depth).unwrap()[.. odd.len()],
+            &tree.even_generators(depth).unwrap().generators()[.. odd.len()]
+              .iter()
+              .cloned()
+              .map(|point| {
+                let MultiexpPoint::Constant(_, point) = point else { unreachable!() };
+                point
+              })
+              .collect::<Vec<_>>(),
           ))
           .1,
       );
@@ -89,7 +109,13 @@ fn test_tree() {
 
   for width in 2 ..= 4usize {
     let max = u64::try_from(width).unwrap().pow(4);
-    let mut tree = Tree::<Pasta>::new(permissible_c1, permissible_c2, leaf_randomness, width, max);
+    let mut tree = Tree::<RecommendedTranscript, Pasta>::new(
+      permissible_c1,
+      permissible_c2,
+      leaf_randomness,
+      width,
+      max,
+    );
     assert_eq!(tree.root(), Hash::Odd(<<Pasta as CurveCycle>::C2 as Ciphersuite>::G::identity()));
     assert_eq!(tree.depth(), 0);
 
@@ -138,12 +164,22 @@ fn test_tree() {
 
       let mut even = leaves[.. usize::try_from(i).unwrap()].to_vec();
       let mut odd = vec![];
-      fn hash<C: Ecip>(
+      fn hash<T: Transcript, C: Ecip>(
         permissible: &Permissible<C>,
         width: usize,
         values: &mut Vec<C::F>,
-        generators: &[C::G],
+        generators: &VectorCommitmentGenerators<T, C>,
       ) -> Vec<C::G> {
+        let generators = generators
+          .generators()
+          .iter()
+          .cloned()
+          .map(|point| {
+            let MultiexpPoint::Constant(_, point) = point else { unreachable!() };
+            point
+          })
+          .collect::<Vec<_>>();
+
         let mut res = vec![];
         while !values.is_empty() {
           let mut these = vec![];
@@ -163,7 +199,7 @@ fn test_tree() {
       let mut last_odd = None;
       for i in 1 ..= depth {
         if !even.is_empty() {
-          let hashes = hash::<<Pasta as CurveCycle>::C2>(
+          let hashes = hash::<RecommendedTranscript, <Pasta as CurveCycle>::C2>(
             &permissible_c2,
             width,
             &mut even,
@@ -174,7 +210,7 @@ fn test_tree() {
             odd.push(Pasta::c2_coords(hash).0);
           }
         } else {
-          let hashes = hash::<<Pasta as CurveCycle>::C1>(
+          let hashes = hash::<RecommendedTranscript, <Pasta as CurveCycle>::C1>(
             &permissible_c1,
             width,
             &mut odd,

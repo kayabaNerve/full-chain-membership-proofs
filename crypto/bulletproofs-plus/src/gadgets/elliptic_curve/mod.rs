@@ -594,9 +594,7 @@ pub trait EmbeddedCurveOperations: Ciphersuite {
 
     // Create the commitment
     let commitment = circuit.allocate_vector_commitment();
-    for var in transcript {
-      circuit.bind(commitment, var, None);
-    }
+    circuit.bind(commitment, transcript, None);
     let commitment = circuit
       .finalize_commitment(commitment, Some(Self::F::random(rng)).filter(|_| circuit.prover()));
 
