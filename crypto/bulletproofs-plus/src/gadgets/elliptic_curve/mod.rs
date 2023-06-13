@@ -1,6 +1,6 @@
 use rand_core::{RngCore, CryptoRng};
 
-use subtle::Choice;
+use subtle::{Choice, ConstantTimeEq, ConditionallySelectable};
 
 use transcript::Transcript;
 use ciphersuite::{
@@ -97,7 +97,12 @@ impl<C: Ecip> DLogTable<C> {
     // TODO: Technically, this is a bit indirect
     // It should be the amount of trits which will fit into both fields, not the amount of trits
     // which will fit into the mutual capacity of both fields
-    let trits = scalar_to_trits::<C>(max).len();
+    let mut trits = scalar_to_trits::<C>(max);
+    while trits.last().unwrap() == &Trit::Zero {
+      trits.pop();
+    }
+    let trits = trits.len();
+
     let mut G_pow_3 = vec![point; trits];
     for i in 1 .. trits {
       G_pow_3[i] = G_pow_3[i - 1].double() + G_pow_3[i - 1];
@@ -401,25 +406,30 @@ pub trait EmbeddedCurveOperations: Ciphersuite {
       }
 
       let mut trits = scalar_to_trits::<Self::Embedded>(dlog.unwrap());
-      while trits.len() < G.1 {
-        trits.push(Trit::Zero);
+
+      // TODO: This block is not const time
+      {
+        trits.truncate(G.1);
+        while trits.len() < G.1 {
+          trits.push(Trit::Zero);
+        }
+        assert_eq!(trits.len(), G.1);
       }
-      assert_eq!(trits.len(), G.1);
 
       let mut bits = vec![];
       let mut Gs = vec![];
       for (i, trit) in trits.iter().enumerate() {
-        // TODO: This is not constant time
-        bits.push(Some(Choice::from(match trit {
-          Trit::NegOne => 1,
-          Trit::Zero => 0,
-          Trit::One => 1,
-        })));
-        Gs.push(match trit {
-          Trit::NegOne => -G.0[i],
-          Trit::Zero => <Self::Embedded as Ciphersuite>::G::identity(),
-          Trit::One => G.0[i],
-        });
+        bits.push(Some(Choice::from(u8::conditional_select(&1, &0, trit.ct_eq(&Trit::Zero)))));
+        let G = <Self::Embedded as Ciphersuite>::G::conditional_select(
+          &G.0[i],
+          &<Self::Embedded as Ciphersuite>::G::identity(),
+          trit.ct_eq(&Trit::Zero),
+        );
+        Gs.push(<Self::Embedded as Ciphersuite>::G::conditional_select(
+          &G,
+          &-G,
+          trit.ct_eq(&Trit::NegOne),
+        ));
       }
       (bits, Some(Gs))
     } else {
