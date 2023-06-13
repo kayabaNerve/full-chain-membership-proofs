@@ -190,6 +190,9 @@ pub trait EmbeddedCurveOperations: Ciphersuite {
 
   // Curve Trees, Appendix A.[4, 5]
   // This uses 4 gates theoretically, 5 as implemented here, and 6 constraints
+  // While this isn't more performant, it avoids needing to perform the OnCurvePoint construction.
+
+  // TODO: Merge this more with incomplete_add and update this function's docstring
   fn incomplete_add_constant<T: Transcript>(
     circuit: &mut Circuit<T, Self>,
     p1: OnCurvePoint,

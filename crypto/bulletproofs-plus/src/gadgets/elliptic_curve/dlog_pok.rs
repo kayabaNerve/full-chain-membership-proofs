@@ -67,7 +67,7 @@ use crate::{
 pub struct DLogTable<C: Ecip>(Vec<C::G>, usize);
 impl<C: Ecip> DLogTable<C> {
   pub fn new(point: C::G) -> DLogTable<C> {
-    assert!(point != C::G::identity());
+    assert!(point != C::G::identity(), "creating a DLogTable for identity");
 
     // Mutual amount of bits
     // TODO: This assumes this is being used in a cycle, not a tower
@@ -79,7 +79,7 @@ impl<C: Ecip> DLogTable<C> {
     // It should be the amount of trits which will fit into both fields, not the amount of trits
     // which will fit into the mutual capacity of both fields
     let mut trits = scalar_to_trits::<C>(max);
-    while trits.last().unwrap() == &Trit::Zero {
+    while trits.last().expect("maximum scalar was 0") == &Trit::Zero {
       trits.pop();
     }
     let trits = trits.len();
@@ -129,13 +129,18 @@ pub(crate) fn divisor_dlog_pok<
   dlog: Option<<C::Embedded as Ciphersuite>::F>,
 ) {
   let (bits, Gs) = if circuit.prover() {
+    let dlog = dlog.expect("DLog wasn't available to the prover");
     {
-      let (x, y) = C::Embedded::to_xy(G.0[0] * dlog.unwrap());
-      assert_eq!(circuit.unchecked_value(p.x), x);
-      assert_eq!(circuit.unchecked_value(p.y), y);
+      let (x, y) = C::Embedded::to_xy(G.0[0] * dlog);
+      debug_assert_eq!(
+        circuit.unchecked_value(p.x),
+        x,
+        "proving DLog PoK for a point with a distinct DLog"
+      );
+      debug_assert_eq!(circuit.unchecked_value(p.y), y, "proving DLog PoK for -point");
     }
 
-    let mut trits = scalar_to_trits::<C::Embedded>(dlog.unwrap());
+    let mut trits = scalar_to_trits::<C::Embedded>(dlog);
 
     // TODO: This block is not const time
     {
@@ -143,7 +148,7 @@ pub(crate) fn divisor_dlog_pok<
       while trits.len() < G.1 {
         trits.push(Trit::Zero);
       }
-      assert_eq!(trits.len(), G.1);
+      debug_assert_eq!(trits.len(), G.1);
     }
 
     let mut bits = vec![];
@@ -179,22 +184,43 @@ pub(crate) fn divisor_dlog_pok<
 
   // Create the divisor
   let (y_coefficient, yx_coefficients, x_coefficients, zero_coefficient) = if circuit.prover() {
-    let mut Gs = Gs.unwrap();
+    let mut Gs = Gs.expect("prover didn't populate Gs");
     Gs.push(-C::Embedded::from_xy(circuit.unchecked_value(p.x), circuit.unchecked_value(p.y)));
-    assert_eq!(Gs.len(), points);
+    debug_assert_eq!(Gs.len(), points);
 
     // Drop all Gs which are identity
     let without_identity =
       Gs.drain(..).filter(|G| !bool::from(G.is_identity())).collect::<Vec<_>>();
     drop(Gs);
+    assert!(
+      without_identity.len() >= 2,
+      "invalid amount of points. either {} or {}",
+      "0 (proving [] == identity, when we need a non-zero divisor)",
+      "1 (a non-identity x == identity, which is false)",
+    );
 
     // TODO: Can we achieve a more efficient divisor representation via derivatives?
     let divisor = Divisor::<C::Embedded>::new(&without_identity);
     let Poly { y_coefficients, yx_coefficients, x_coefficients, zero_coefficient } = divisor;
-    assert!(y_coefficients.len() <= 1);
-    assert_eq!(yx_coeffs(without_identity.len()), yx_coefficients.get(0).map(|vec| vec.len()));
-    assert_eq!(x_coeffs(without_identity.len()), x_coefficients.len());
-    assert_eq!(x_coefficients.last().unwrap(), &C::F::ONE);
+    debug_assert!(
+      y_coefficients.len() <= 1,
+      "multiple y coefficients were present despite reduction by a modulus with a y**2 term"
+    );
+    debug_assert_eq!(
+      yx_coeffs(without_identity.len()),
+      yx_coefficients.get(0).map(|vec| vec.len()),
+      "yx_coeffs formula is wrong"
+    );
+    debug_assert_eq!(
+      x_coeffs(without_identity.len()),
+      x_coefficients.len(),
+      "x_coeffs formula is wrong"
+    );
+    debug_assert_eq!(
+      x_coefficients.last().expect("prover's polynomial was empty despite having points"),
+      &C::F::ONE,
+      "polynomial didn't have its leading x coefficient normalized to 1"
+    );
 
     (
       Some(y_coefficients.get(0).copied().unwrap_or(C::F::ZERO)),
@@ -205,6 +231,13 @@ pub(crate) fn divisor_dlog_pok<
   } else {
     (None, None, None, None)
   };
+
+  let x_coeffs = x_coeffs(points);
+  // There will be a non-zero amount of yx_coeffs so long as at least 4 points were used
+  // This is calling yx_coeffs with points, the theoretical amount allowed, not Gs.len(), the
+  // amount used
+  // Panic on the trivial case of a <= 3**4 order
+  let yx_coeffs = yx_coeffs(points).expect("only 3**4 points were allowed");
 
   // Make sure one of the x coefficients is 1, and therefore that this divisor isn't equal to 0
   //
@@ -221,7 +254,6 @@ pub(crate) fn divisor_dlog_pok<
   // TODO
 
   // GC: 0.5 per point
-  let x_coeffs = x_coeffs(points);
   let x_coefficients = if let Some(mut x_coefficients) = x_coefficients {
     let mut res = x_coefficients.drain(..).map(Some).collect::<Vec<_>>();
     while res.len() < x_coeffs {
@@ -231,7 +263,7 @@ pub(crate) fn divisor_dlog_pok<
   } else {
     vec![None; x_coeffs]
   };
-  assert_eq!(x_coefficients.len(), x_coeffs);
+  debug_assert_eq!(x_coefficients.len(), x_coeffs, "x_coefficients lost consistency with x_coeffs");
   let x_coefficients_sub_one = set_with_constant(circuit, C::F::ONE, &x_coefficients);
   drop(x_coefficients);
 
@@ -253,8 +285,7 @@ pub(crate) fn divisor_dlog_pok<
     let mut serial_divisor = {
       let mut serial_divisor = vec![];
 
-      for i in 0 .. yx_coeffs(points).expect("only 2**4 points were allowed for this composition?")
-      {
+      for i in 0 .. yx_coeffs {
         // Add Some(yx_coeff) if prover has a yx_coeff
         // Add Some(0) if prover doesn't have a yx_coeff
         // Add None if verifier
@@ -262,7 +293,7 @@ pub(crate) fn divisor_dlog_pok<
           Some(
             yx_coefficients
               .as_ref()
-              .unwrap()
+              .expect("prover didn't set yx_coefficients")
               .get(0)
               .cloned()
               .unwrap_or(vec![])
@@ -321,12 +352,13 @@ pub(crate) fn divisor_dlog_pok<
   for bit in &dlog {
     // Note: We can only bind a single element, the re-composition of the DLog, if desirable
     // It'd be a single sharable gate and one constraint
-    transcript.push(circuit.variable_to_product(bit.variable).unwrap());
+    transcript
+      .push(circuit.variable_to_product(bit.variable).expect("bit was created without a gate"));
   }
 
   // And finally the point itself
-  transcript.push(circuit.variable_to_product(p.x).unwrap());
-  transcript.push(circuit.variable_to_product(p.y).unwrap());
+  transcript.push(circuit.variable_to_product(p.x).expect("on-curve check didn't use x in a gate"));
+  transcript.push(circuit.variable_to_product(p.y).expect("on-curve check didn't use y in a gate"));
 
   // Create the commitment
   let commitment = circuit.allocate_vector_commitment();
@@ -340,7 +372,10 @@ pub(crate) fn divisor_dlog_pok<
   let (challenge_x, challenge_y) = C::Embedded::to_xy(challenge);
 
   // Create the powers of x
-  assert!(x_coeffs > yx_coeffs(points).unwrap());
+  // This debug assert makes sure we don't need to use a max statement
+  // While we could remove it for a max statement, this not holding means some significant
+  // structural changes to the polynomial occured, which are assumed abnormal
+  debug_assert!(x_coeffs > yx_coeffs, "yx_coeffs had more terms than x_coeffs");
   let mut x_pows = vec![challenge_x];
   while x_pows.len() < x_coeffs {
     x_pows.push(*x_pows.last().unwrap() * challenge_x);
@@ -370,7 +405,7 @@ pub(crate) fn divisor_dlog_pok<
   // Perform the yx_coeffs
   let mut neg_lhs_constraint = lhs_constraint.clone();
   let mut yx_res = vec![];
-  for i in 0 .. yx_coeffs(points).unwrap() {
+  for i in 0 .. yx_coeffs {
     let yx = challenge_y * x_pows[i];
     lhs_constraint.weight(yx_coefficients[i], yx);
     neg_lhs_constraint.weight(yx_coefficients[i], -yx);
