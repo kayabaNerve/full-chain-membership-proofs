@@ -219,14 +219,14 @@ impl<T: Transcript, C: Ciphersuite> ArithmeticCircuitStatement<T, C> {
 
     let alpha = blind;
     let mut A_terms = Vec::with_capacity((self.generators.multiexp_g_bold().len() * 3) + 1);
-    for (g_bold, aL) in self.generators.g_bold().0.iter().zip(&witness.aL.0) {
-      A_terms.push((*aL, *g_bold));
+    for (g_bold, aL) in self.generators.multiexp_g_bold().iter().zip(&witness.aL.0) {
+      A_terms.push((*aL, g_bold.point()));
     }
-    for (h_bold, aR) in self.generators.h_bold().0.iter().zip(&witness.aR.0) {
-      A_terms.push((*aR, *h_bold));
+    for (h_bold, aR) in self.generators.multiexp_h_bold().iter().zip(&witness.aR.0) {
+      A_terms.push((*aR, h_bold.point()));
     }
-    for (g_bold2, aO) in self.generators.g_bold2().0.iter().zip(&witness.aO.0) {
-      A_terms.push((*aO, *g_bold2));
+    for (g_bold2, aO) in self.generators.multiexp_g_bold2().iter().zip(&witness.aO.0) {
+      A_terms.push((*aO, g_bold2.point()));
     }
     A_terms.push((alpha, self.generators.h()));
     let A = multiexp(&A_terms);

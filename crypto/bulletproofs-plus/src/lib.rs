@@ -113,6 +113,7 @@ impl<T: Transcript, C: Ciphersuite> VectorCommitmentGenerators<T, C> {
     &self.generators
   }
 
+  #[allow(clippy::len_without_is_empty)] // Generators should never be empty/potentially empty
   pub fn len(&self) -> usize {
     self.generators.len()
   }
@@ -122,9 +123,7 @@ impl<T: Transcript, C: Ciphersuite> VectorCommitmentGenerators<T, C> {
 
     let mut multiexp = vec![];
     for (var, point) in vars.iter().zip(self.generators().iter()) {
-      // TODO: Don't require this conversion here
-      let MultiexpPoint::Constant(_, point) = point else { unreachable!() };
-      multiexp.push((*var, *point));
+      multiexp.push((*var, point.point()));
     }
     multiexp_vartime(&multiexp)
   }
@@ -187,24 +186,12 @@ impl<T: Transcript, C: Ciphersuite> Generators<T, C> {
     }
 
     Generators {
-      g: MultiexpPoint::Constant(g.to_bytes().as_ref().to_vec(), g),
-      h: MultiexpPoint::Constant(h.to_bytes().as_ref().to_vec(), h),
-      g_bold1: g_bold1
-        .drain(..)
-        .map(|point| MultiexpPoint::Constant(point.to_bytes().as_ref().to_vec(), point))
-        .collect(),
-      g_bold2: g_bold2
-        .drain(..)
-        .map(|point| MultiexpPoint::Constant(point.to_bytes().as_ref().to_vec(), point))
-        .collect(),
-      h_bold1: h_bold1
-        .drain(..)
-        .map(|point| MultiexpPoint::Constant(point.to_bytes().as_ref().to_vec(), point))
-        .collect(),
-      h_bold2: h_bold2
-        .drain(..)
-        .map(|point| MultiexpPoint::Constant(point.to_bytes().as_ref().to_vec(), point))
-        .collect(),
+      g: MultiexpPoint::new_constant(g),
+      h: MultiexpPoint::new_constant(h),
+      g_bold1: g_bold1.drain(..).map(MultiexpPoint::new_constant).collect(),
+      g_bold2: g_bold2.drain(..).map(MultiexpPoint::new_constant).collect(),
+      h_bold1: h_bold1.drain(..).map(MultiexpPoint::new_constant).collect(),
+      h_bold2: h_bold2.drain(..).map(MultiexpPoint::new_constant).collect(),
 
       proving_gs: None,
       proving_h_bolds: None,
@@ -241,21 +228,10 @@ impl<T: Transcript, C: Ciphersuite> Generators<T, C> {
       add_generator(b"h_bold1", h_bold);
     }
 
-    self.proving_gs = Some((
-      MultiexpPoint::Constant(gs.0.to_bytes().as_ref().to_vec(), gs.0),
-      MultiexpPoint::Constant(gs.1.to_bytes().as_ref().to_vec(), gs.1),
-    ));
+    self.proving_gs = Some((MultiexpPoint::new_constant(gs.0), MultiexpPoint::new_constant(gs.1)));
     self.proving_h_bolds = Some((
-      h_bold1
-        .0
-        .drain(..)
-        .map(|point| MultiexpPoint::Constant(point.to_bytes().as_ref().to_vec(), point))
-        .collect(),
-      h_bold1
-        .1
-        .drain(..)
-        .map(|point| MultiexpPoint::Constant(point.to_bytes().as_ref().to_vec(), point))
-        .collect(),
+      h_bold1.0.drain(..).map(MultiexpPoint::new_constant).collect(),
+      h_bold1.1.drain(..).map(MultiexpPoint::new_constant).collect(),
     ));
   }
 
@@ -385,6 +361,7 @@ impl<T: Transcript, C: Ciphersuite> Generators<T, C> {
     }
   }
 
+  // TODO: Just shorten the lengths of slices. Don't actually call truncate
   pub(crate) fn truncate(&mut self, generators: usize) {
     self.g_bold1.truncate(generators);
     self.g_bold2.truncate(generators);
@@ -410,66 +387,29 @@ impl<T: Transcript, C: Ciphersuite> Generators<T, C> {
   }
 
   pub(crate) fn g(&self) -> C::G {
-    let MultiexpPoint::Constant(_, g) = self.g.clone() else { unreachable!() };
-    g
+    self.g.point()
   }
 
   pub fn h(&self) -> C::G {
-    let MultiexpPoint::Constant(_, h) = self.h.clone() else { unreachable!() };
-    h
+    self.h.point()
   }
 
+  // TODO: Don't perform another allocation here
   pub(crate) fn g_bold(&self) -> PointVector<C> {
-    PointVector(
-      self
-        .g_bold1
-        .iter()
-        .map(|point| {
-          let MultiexpPoint::Constant(_, g) = point.clone() else { unreachable!() };
-          g
-        })
-        .collect::<Vec<_>>(),
-    )
+    PointVector(self.g_bold1.iter().map(MultiexpPoint::point).collect())
   }
 
   pub(crate) fn h_bold(&self) -> PointVector<C> {
-    PointVector(
-      self
-        .h_bold1
-        .iter()
-        .map(|point| {
-          let MultiexpPoint::Constant(_, g) = point.clone() else { unreachable!() };
-          g
-        })
-        .collect::<Vec<_>>(),
-    )
-  }
-
-  pub(crate) fn g_bold2(&self) -> PointVector<C> {
-    PointVector(
-      self
-        .g_bold2
-        .iter()
-        .map(|point| {
-          let MultiexpPoint::Constant(_, g) = point.clone() else { unreachable!() };
-          g
-        })
-        .collect::<Vec<_>>(),
-    )
+    PointVector(self.h_bold1.iter().map(MultiexpPoint::point).collect())
   }
 
   /*
+  pub(crate) fn g_bold2(&self) -> PointVector<C> {
+    PointVector(self.g_bold2.iter().map(MultiexpPoint::point).collect())
+  }
+
   pub(crate) fn h_bold2(&self) -> PointVector<C> {
-    PointVector(
-      self
-        .h_bold2
-        .iter()
-        .map(|point| {
-          let MultiexpPoint::Constant(_, g) = point.clone() else { unreachable!() };
-          g
-        })
-        .collect::<Vec<_>>(),
-    )
+    PointVector(self.h_bold2.iter().map(MultiexpPoint::point).collect())
   }
   */
 
@@ -509,6 +449,8 @@ impl<T: Transcript, C: Ciphersuite> Generators<T, C> {
     (self.g, self.h, self.g_bold1, self.h_bold1)
   }
 }
+
+// Range proof structures
 
 #[allow(non_snake_case)]
 #[derive(Clone, PartialEq, Eq, Debug, Zeroize, ZeroizeOnDrop)]

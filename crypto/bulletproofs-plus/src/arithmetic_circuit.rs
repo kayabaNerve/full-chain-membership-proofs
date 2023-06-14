@@ -5,7 +5,7 @@ use rand_core::{RngCore, CryptoRng};
 
 use transcript::Transcript;
 
-use multiexp::BatchVerifier;
+use multiexp::{multiexp, BatchVerifier};
 use ciphersuite::{
   group::{ff::Field, GroupEncoding},
   Ciphersuite,
@@ -406,21 +406,32 @@ impl<T: Transcript, C: Ciphersuite> Circuit<T, C> {
   ) -> C::G {
     if self.prover() {
       // Calculate and return the vector commitment
-      // TODO: Use a multiexp here
-      let mut commitment = self.generators.h() * blind.unwrap();
-      for product in self.bound_products[vector_commitment.0].clone() {
-        commitment += match product {
+      let products = self.bound_products[vector_commitment.0].clone();
+      let mut terms = Vec::with_capacity(products.len() + 1);
+      terms.push((blind.unwrap(), self.generators.h()));
+      for product in products {
+        match product {
           ProductReference::Left { product, variable } => {
-            self.generators.g_bold()[product] * self.variables[variable].value().unwrap()
+            terms.push((
+              self.variables[variable].value().unwrap(),
+              self.generators.multiexp_g_bold()[product].point(),
+            ));
           }
           ProductReference::Right { product, variable } => {
-            self.generators.h_bold()[product] * self.variables[variable].value().unwrap()
+            terms.push((
+              self.variables[variable].value().unwrap(),
+              self.generators.multiexp_h_bold()[product].point(),
+            ));
           }
           ProductReference::Output { product, variable } => {
-            self.generators.g_bold2()[product] * self.variables[variable].value().unwrap()
+            terms.push((
+              self.variables[variable].value().unwrap(),
+              self.generators.multiexp_g_bold2()[product].point(),
+            ));
           }
         };
       }
+      let commitment = multiexp(&terms);
       self.finalized_commitments.insert(vector_commitment, blind);
       commitment
     } else {

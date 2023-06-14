@@ -15,6 +15,19 @@ pub enum Point<G: Group> {
   Variable(G),
 }
 
+impl<G: Group + GroupEncoding> Point<G> {
+  pub fn new_constant(point: G) -> Self {
+    Point::Constant(point.to_bytes().as_ref().to_vec(), point)
+  }
+
+  pub fn point(&self) -> G {
+    match self {
+      Point::Constant(_, point) => *point,
+      Point::Variable(point) => *point,
+    }
+  }
+}
+
 // Flatten the contained statements to a single Vec.
 // Wrapped in Zeroizing in case any of the included statements contain private values.
 // Merges scalars for common generators.
@@ -156,21 +169,8 @@ where
       .get(0)
       .filter(|(_, value)| {
         !bool::from(
-          multiexp_vartime(
-            &value
-              .iter()
-              .map(|pair| {
-                (
-                  pair.0,
-                  match pair.1 {
-                    Point::Constant(_, g) => g,
-                    Point::Variable(g) => g,
-                  },
-                )
-              })
-              .collect::<Vec<_>>(),
-          )
-          .is_identity(),
+          multiexp_vartime(&value.iter().map(|pair| (pair.0, pair.1.point())).collect::<Vec<_>>())
+            .is_identity(),
         )
       })
       .map(|(id, _)| *id)
