@@ -376,22 +376,24 @@ impl<T: Transcript, C: Ciphersuite> Circuit<T, C> {
   ) {
     assert!(!self.finalized_commitments.contains_key(&vector_commitment));
 
-    let mut to_replace = vec![];
-    for product in products {
+    for product in &products {
       for bound in &self.bound_products {
-        assert!(!bound.contains(&product));
+        assert!(!bound.contains(product));
       }
-      self.bound_products[vector_commitment.0].insert(product);
-
-      // TODO: PR -> (GenList, usize) helper
-      to_replace.push(match product {
-        ProductReference::Left { product, .. } => (GeneratorsList::GBold1, product),
-        ProductReference::Right { product, .. } => (GeneratorsList::HBold1, product),
-        ProductReference::Output { product, .. } => (GeneratorsList::GBold2, product),
-      });
+      self.bound_products[vector_commitment.0].insert(*product);
     }
 
     if let Some(generators) = generators {
+      let mut to_replace = Vec::with_capacity(products.len());
+      for product in products {
+        // TODO: PR -> (GenList, usize) helper
+        to_replace.push(match product {
+          ProductReference::Left { product, .. } => (GeneratorsList::GBold1, product),
+          ProductReference::Right { product, .. } => (GeneratorsList::HBold1, product),
+          ProductReference::Output { product, .. } => (GeneratorsList::GBold2, product),
+        });
+      }
+
       self.generators.replace_generators(generators, &to_replace);
     }
   }
@@ -707,9 +709,9 @@ impl<T: Transcript, C: Ciphersuite> Circuit<T, C> {
       scalars: Vec<C::F>,
       blind: C::F,
     ) -> (C::G, (WipProof<C>, WipProof<C>)) {
-      assert_eq!(alt_generators_1.g_bold().len(), scalars.len());
-      assert!(alt_generators_1.g_bold2().0.is_empty());
-      assert!(alt_generators_1.h_bold2().0.is_empty());
+      assert_eq!(alt_generators_1.multiexp_g_bold().len(), scalars.len());
+      assert!(alt_generators_1.multiexp_g_bold2().is_empty());
+      assert!(alt_generators_1.multiexp_h_bold2().is_empty());
 
       let scalars_len = scalars.len();
 

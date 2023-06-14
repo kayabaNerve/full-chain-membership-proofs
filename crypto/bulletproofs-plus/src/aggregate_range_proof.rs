@@ -33,8 +33,8 @@ pub struct AggregateRangeWitness<C: Ciphersuite> {
 
 impl<C: Ciphersuite> AggregateRangeWitness<C> {
   pub fn new(commitments: &[RangeCommitment<C>]) -> Self {
-    let mut values = vec![];
-    let mut gammas = vec![];
+    let mut values = Vec::with_capacity(commitments.len());
+    let mut gammas = Vec::with_capacity(commitments.len());
     for commitment in commitments {
       values.push(commitment.value);
       gammas.push(commitment.mask);
@@ -79,7 +79,7 @@ impl<T: Transcript, C: Ciphersuite> AggregateRangeStatement<T, C> {
   }
 
   fn d_j(j: usize, m: usize) -> ScalarVector<C> {
-    let mut d_j = vec![];
+    let mut d_j = Vec::with_capacity(m * RANGE_PROOF_BITS);
     for _ in 0 .. (j - 1) * N {
       d_j.push(C::F::ZERO);
     }
@@ -99,9 +99,9 @@ impl<T: Transcript, C: Ciphersuite> AggregateRangeStatement<T, C> {
     let (y, z) = Self::transcript_A(transcript, A);
 
     let mn = self.V.len() * N;
-    assert_eq!(self.generators.g_bold().len(), mn);
+    assert_eq!(self.generators.multiexp_g_bold().len(), mn);
 
-    let mut z_pow = vec![];
+    let mut z_pow = Vec::with_capacity(self.V.len());
 
     let mut d = ScalarVector::new(mn);
     for j in 1 ..= self.V.len() {
@@ -132,7 +132,7 @@ impl<T: Transcript, C: Ciphersuite> AggregateRangeStatement<T, C> {
     let z_vec = ScalarVector(vec![z; mn]);
 
     let neg_z = -z;
-    let mut A_terms = Vec::with_capacity((self.generators.g_bold().len() * 2) + 2);
+    let mut A_terms = Vec::with_capacity((self.generators.multiexp_g_bold().len() * 2) + 2);
     for generator in &self.generators.g_bold().0 {
       A_terms.push((neg_z, *generator));
     }
@@ -170,8 +170,8 @@ impl<T: Transcript, C: Ciphersuite> AggregateRangeStatement<T, C> {
 
     self.initial_transcript(transcript);
 
-    let mut d_js = vec![];
-    let mut a_l = ScalarVector(vec![]);
+    let mut d_js = Vec::with_capacity(self.V.len());
+    let mut a_l = ScalarVector(Vec::with_capacity(RANGE_PROOF_BITS * self.V.len()));
     for j in 1 ..= self.V.len() {
       d_js.push(Self::d_j(j, self.V.len()));
       a_l.0.append(&mut u64_decompose::<C>(witness.values[j - 1]).0);

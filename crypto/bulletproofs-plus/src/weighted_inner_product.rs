@@ -73,20 +73,12 @@ impl<T: Transcript, C: Ciphersuite> WipStatement<T, C> {
     Self { generators, P: P::Point(P), y: y_vec }
   }
 
-  // TODO: Merge with new
-  pub fn new_without_P_transcript(
+  pub(crate) fn new_without_P_transcript(
     generators: Generators<T, C>,
     P: Vec<(C::F, MultiexpPoint<C::G>)>,
-    y: C::F,
+    y: ScalarVector<C>,
   ) -> Self {
-    // y ** n
-    let mut y_vec = ScalarVector::new(generators.g_bold1.len());
-    y_vec[0] = y;
-    for i in 1 .. y_vec.len() {
-      y_vec[i] = y_vec[i - 1] * y;
-    }
-
-    Self { generators, P: P::Terms(P), y: y_vec }
+    Self { generators, P: P::Terms(P), y }
   }
 
   fn initial_transcript(&mut self, transcript: &mut T) {
@@ -144,13 +136,13 @@ impl<T: Transcript, C: Ciphersuite> WipStatement<T, C> {
     let inv_e = e.invert().unwrap();
 
     // This vartime is safe as all of these arguments are public
-    let mut new_g_bold = vec![];
+    let mut new_g_bold = Vec::with_capacity(g_bold1.len());
     let e_y_inv = e * y_inv_n_hat;
     for g_bold in g_bold1.0.drain(..).zip(g_bold2.0.drain(..)) {
       new_g_bold.push(multiexp_vartime(&[(inv_e, g_bold.0), (e_y_inv, g_bold.1)]));
     }
 
-    let mut new_h_bold = vec![];
+    let mut new_h_bold = Vec::with_capacity(h_bold1.len());
     for h_bold in h_bold1.0.drain(..).zip(h_bold2.0.drain(..)) {
       new_h_bold.push(multiexp_vartime(&[(e, h_bold.0), (inv_e, h_bold.1)]));
     }
@@ -390,55 +382,6 @@ impl<T: Transcript, C: Ciphersuite> WipStatement<T, C> {
       assert_eq!(proof.R.len(), lr_len);
     }
 
-    // The commented version saves does intermediary multiexp's to save on a variety of scalar ops
-    // A proper comparative benchmark has yet to be performed
-    /*
-    let mut P_terms = vec![];
-    for (L, R) in proof.L.iter().zip(proof.R.iter()) {
-      let n_hat = (tracked_g_bold.positions.len() + (tracked_g_bold.positions.len() % 2)) / 2;
-      let y_n_hat = y[n_hat - 1];
-      let y_inv_n_hat = y_n_hat.invert().unwrap();
-
-      (tracked_g_bold, tracked_h_bold, P_terms) = Self::next_G_H_P_without_permutation(
-        transcript,
-        tracked_g_bold,
-        tracked_h_bold,
-        P_terms,
-        *L,
-        *R,
-        y_inv_n_hat,
-      );
-    }
-    let P = P + multiexp_vartime(&P_terms);
-
-    let mut g_bold_res = vec![];
-    for (i, point) in g_bold.0.drain(..).enumerate() {
-      g_bold_res.push((tracked_g_bold.raw[i], point));
-    }
-    let g_bold = multiexp_vartime(&g_bold_res);
-
-    let mut h_bold_res = vec![];
-    for (i, point) in h_bold.0.drain(..).enumerate() {
-      h_bold_res.push((tracked_h_bold.raw[i], point));
-    }
-    let h_bold = multiexp_vartime(&h_bold_res);
-
-    let e = Self::transcript_A_B(transcript, proof.A, proof.B);
-    verifier.queue(
-      rng,
-      (),
-      [
-        (-e.square(), P),
-        (-e, proof.A),
-        (proof.r_answer * e, g_bold),
-        (proof.s_answer * e, h_bold),
-        (proof.r_answer * y[0] * proof.s_answer, g),
-        (proof.delta_answer, h),
-        (-C::F::ONE, proof.B),
-      ],
-    );
-    */
-
     let mut P_terms = match P {
       P::Point(point) => vec![(C::F::ONE, MultiexpPoint::Variable(point))],
       P::Terms(terms) => terms,
@@ -447,7 +390,7 @@ impl<T: Transcript, C: Ciphersuite> WipStatement<T, C> {
     for (L, R) in proof.L.iter().zip(proof.R.iter()) {
       let n_hat = (tracked_g_bold.positions.len() + (tracked_g_bold.positions.len() % 2)) / 2;
       let y_n_hat = y[n_hat - 1];
-      // TODO: Calculate these with a batch inversion
+      // TODO: Take these in from the caller
       let y_inv_n_hat = y_n_hat.invert().unwrap();
 
       Self::next_G_H_P_without_permutation(

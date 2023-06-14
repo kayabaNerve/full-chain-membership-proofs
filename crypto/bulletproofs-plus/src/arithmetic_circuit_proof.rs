@@ -45,13 +45,9 @@ impl<C: Ciphersuite> ArithmeticCircuitWitness<C> {
     gamma: ScalarVector<C>,
   ) -> Self {
     assert_eq!(aL.len(), aR.len());
-    let mut aO = vec![];
-    for (l, r) in aL.0.iter().zip(aR.0.iter()) {
-      aO.push(*l * r);
-    }
-    let aO = ScalarVector(aO);
-
     assert_eq!(v.len(), gamma.len());
+
+    let aO = aL.mul_vec(&aR);
     ArithmeticCircuitWitness { aL, aR, aO, v, gamma }
   }
 }
@@ -74,6 +70,7 @@ impl<T: Transcript, C: Ciphersuite> ArithmeticCircuitStatement<T, C> {
   ) -> Self {
     let m = V.len();
 
+    // Determine q/n by WL length/width
     let q = WL.length();
     let n = WL.width();
 
@@ -121,7 +118,7 @@ impl<T: Transcript, C: Ciphersuite> ArithmeticCircuitStatement<T, C> {
     transcript: &mut T,
     A: C::G,
   ) -> (
-    C::F,
+    ScalarVector<C>,
     C::F,
     ScalarVector<C>,
     ScalarVector<C>,
@@ -149,9 +146,13 @@ impl<T: Transcript, C: Ciphersuite> ArithmeticCircuitStatement<T, C> {
       y_n.push(*y_n.last().unwrap() * y);
       inv_y_n.push(*inv_y_n.last().unwrap() * inv_y_n[0]);
     }
+    let inv_y_n = ScalarVector(inv_y_n);
+
+    //let z_q_inv_y_n = z_q.mul_vec(&inv_y_n);
 
     let t_y_z = |W: &ScalarMatrix<C>| {
-      let res = W.mul_vec(&z_q).mul_vec(&ScalarVector(inv_y_n.clone()));
+      // TODO: Can these latter two mul_vecs be merged?
+      let res = W.mul_vec(&z_q).mul_vec(&inv_y_n);
       assert_eq!(res.len(), n);
       res
     };
@@ -172,17 +173,18 @@ impl<T: Transcript, C: Ciphersuite> ArithmeticCircuitStatement<T, C> {
       A_terms.push((*pair.0, pair.1.clone()));
     }
     for pair in WO_y_z.0.iter().zip(self.generators.multiexp_h_bold2().iter()) {
-      A_terms.push(((*pair.0 - C::F::ONE) * inv_y_n.last().unwrap(), pair.1.clone()));
+      A_terms.push(((*pair.0 - C::F::ONE) * inv_y_n.0.last().unwrap(), pair.1.clone()));
     }
     for pair in z_q_WV.0.iter().zip(self.V.0.iter()) {
       A_terms.push((*pair.0, MultiexpPoint::Variable(*pair.1)));
     }
+    let y_n = ScalarVector(y_n);
     A_terms.push((
-      z_q.inner_product(&self.c) + weighted_inner_product(&WR_y_z, &WL_y_z, &ScalarVector(y_n)),
+      z_q.inner_product(&self.c) + weighted_inner_product(&WR_y_z, &WL_y_z, &y_n),
       self.generators.multiexp_g(),
     ));
 
-    (y, *inv_y_n.last().unwrap(), z_q_WV, WL_y_z, WR_y_z, WO_y_z, A_terms)
+    (y_n, *inv_y_n.0.last().unwrap(), z_q_WV, WL_y_z, WR_y_z, WO_y_z, A_terms)
   }
 
   pub fn prove_with_blind<R: RngCore + CryptoRng>(
@@ -216,11 +218,20 @@ impl<T: Transcript, C: Ciphersuite> ArithmeticCircuitStatement<T, C> {
     self.initial_transcript(transcript);
 
     let alpha = blind;
-    // TODO: Merge this multiexps, and other sequential multiexps throughout the codebase
-    let A = self.generators.g_bold().multiexp(&witness.aL) +
-      self.generators.g_bold2().multiexp(&witness.aO) +
-      self.generators.h_bold().multiexp(&witness.aR) +
-      (self.generators.h() * alpha);
+    let mut A_terms = Vec::with_capacity((self.generators.multiexp_g_bold().len() * 3) + 1);
+    for (g_bold, aL) in self.generators.g_bold().0.iter().zip(&witness.aL.0) {
+      A_terms.push((*aL, *g_bold));
+    }
+    for (h_bold, aR) in self.generators.h_bold().0.iter().zip(&witness.aR.0) {
+      A_terms.push((*aR, *h_bold));
+    }
+    for (g_bold2, aO) in self.generators.g_bold2().0.iter().zip(&witness.aO.0) {
+      A_terms.push((*aO, *g_bold2));
+    }
+    A_terms.push((alpha, self.generators.h()));
+    let A = multiexp(&A_terms);
+    A_terms.zeroize();
+
     let (y, inv_y_n, z_q_WV, WL_y_z, WR_y_z, WO_y_z, A_hat) = self.compute_A_hat(transcript, A);
 
     let mut aL = witness.aL.add_vec(&WR_y_z);

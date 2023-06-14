@@ -458,6 +458,7 @@ impl<T: Transcript, C: Ciphersuite> Generators<T, C> {
     )
   }
 
+  /*
   pub(crate) fn h_bold2(&self) -> PointVector<C> {
     PointVector(
       self
@@ -470,6 +471,7 @@ impl<T: Transcript, C: Ciphersuite> Generators<T, C> {
         .collect::<Vec<_>>(),
     )
   }
+  */
 
   pub(crate) fn multiexp_g(&self) -> MultiexpPoint<C::G> {
     self.g.clone()
@@ -489,11 +491,9 @@ impl<T: Transcript, C: Ciphersuite> Generators<T, C> {
     &self.h_bold1
   }
 
-  /*
   pub(crate) fn multiexp_g_bold2(&self) -> &[MultiexpPoint<C::G>] {
     &self.g_bold2
   }
-  */
 
   pub(crate) fn multiexp_h_bold2(&self) -> &[MultiexpPoint<C::G>] {
     &self.h_bold2
