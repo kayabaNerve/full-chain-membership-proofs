@@ -35,3 +35,5 @@ a lot of love.
 The transcript policies of this library need to be reviewed.
 
 Lack of comprehensive Zeroize usage needs to be reviewed as well.
+
+Moving multiexp to IntoIter may save several notable allocations.

@@ -4,7 +4,7 @@ use zeroize::{Zeroize, ZeroizeOnDrop};
 
 use transcript::Transcript;
 
-use multiexp::BatchVerifier;
+use multiexp::{multiexp_vartime, BatchVerifier};
 use ciphersuite::{
   group::{ff::Field, GroupEncoding},
   Ciphersuite,
@@ -97,16 +97,17 @@ impl<T: Transcript, C: Ciphersuite> SingleRangeStatement<T, C> {
     let y_pows = ascending_y.sum();
 
     let two_descending_y = two_pows.mul_vec(&descending_y);
-    (
-      y,
-      two_descending_y.clone(),
-      y_n_plus_one,
-      z_vec.clone(),
-      A + g_bold.multiexp_vartime(&ScalarVector(vec![-z; RANGE_PROOF_BITS])) +
-        h_bold.multiexp_vartime(&two_descending_y.add_vec(&z_vec)) +
-        (V * y_n_plus_one) +
-        (g * ((y_pows * z) - (two_pows.sum() * y_n_plus_one * z) - (y_pows * z.square()))),
-    )
+    let mut A_terms = Vec::with_capacity((g_bold.len() * 2) + 2);
+    let neg_z = -z;
+    for g_bold in &g_bold.0 {
+      A_terms.push((neg_z, *g_bold));
+    }
+    for (h_bold, scalar) in h_bold.0.iter().zip(two_descending_y.add_vec(&z_vec).0.drain(..)) {
+      A_terms.push((scalar, *h_bold));
+    }
+    A_terms.push((y_n_plus_one, V));
+    A_terms.push(((y_pows * z) - (two_pows.sum() * y_n_plus_one * z) - (y_pows * z.square()), g));
+    (y, two_descending_y, y_n_plus_one, z_vec, A + multiexp_vartime(&A_terms))
   }
 
   pub fn prove<R: RngCore + CryptoRng>(
