@@ -4,7 +4,7 @@ use zeroize::{Zeroize, ZeroizeOnDrop};
 
 use transcript::Transcript;
 
-use multiexp::BatchVerifier;
+use multiexp::{multiexp, multiexp_vartime, BatchVerifier};
 use ciphersuite::{
   group::{ff::Field, Group, GroupEncoding},
   Ciphersuite,
@@ -98,11 +98,11 @@ impl<T: Transcript, C: Ciphersuite> AggregateRangeStatement<T, C> {
     // TODO: First perform the WIP transcript before acquiring challenges
     let (y, z) = Self::transcript_A(transcript, A);
 
-    assert_eq!(self.generators.g_bold().len(), self.V.len() * N);
+    let mn = self.V.len() * N;
+    assert_eq!(self.generators.g_bold().len(), mn);
 
     let mut z_pow = vec![];
 
-    let mn = self.V.len() * N;
     let mut d = ScalarVector::new(mn);
     for j in 1 ..= self.V.len() {
       z_pow.push(z.pow([2 * u64::try_from(j).unwrap()])); // TODO: Optimize this
@@ -131,18 +131,23 @@ impl<T: Transcript, C: Ciphersuite> AggregateRangeStatement<T, C> {
     // Collapse of [1; mn] * z
     let z_vec = ScalarVector(vec![z; mn]);
 
-    (
-      y,
-      d_descending_y.clone(),
-      y_mn_plus_one,
-      z_vec.clone(),
-      ScalarVector(z_pow),
-      A + self.generators.g_bold().multiexp_vartime(&ScalarVector(vec![-z; mn])) +
-        self.generators.h_bold().multiexp_vartime(&d_descending_y.add_vec(&z_vec)) +
-        (commitment_accum * y_mn_plus_one) +
-        (self.generators.g() *
-          ((y_pows * z) - (d.sum() * y_mn_plus_one * z) - (y_pows * z.square()))),
-    )
+    let neg_z = -z;
+    let mut A_terms = Vec::with_capacity((self.generators.g_bold().len() * 2) + 2);
+    for generator in &self.generators.g_bold().0 {
+      A_terms.push((neg_z, *generator));
+    }
+    for (generator, d_y_z) in
+      self.generators.h_bold().0.iter().zip(d_descending_y.add_vec(&z_vec).0.drain(..))
+    {
+      A_terms.push((d_y_z, *generator));
+    }
+    A_terms.push((y_mn_plus_one, commitment_accum));
+    A_terms.push((
+      ((y_pows * z) - (d.sum() * y_mn_plus_one * z) - (y_pows * z.square())),
+      self.generators.g(),
+    ));
+
+    (y, d_descending_y, y_mn_plus_one, z_vec, ScalarVector(z_pow), A + multiexp_vartime(&A_terms))
   }
 
   pub fn prove<R: RngCore + CryptoRng>(
@@ -183,7 +188,17 @@ impl<T: Transcript, C: Ciphersuite> AggregateRangeStatement<T, C> {
     let h_bold = self.generators.h_bold();
 
     let alpha = C::F::random(&mut *rng);
-    let A = g_bold.multiexp(&a_l) + h_bold.multiexp(&a_r) + (self.generators.h() * alpha);
+
+    let mut A_terms = Vec::with_capacity((g_bold.len() * 2) + 1);
+    for (i, generator) in g_bold.0.iter().enumerate() {
+      A_terms.push((a_l[i], *generator));
+    }
+    for (i, generator) in h_bold.0.iter().enumerate() {
+      A_terms.push((a_r[i], *generator));
+    }
+    A_terms.push((alpha, self.generators.h()));
+    let A = multiexp(&A_terms);
+    A_terms.zeroize();
 
     let (y, d_descending_y, y_mn_plus_one, z_vec, z_pow, A_hat) = self.compute_A_hat(transcript, A);
 

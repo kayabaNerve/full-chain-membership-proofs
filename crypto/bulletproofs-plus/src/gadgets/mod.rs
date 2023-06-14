@@ -29,7 +29,7 @@ pub fn assert_non_zero_gadget<T: Transcript, C: Ciphersuite>(
   circuit.equals_constant(one, C::F::ONE);
 }
 
-// Returns a variable for one if the value is non-zero, or a variable for zero if the value is zero.
+/// Returns a Bit if the value is non-zero.
 // One gate and the combined constraints/gates of assert_non_zero_gadget, Bit::new_from_var.
 pub fn is_non_zero_gadget<T: Transcript, C: Ciphersuite>(
   circuit: &mut Circuit<T, C>,

@@ -58,6 +58,7 @@ fn set_membership<T: Transcript, C: Ciphersuite>(
   circuit.equals_constant(circuit.variable_to_product(accum.unwrap()).unwrap(), C::F::ZERO);
 }
 
+/// Assert a variable is within a set.
 pub fn assert_variable_in_set_gadget<T: Transcript, C: Ciphersuite>(
   circuit: &mut Circuit<T, C>,
   member: ProductReference,
@@ -68,6 +69,7 @@ pub fn assert_variable_in_set_gadget<T: Transcript, C: Ciphersuite>(
   set_membership(circuit, Some(member), value, set);
 }
 
+/// Assert a constant is within a set.
 pub fn assert_constant_in_set_gadget<T: Transcript, C: Ciphersuite>(
   circuit: &mut Circuit<T, C>,
   constant: C::F,
@@ -79,7 +81,10 @@ pub fn assert_constant_in_set_gadget<T: Transcript, C: Ciphersuite>(
 // A set membership tailored for the DLog PoK
 //
 // This takes in variables, asserts one of them is a constant in O(n), and returns
-// ProductReferences for variable - constant
+// ProductReferences for variable - constant.
+//
+// It's efficiency is by not requiring prior usage in products before performing the set
+// membership.
 pub(crate) fn set_with_constant<T: Transcript, C: Ciphersuite>(
   circuit: &mut Circuit<T, C>,
   constant: C::F,
