@@ -119,7 +119,7 @@ impl<T: Transcript, C: Ciphersuite> ArithmeticCircuitStatement<T, C> {
     A: C::G,
   ) -> (
     ScalarVector<C>,
-    C::F,
+    Vec<C::F>,
     ScalarVector<C>,
     ScalarVector<C>,
     ScalarVector<C>,
@@ -184,7 +184,13 @@ impl<T: Transcript, C: Ciphersuite> ArithmeticCircuitStatement<T, C> {
       self.generators.multiexp_g(),
     ));
 
-    (y_n, *inv_y_n.0.last().unwrap(), z_q_WV, WL_y_z, WR_y_z, WO_y_z, A_terms)
+    // We need (n_hat * 2) inv_y_ns, where n_hat = n ceildiv 2
+    let mut inv_y_n = inv_y_n.0;
+    if (inv_y_n.len() % 2) == 1 {
+      inv_y_n.push(inv_y_n[0] * inv_y_n.last().unwrap());
+    }
+
+    (y_n, inv_y_n, z_q_WV, WL_y_z, WR_y_z, WO_y_z, A_terms)
   }
 
   pub fn prove_with_blind<R: RngCore + CryptoRng>(
@@ -232,12 +238,12 @@ impl<T: Transcript, C: Ciphersuite> ArithmeticCircuitStatement<T, C> {
     let A = multiexp(&A_terms);
     A_terms.zeroize();
 
-    let (y, inv_y_n, z_q_WV, WL_y_z, WR_y_z, WO_y_z, A_hat) = self.compute_A_hat(transcript, A);
+    let (y_n, inv_y_n, z_q_WV, WL_y_z, WR_y_z, WO_y_z, A_hat) = self.compute_A_hat(transcript, A);
 
     let mut aL = witness.aL.add_vec(&WR_y_z);
     aL.0.append(&mut witness.aO.0);
     let mut aR = witness.aR.add_vec(&WL_y_z);
-    aR.0.append(&mut WO_y_z.sub(C::F::ONE).mul(inv_y_n).0);
+    aR.0.append(&mut WO_y_z.sub(C::F::ONE).mul(inv_y_n[aR.len() - 1]).0);
     let alpha = alpha + z_q_WV.inner_product(&witness.gamma);
 
     // Safe to not transcript A_hat since A_hat is solely derivative of transcripted values
@@ -246,7 +252,8 @@ impl<T: Transcript, C: Ciphersuite> ArithmeticCircuitStatement<T, C> {
       wip: WipStatement::new_without_P_transcript(
         self.generators.reduce(self.WL.width(), true),
         A_hat,
-        y,
+        y_n,
+        inv_y_n,
       )
       .prove(rng, transcript, WipWitness::new(aL, aR, alpha)),
     }
@@ -272,11 +279,12 @@ impl<T: Transcript, C: Ciphersuite> ArithmeticCircuitStatement<T, C> {
     self.generators.truncate(self.WL.width());
     self.initial_transcript(transcript);
 
-    let (y, _, _, _, _, _, A_hat) = self.compute_A_hat(transcript, proof.A);
+    let (y_n, inv_y_n, _, _, _, _, A_hat) = self.compute_A_hat(transcript, proof.A);
     (WipStatement::new_without_P_transcript(
       self.generators.reduce(self.WL.width(), true),
       A_hat,
-      y,
+      y_n,
+      inv_y_n,
     ))
     .verify(rng, verifier, transcript, proof.wip);
   }

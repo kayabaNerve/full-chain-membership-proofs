@@ -3,7 +3,7 @@ use core::{
   ops::{Index, IndexMut},
 };
 
-use zeroize::{Zeroize, ZeroizeOnDrop};
+use zeroize::Zeroize;
 
 use transcript::Transcript;
 
@@ -12,7 +12,7 @@ use ciphersuite::{
   Ciphersuite,
 };
 
-#[derive(Clone, PartialEq, Eq, Debug, Zeroize, ZeroizeOnDrop)]
+#[derive(Clone, PartialEq, Eq, Debug, Zeroize)]
 pub struct ScalarVector<C: Ciphersuite>(pub Vec<C::F>);
 
 impl<C: Ciphersuite> Index<usize> for ScalarVector<C> {

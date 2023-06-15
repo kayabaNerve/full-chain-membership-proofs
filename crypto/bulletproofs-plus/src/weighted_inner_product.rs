@@ -27,6 +27,7 @@ pub struct WipStatement<T: Transcript, C: Ciphersuite> {
   generators: Generators<T, C>,
   P: P<C>,
   y: ScalarVector<C>,
+  inv_y: Option<Vec<C::F>>,
 }
 
 #[derive(Clone, Debug, Zeroize, ZeroizeOnDrop)]
@@ -70,15 +71,16 @@ impl<T: Transcript, C: Ciphersuite> WipStatement<T, C> {
       y_vec[i] = y_vec[i - 1] * y;
     }
 
-    Self { generators, P: P::Point(P), y: y_vec }
+    Self { generators, P: P::Point(P), y: y_vec, inv_y: None }
   }
 
   pub(crate) fn new_without_P_transcript(
     generators: Generators<T, C>,
     P: Vec<(C::F, MultiexpPoint<C::G>)>,
-    y: ScalarVector<C>,
+    y_n: ScalarVector<C>,
+    inv_y_n: Vec<C::F>,
   ) -> Self {
-    Self { generators, P: P::Terms(P), y }
+    Self { generators, P: P::Terms(P), y: y_n, inv_y: Some(inv_y_n) }
   }
 
   fn initial_transcript(&mut self, transcript: &mut T) {
@@ -221,7 +223,7 @@ impl<T: Transcript, C: Ciphersuite> WipStatement<T, C> {
   ) -> WipProof<C> {
     self.initial_transcript(transcript);
 
-    let WipStatement { generators, P, mut y } = self;
+    let WipStatement { generators, P, mut y, inv_y } = self;
     let (g, h, mut g_bold, mut h_bold) = generators.decompose();
 
     // Check P has the expected relationship
@@ -277,8 +279,10 @@ impl<T: Transcript, C: Ciphersuite> WipStatement<T, C> {
       let c_l = weighted_inner_product(&a1, &b2, &y);
       let c_r = weighted_inner_product(&(a2.mul(y_n_hat)), &b1, &y);
 
-      // TODO: Calculate these with a batch inversion
-      let y_inv_n_hat = y_n_hat.invert().unwrap();
+      // TODO: Calculate these with a batch inversion if inv_y is None
+      let y_inv_n_hat =
+        inv_y.as_ref().map(|inv_y| inv_y[n_hat - 1]).unwrap_or_else(|| y_n_hat.invert().unwrap());
+      debug_assert_eq!(y_inv_n_hat, y_n_hat.invert().unwrap());
 
       let mut L_terms = a1
         .mul(y_inv_n_hat)
@@ -360,7 +364,7 @@ impl<T: Transcript, C: Ciphersuite> WipStatement<T, C> {
   ) {
     self.initial_transcript(transcript);
 
-    let WipStatement { generators, P, y } = self;
+    let WipStatement { generators, P, y, inv_y } = self;
     let (g, h, mut g_bold, mut h_bold) = generators.multiexp_decompose();
 
     assert!(!g_bold.is_empty());
@@ -390,8 +394,9 @@ impl<T: Transcript, C: Ciphersuite> WipStatement<T, C> {
     for (L, R) in proof.L.iter().zip(proof.R.iter()) {
       let n_hat = (tracked_g_bold.positions.len() + (tracked_g_bold.positions.len() % 2)) / 2;
       let y_n_hat = y[n_hat - 1];
-      // TODO: Take these in from the caller
-      let y_inv_n_hat = y_n_hat.invert().unwrap();
+      let y_inv_n_hat =
+        inv_y.as_ref().map(|inv_y| inv_y[n_hat - 1]).unwrap_or_else(|| y_n_hat.invert().unwrap());
+      debug_assert_eq!(y_inv_n_hat, y_n_hat.invert().unwrap());
 
       Self::next_G_H_P_without_permutation(
         transcript,
