@@ -46,10 +46,11 @@ pub(crate) enum GeneratorsList {
 // TODO: Table these
 #[derive(Clone, Debug)]
 pub struct Generators<T: Transcript, C: Ciphersuite> {
-  pub(crate) g: MultiexpPoint<C::G>,
-  pub(crate) h: MultiexpPoint<C::G>,
-  pub(crate) g_bold1: Vec<MultiexpPoint<C::G>>,
-  pub(crate) g_bold2: Vec<MultiexpPoint<C::G>>,
+  g: MultiexpPoint<C::G>,
+  h: MultiexpPoint<C::G>,
+
+  g_bold1: Vec<MultiexpPoint<C::G>>,
+  g_bold2: Vec<MultiexpPoint<C::G>>,
   h_bold1: Vec<MultiexpPoint<C::G>>,
   h_bold2: Vec<MultiexpPoint<C::G>>,
 
@@ -60,12 +61,15 @@ pub struct Generators<T: Transcript, C: Ciphersuite> {
   // Uses a Vec<u8> since C::G doesn't impl Hash
   set: Arc<RwLock<HashSet<Vec<u8>>>>,
   transcript: T,
+
+  replaced: HashSet<(GeneratorsList, usize)>,
 }
 
 impl<T: Transcript, C: Ciphersuite> Zeroize for Generators<T, C> {
   fn zeroize(&mut self) {
     self.g.zeroize();
     self.h.zeroize();
+
     self.g_bold1.zeroize();
     self.g_bold2.zeroize();
     self.h_bold1.zeroize();
@@ -188,6 +192,7 @@ impl<T: Transcript, C: Ciphersuite> Generators<T, C> {
     Generators {
       g: MultiexpPoint::new_constant(g),
       h: MultiexpPoint::new_constant(h),
+
       g_bold1: g_bold1.drain(..).map(MultiexpPoint::new_constant).collect(),
       g_bold2: g_bold2.drain(..).map(MultiexpPoint::new_constant).collect(),
       h_bold1: h_bold1.drain(..).map(MultiexpPoint::new_constant).collect(),
@@ -199,6 +204,8 @@ impl<T: Transcript, C: Ciphersuite> Generators<T, C> {
       set: Arc::new(RwLock::new(set)),
       whitelisted_vector_commitments: Arc::new(RwLock::new(HashSet::new())),
       transcript,
+
+      replaced: HashSet::new(),
     }
   }
 
@@ -290,40 +297,51 @@ impl<T: Transcript, C: Ciphersuite> Generators<T, C> {
     let mut generators_0 = Generators {
       g: gs.0,
       h: self.h.clone(),
+
       g_bold1: g_bold1.clone(),
       g_bold2: vec![],
       h_bold1: h_bold0,
       h_bold2: vec![],
+
       proving_gs: None,
       proving_h_bolds: None,
+
       set: self.set.clone(),
       whitelisted_vector_commitments: Arc::new(RwLock::new(HashSet::new())),
       transcript: transcript.clone(),
+
+      replaced: HashSet::new(),
     };
     generators_0.transcript.append_message(b"generators", "0");
 
     let mut generators_1 = Generators {
       g: gs.1,
       h: self.h.clone(),
+
       g_bold1,
       g_bold2: vec![],
       h_bold1,
       h_bold2: vec![],
+
       proving_gs: None,
       proving_h_bolds: None,
+
       set: self.set.clone(),
       whitelisted_vector_commitments: Arc::new(RwLock::new(HashSet::new())),
       transcript,
+
+      replaced: HashSet::new(),
     };
     generators_1.transcript.append_message(b"generators", "1");
 
     (generators_0, generators_1)
   }
 
+  // TODO: You can replace with generators multiple times, yet that should panic
   pub(crate) fn replace_generators(
     &mut self,
     from: &VectorCommitmentGenerators<T, C>,
-    to_replace: &[(GeneratorsList, usize)],
+    mut to_replace: Vec<(GeneratorsList, usize)>,
   ) {
     // Make sure this hasn't been used yet
     assert!(!self.g_bold2.is_empty());
@@ -339,8 +357,8 @@ impl<T: Transcript, C: Ciphersuite> Generators<T, C> {
     self.transcript.domain_separate(b"replaced_generators");
     self.transcript.append_message(b"from", from.transcript.as_ref());
 
-    for (i, (list, index)) in to_replace.iter().enumerate() {
-      // TODO: Check not prior replaced
+    for (i, (list, index)) in to_replace.drain(..).enumerate() {
+      // assert!(self.replaced.insert((list, index))); // TODO
 
       self.transcript.append_message(
         b"list",
@@ -350,7 +368,6 @@ impl<T: Transcript, C: Ciphersuite> Generators<T, C> {
           GeneratorsList::HBold1 => b"h_bold1",
         },
       );
-      let index = *index;
       self.transcript.append_message(b"index", u32::try_from(index).unwrap().to_le_bytes());
 
       (match list {

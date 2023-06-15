@@ -1,4 +1,4 @@
-use std::collections::{HashSet, HashMap, BTreeSet};
+use std::collections::{HashSet, HashMap};
 
 use zeroize::{Zeroize, ZeroizeOnDrop};
 use rand_core::{RngCore, CryptoRng};
@@ -52,8 +52,7 @@ pub enum Variable<C: Ciphersuite> {
 
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug, Zeroize)]
 pub struct VariableReference(usize);
-// TODO: Remove Ord and usage of HashMaps/BTreeSets
-#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug, Zeroize)]
+#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Debug, Zeroize)]
 pub enum ProductReference {
   Left { product: usize, variable: usize },
   Right { product: usize, variable: usize },
@@ -139,7 +138,7 @@ pub struct Circuit<T: Transcript, C: Ciphersuite> {
   pub(crate) variables: Vec<Variable<C>>,
 
   products: Vec<Product>,
-  bound_products: Vec<BTreeSet<ProductReference>>,
+  bound_products: Vec<Vec<ProductReference>>,
   finalized_commitments: HashMap<VectorCommitmentReference, Option<C::F>>,
   vector_commitments: Option<Vec<C::G>>,
 
@@ -359,7 +358,7 @@ impl<T: Transcript, C: Ciphersuite> Circuit<T, C> {
   /// Allocate a vector commitment ID.
   pub fn allocate_vector_commitment(&mut self) -> VectorCommitmentReference {
     let res = VectorCommitmentReference(self.bound_products.len());
-    self.bound_products.push(BTreeSet::new());
+    self.bound_products.push(vec![]);
     res
   }
 
@@ -367,7 +366,6 @@ impl<T: Transcript, C: Ciphersuite> Circuit<T, C> {
   ///
   /// If no generator is specified, the proof's existing generator will be used. This allows
   /// isolating the variable, prior to the circuit, without caring for how it was isolated.
-  // TODO: Batch bind, taking in a new VectorCommitmentsStruct for the generators
   pub fn bind(
     &mut self,
     vector_commitment: VectorCommitmentReference,
@@ -377,10 +375,7 @@ impl<T: Transcript, C: Ciphersuite> Circuit<T, C> {
     assert!(!self.finalized_commitments.contains_key(&vector_commitment));
 
     for product in &products {
-      for bound in &self.bound_products {
-        assert!(!bound.contains(product));
-      }
-      self.bound_products[vector_commitment.0].insert(*product);
+      self.bound_products[vector_commitment.0].push(*product);
     }
 
     if let Some(generators) = generators {
@@ -394,7 +389,7 @@ impl<T: Transcript, C: Ciphersuite> Circuit<T, C> {
         });
       }
 
-      self.generators.replace_generators(generators, &to_replace);
+      self.generators.replace_generators(generators, to_replace);
     }
   }
 
@@ -726,11 +721,14 @@ impl<T: Transcript, C: Ciphersuite> Circuit<T, C> {
 
       let scalars_len = scalars.len();
 
-      // TODO: Use a multiexp here
-      let mut commitment = alt_generators_1.h() * blind;
-      for (scalar, generator) in scalars.iter().zip(alt_generators_1.g_bold().0.iter()) {
-        commitment += *generator * scalar;
-      }
+      let commitment = {
+        let mut terms = Vec::with_capacity(1 + scalars.len());
+        terms.push((blind, alt_generators_1.h()));
+        for (scalar, generator) in scalars.iter().zip(alt_generators_1.multiexp_g_bold().iter()) {
+          terms.push((*scalar, generator.point()));
+        }
+        multiexp(&terms)
+      };
 
       let b = ScalarVector(vec![C::F::ZERO; scalars.len()]);
       let witness = WipWitness::<C>::new(ScalarVector(scalars), b, blind);
