@@ -72,9 +72,12 @@ fn test_membership() {
     assert!(permissible_c1.point(point));
     let blinded_point = point - (pallas_generators.h().point() * blind_c1);
 
-    let gadget = |circuit_c1: &mut Circuit<_, Pallas>, circuit_c2: &mut Circuit<_, Vesta>| {
+    let gadget = |transcript: &mut RecommendedTranscript,
+                  circuit_c1: &mut Circuit<_, Pallas>,
+                  circuit_c2: &mut Circuit<_, Vesta>| {
       membership_gadget::<_, _, Pasta>(
         &mut OsRng,
+        transcript,
         circuit_c1,
         circuit_c2,
         &tree,
@@ -85,20 +88,21 @@ fn test_membership() {
 
     let mut transcript = RecommendedTranscript::new(b"Membership Gadget Test");
 
+    // Prove
+    let mut prove_transcript = transcript.clone();
     let mut circuit_c1 = Circuit::new(pallas_generators.per_proof(), true, None);
     let mut circuit_c2 = Circuit::new(vesta_generators.per_proof(), true, None);
-    gadget(&mut circuit_c1, &mut circuit_c2);
-
-    let mut prove_transcript = transcript.clone();
+    gadget(&mut prove_transcript, &mut circuit_c1, &mut circuit_c2);
     let (_, pallas_commitments, pallas_proof, pallas_proofs) =
       circuit_c1.prove_with_vector_commitments(&mut OsRng, &mut prove_transcript);
     let (_, vesta_commitments, vesta_proof, vesta_proofs) =
       circuit_c2.prove_with_vector_commitments(&mut OsRng, &mut prove_transcript);
 
+    // Verify
     let mut circuit_c1 =
       Circuit::new(pallas_generators.per_proof(), false, Some(pallas_commitments));
     let mut circuit_c2 = Circuit::new(vesta_generators.per_proof(), false, Some(vesta_commitments));
-    gadget(&mut circuit_c1, &mut circuit_c2);
+    gadget(&mut transcript, &mut circuit_c1, &mut circuit_c2);
 
     circuit_c1.verify_with_vector_commitments(
       &mut OsRng,

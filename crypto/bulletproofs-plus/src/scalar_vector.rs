@@ -122,7 +122,7 @@ impl<C: Ciphersuite> ScalarVector<C> {
     (self, ScalarVector(r))
   }
 
-  pub(crate) fn transcript<T: Transcript>(&self, transcript: &mut T, label: &'static [u8]) {
+  pub fn transcript<T: Transcript>(&self, transcript: &mut T, label: &'static [u8]) {
     for scalar in &self.0 {
       transcript.append_message(label, scalar.to_repr());
     }

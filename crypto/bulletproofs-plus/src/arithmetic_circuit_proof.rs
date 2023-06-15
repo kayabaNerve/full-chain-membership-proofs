@@ -70,6 +70,11 @@ pub struct ArithmeticCircuitProof<C: Ciphersuite> {
 }
 
 impl<'a, T: Transcript, C: Ciphersuite> ArithmeticCircuitStatement<'a, T, C> {
+  /// Create a new ArithmeticCircuitStatement for the specified relationship.
+  ///
+  /// The weights and c vector are not transcripted. They're expected to be deterministic from the
+  /// static program and higher-level statement. If your constraints are variable with regards to
+  /// variables which aren't the commitments, transcript as needed before calling prove/verify.
   pub fn new(
     generators: ProofGenerators<'a, T, C>,
     V: PointVector<C>,
@@ -99,13 +104,7 @@ impl<'a, T: Transcript, C: Ciphersuite> ArithmeticCircuitStatement<'a, T, C> {
 
   fn initial_transcript(&self, transcript: &mut T) {
     transcript.domain_separate(b"arithmetic_circuit_proof");
-    // TODO: Pre-transcript these? Pre-compile this entire proof?
     self.V.transcript(transcript, b"commitment");
-    self.WL.transcript(transcript, b"WL");
-    self.WR.transcript(transcript, b"WR");
-    self.WO.transcript(transcript, b"WO");
-    self.WV.transcript(transcript, b"WV");
-    self.c.transcript(transcript, b"c");
   }
 
   fn transcript_A(transcript: &mut T, A: C::G) -> (C::F, C::F) {

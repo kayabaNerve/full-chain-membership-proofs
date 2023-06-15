@@ -64,13 +64,17 @@ impl<T: Transcript, C: Ciphersuite> VectorCommitmentGenerators<T, C> {
     Self { generators: res, transcript: transcript.challenge(b"summary") }
   }
 
+  #[allow(clippy::len_without_is_empty)] // Generators should never be empty/potentially empty
+  pub fn len(&self) -> usize {
+    self.generators.len()
+  }
+
   pub fn generators(&self) -> &[MultiexpPoint<C::G>] {
     &self.generators
   }
 
-  #[allow(clippy::len_without_is_empty)] // Generators should never be empty/potentially empty
-  pub fn len(&self) -> usize {
-    self.generators.len()
+  pub fn transcript(&self) -> &T::Challenge {
+    &self.transcript
   }
 
   pub fn commit_vartime(&self, vars: &[C::F]) -> C::G {

@@ -6,7 +6,10 @@ use rand_core::{RngCore, CryptoRng};
 
 use transcript::Transcript;
 use ciphersuite::{
-  group::ff::{Field, PrimeField},
+  group::{
+    ff::{Field, PrimeField},
+    GroupEncoding,
+  },
   Ciphersuite,
 };
 
@@ -86,6 +89,7 @@ pub fn new_blind<R: RngCore + CryptoRng, C1: Ciphersuite, C2: Ciphersuite>(
 
 pub fn layer_gadget<R: RngCore + CryptoRng, T: Transcript, C: CurveCycle>(
   rng: &mut R,
+  transcript: &mut T,
   circuit: &mut Circuit<T, C::C2>,
   permissible: &Permissible<C::C1>,
   H: &DLogTable<C::C1>,
@@ -96,6 +100,11 @@ pub fn layer_gadget<R: RngCore + CryptoRng, T: Transcript, C: CurveCycle>(
   elements: Vec<Option<<C::C2 as Ciphersuite>::F>>,
   last: bool,
 ) -> (Option<<C::C2 as Ciphersuite>::F>, <C::C2 as Ciphersuite>::G) {
+  {
+    transcript.domain_separate(b"curve_trees_layer");
+    transcript.append_message(b"blinded_member", blinded_point.to_bytes());
+  }
+
   // Unblind the point
   let unblinded = {
     let (blind_x, blind_y) = if let Some(blind) = blind {
@@ -172,6 +181,7 @@ pub fn layer_gadget<R: RngCore + CryptoRng, T: Transcript, C: CurveCycle>(
 
 pub fn membership_gadget<R: RngCore + CryptoRng, T: Transcript, C: CurveCycle>(
   rng: &mut R,
+  transcript: &mut T,
   circuit_c1: &mut Circuit<T, C::C1>,
   circuit_c2: &mut Circuit<T, C::C2>,
   tree: &Tree<T, C>,
@@ -180,6 +190,15 @@ pub fn membership_gadget<R: RngCore + CryptoRng, T: Transcript, C: CurveCycle>(
 ) where
   T::Challenge: Debug,
 {
+  {
+    transcript.domain_separate(b"curve_trees");
+    transcript.append_message(b"tree_parameters", tree.parameters_hash());
+    match tree.root() {
+      Hash::Even(point) => transcript.append_message(b"tree_root", point.to_bytes()),
+      Hash::Odd(point) => transcript.append_message(b"tree_root", point.to_bytes()),
+    }
+  }
+
   let mut membership =
     blind.map(|blind| tree.membership(blinded_point + (circuit_c1.h() * blind)).unwrap());
 
@@ -211,6 +230,7 @@ pub fn membership_gadget<R: RngCore + CryptoRng, T: Transcript, C: CurveCycle>(
 
       let (blind, point) = layer_gadget::<_, _, C>(
         rng,
+        transcript,
         circuit_c2,
         tree.permissible_c1(),
         &c1_h,
@@ -243,6 +263,7 @@ pub fn membership_gadget<R: RngCore + CryptoRng, T: Transcript, C: CurveCycle>(
 
       let (blind, point) = layer_gadget::<_, _, FlipCurveCycle<C>>(
         rng,
+        transcript,
         circuit_c1,
         tree.permissible_c2(),
         &c2_h,

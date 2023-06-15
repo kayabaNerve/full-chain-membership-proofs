@@ -326,6 +326,10 @@ impl<'a, T: Transcript, C: Ciphersuite> Circuit<'a, T, C> {
   }
 
   /// Add a constraint.
+  ///
+  /// Constraints are not transcripted. They are expected to be deterministic from the static
+  /// program and higher-level statement. If your constraints are variable with regards to
+  /// variables which aren't the commitments, transcript as needed before calling prove/verify.
   pub fn constrain(&mut self, constraint: Constraint<C>) {
     self.constraints.push(constraint);
   }

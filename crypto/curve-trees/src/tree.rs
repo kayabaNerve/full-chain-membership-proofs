@@ -3,7 +3,10 @@ use std::collections::HashMap;
 
 use transcript::Transcript;
 use ciphersuite::{
-  group::{ff::Field, Group, GroupEncoding},
+  group::{
+    ff::{Field, PrimeField},
+    Group, GroupEncoding,
+  },
   Ciphersuite,
 };
 
@@ -48,6 +51,8 @@ where
   width: usize,
   odd_generators: Vec<VectorCommitmentGenerators<T, C::C2>>,
   even_generators: Vec<VectorCommitmentGenerators<T, C::C1>>,
+
+  parameters_hash: T::Challenge,
 
   node: Node<C>,
 
@@ -104,6 +109,15 @@ where
       pow += 1;
     }
 
+    let mut transcript = T::new(b"Curve Trees Parameters");
+    transcript.domain_separate(b"parameters");
+    transcript.append_message(b"permissible_c1_alpha", permissible_c1.alpha.to_repr());
+    transcript.append_message(b"permissible_c1_beta", permissible_c1.beta.to_repr());
+    transcript.append_message(b"permissible_c2_alpha", permissible_c2.alpha.to_repr());
+    transcript.append_message(b"permissible_c2_beta", permissible_c2.beta.to_repr());
+    transcript.append_message(b"leaf_randomness", leaf_randomness.to_bytes());
+    transcript.append_message(b"width", width_u64.to_le_bytes());
+
     // pow now represents the amount of layers we need generators for
     // TODO: Table these?
     let mut odd_generators = vec![];
@@ -131,6 +145,14 @@ where
       }
     }
 
+    transcript.domain_separate(b"even_generators");
+    for even_generators in &even_generators {
+      transcript.append_message(b"transcript", even_generators.transcript());
+    }
+    for odd_generators in &odd_generators {
+      transcript.append_message(b"transcript", odd_generators.transcript());
+    }
+
     Tree {
       permissible_c1,
       permissible_c2,
@@ -140,9 +162,15 @@ where
       odd_generators,
       even_generators,
 
+      parameters_hash: transcript.challenge(b"summary"),
+
       node: Node::new(false),
       paths: HashMap::new(),
     }
+  }
+
+  pub fn parameters_hash(&self) -> &T::Challenge {
+    &self.parameters_hash
   }
 
   pub fn whitelist_vector_commitments(

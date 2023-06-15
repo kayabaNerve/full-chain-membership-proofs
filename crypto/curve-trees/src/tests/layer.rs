@@ -51,9 +51,12 @@ fn test_layer_gadget() {
   // Uses - so the blind is added back
   let blinded_point = point - (H * blind_c1);
 
-  let gadget = |circuit: &mut Circuit<_, Vesta>| {
+  let mut transcript = RecommendedTranscript::new(b"Layer Gadget Test");
+
+  let gadget = |transcript: &mut RecommendedTranscript, circuit: &mut Circuit<_, Vesta>| {
     layer_gadget::<_, _, Pasta>(
       &mut OsRng,
+      transcript,
       circuit,
       &permissible,
       &H_table,
@@ -66,12 +69,12 @@ fn test_layer_gadget() {
     )
   };
 
-  let mut transcript = RecommendedTranscript::new(b"Layer Gadget Test");
-
-  let mut circuit = Circuit::new(generators.per_proof(), true, None);
-  gadget(&mut circuit);
-  let (blinds, commitments, proof, proofs) =
-    circuit.prove_with_vector_commitments(&mut OsRng, &mut transcript.clone());
+  let (blinds, commitments, proof, proofs) = {
+    let mut transcript = transcript.clone();
+    let mut circuit = Circuit::new(generators.per_proof(), true, None);
+    gadget(&mut transcript, &mut circuit);
+    circuit.prove_with_vector_commitments(&mut OsRng, &mut transcript)
+  };
 
   assert_eq!(commitments.len(), 2);
   assert_eq!(
@@ -80,7 +83,7 @@ fn test_layer_gadget() {
   );
 
   let mut circuit = Circuit::new(generators.per_proof(), false, Some(commitments));
-  gadget(&mut circuit);
+  gadget(&mut transcript, &mut circuit);
   let mut verifier = BatchVerifier::new(5);
   circuit.verify_with_vector_commitments(&mut OsRng, &mut verifier, &mut transcript, proof, proofs);
   assert!(verifier.verify_vartime());
