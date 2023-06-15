@@ -33,7 +33,6 @@ impl<C: Ciphersuite> ScalarVector<C> {
     ScalarVector(vec![C::F::ZERO; len])
   }
 
-  /*
   pub(crate) fn add(&self, scalar: impl Borrow<C::F>) -> Self {
     let mut res = self.clone();
     for val in res.0.iter_mut() {
@@ -41,7 +40,6 @@ impl<C: Ciphersuite> ScalarVector<C> {
     }
     res
   }
-  */
 
   pub(crate) fn sub(&self, scalar: impl Borrow<C::F>) -> Self {
     let mut res = self.clone();
@@ -67,6 +65,8 @@ impl<C: Ciphersuite> ScalarVector<C> {
     }
     res
   }
+
+  /*
   pub(crate) fn sub_vec(&self, vector: &Self) -> Self {
     assert_eq!(self.len(), vector.len());
     let mut res = self.clone();
@@ -75,6 +75,8 @@ impl<C: Ciphersuite> ScalarVector<C> {
     }
     res
   }
+  */
+
   pub(crate) fn mul_vec(&self, vector: &Self) -> Self {
     assert_eq!(self.len(), vector.len());
     let mut res = self.clone();

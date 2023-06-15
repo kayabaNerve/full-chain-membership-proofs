@@ -4,12 +4,14 @@ use zeroize::{Zeroize, ZeroizeOnDrop};
 
 use transcript::Transcript;
 
-use multiexp::multiexp;
 use ciphersuite::{
   group::{Group, GroupEncoding},
   Ciphersuite,
 };
 
+#[cfg(test)]
+use multiexp::multiexp;
+#[cfg(test)]
 use crate::ScalarVector;
 
 #[derive(Clone, PartialEq, Eq, Debug, Zeroize, ZeroizeOnDrop)]
@@ -81,6 +83,7 @@ impl<C: Ciphersuite> PointVector<C> {
   }
   */
 
+  #[cfg(test)]
   pub(crate) fn multiexp(&self, vector: &ScalarVector<C>) -> C::G {
     assert_eq!(self.len(), vector.len());
     let mut res = Vec::with_capacity(self.len());
@@ -99,9 +102,7 @@ impl<C: Ciphersuite> PointVector<C> {
     }
     multiexp_vartime(&res)
   }
-  */
 
-  /*
   pub(crate) fn sum(&self) -> C::G {
     self.0.iter().sum()
   }

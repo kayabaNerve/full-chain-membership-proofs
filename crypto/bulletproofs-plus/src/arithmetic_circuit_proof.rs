@@ -11,21 +11,32 @@ use ciphersuite::{
 };
 
 use crate::{
-  ScalarVector, ScalarMatrix, PointVector, Generators,
+  ScalarVector, ScalarMatrix, PointVector, GeneratorsList, ProofGenerators,
   weighted_inner_product::{WipStatement, WipWitness, WipProof},
   weighted_inner_product,
 };
 
 // Figure 4
-#[derive(Clone, Debug, Zeroize)]
-pub struct ArithmeticCircuitStatement<T: Transcript, C: Ciphersuite> {
-  generators: Generators<T, C>,
+#[derive(Clone, Debug)]
+pub struct ArithmeticCircuitStatement<'a, T: Transcript, C: Ciphersuite> {
+  generators: ProofGenerators<'a, T, C>,
   V: PointVector<C>,
   WL: ScalarMatrix<C>,
   WR: ScalarMatrix<C>,
   WO: ScalarMatrix<C>,
   WV: ScalarMatrix<C>,
   c: ScalarVector<C>,
+}
+
+impl<'a, T: Transcript, C: Ciphersuite> Zeroize for ArithmeticCircuitStatement<'a, T, C> {
+  fn zeroize(&mut self) {
+    self.V.zeroize();
+    self.WL.zeroize();
+    self.WR.zeroize();
+    self.WO.zeroize();
+    self.WV.zeroize();
+    self.c.zeroize();
+  }
 }
 
 #[derive(Clone, Debug, Zeroize, ZeroizeOnDrop)]
@@ -58,9 +69,9 @@ pub struct ArithmeticCircuitProof<C: Ciphersuite> {
   wip: WipProof<C>,
 }
 
-impl<T: Transcript, C: Ciphersuite> ArithmeticCircuitStatement<T, C> {
+impl<'a, T: Transcript, C: Ciphersuite> ArithmeticCircuitStatement<'a, T, C> {
   pub fn new(
-    generators: Generators<T, C>,
+    generators: ProofGenerators<'a, T, C>,
     V: PointVector<C>,
     WL: ScalarMatrix<C>,
     WR: ScalarMatrix<C>,
@@ -163,17 +174,19 @@ impl<T: Transcript, C: Ciphersuite> ArithmeticCircuitStatement<T, C> {
     let z_q_WV = self.WV.mul_vec(&z_q);
     assert_eq!(z_q_WV.len(), self.V.len());
 
-    // TODO: Move to constants once the generators object handles constant labelling
     let mut A_terms = Vec::with_capacity(1 + (3 * self.c.len()) + self.V.len() + 1);
     A_terms.push((C::F::ONE, MultiexpPoint::Variable(A)));
-    for pair in WR_y_z.0.iter().zip(self.generators.multiexp_g_bold().iter()) {
-      A_terms.push((*pair.0, pair.1.clone()));
+    for (i, scalar) in WR_y_z.0.iter().enumerate() {
+      A_terms.push((*scalar, self.generators.generator(GeneratorsList::GBold1, i).clone()));
     }
-    for pair in WL_y_z.0.iter().zip(self.generators.multiexp_h_bold().iter()) {
-      A_terms.push((*pair.0, pair.1.clone()));
+    for (i, scalar) in WL_y_z.0.iter().enumerate() {
+      A_terms.push((*scalar, self.generators.generator(GeneratorsList::HBold1, i).clone()));
     }
-    for pair in WO_y_z.0.iter().zip(self.generators.multiexp_h_bold2().iter()) {
-      A_terms.push(((*pair.0 - C::F::ONE) * inv_y_n.0.last().unwrap(), pair.1.clone()));
+    for (i, scalar) in WO_y_z.0.iter().enumerate() {
+      A_terms.push((
+        (*scalar - C::F::ONE) * inv_y_n.0.last().unwrap(),
+        self.generators.generator(GeneratorsList::HBold2, i).clone(),
+      ));
     }
     for pair in z_q_WV.0.iter().zip(self.V.0.iter()) {
       A_terms.push((*pair.0, MultiexpPoint::Variable(*pair.1)));
@@ -181,7 +194,7 @@ impl<T: Transcript, C: Ciphersuite> ArithmeticCircuitStatement<T, C> {
     let y_n = ScalarVector(y_n);
     A_terms.push((
       z_q.inner_product(&self.c) + weighted_inner_product(&WR_y_z, &WL_y_z, &y_n),
-      self.generators.multiexp_g(),
+      self.generators.g().clone(),
     ));
 
     // We need (n_hat * 2) inv_y_ns, where n_hat = n ceildiv 2
@@ -194,7 +207,7 @@ impl<T: Transcript, C: Ciphersuite> ArithmeticCircuitStatement<T, C> {
   }
 
   pub fn prove_with_blind<R: RngCore + CryptoRng>(
-    mut self,
+    self,
     rng: &mut R,
     transcript: &mut T,
     mut witness: ArithmeticCircuitWitness<C>,
@@ -210,7 +223,7 @@ impl<T: Transcript, C: Ciphersuite> ArithmeticCircuitStatement<T, C> {
     {
       assert_eq!(
         *commitment,
-        multiexp(&[(*value, self.generators.g()), (*gamma, self.generators.h())])
+        multiexp(&[(*value, self.generators.g().point()), (*gamma, self.generators.h().point())])
       );
     }
 
@@ -219,22 +232,20 @@ impl<T: Transcript, C: Ciphersuite> ArithmeticCircuitStatement<T, C> {
 
     // TODO: Check WL WR WO WV
 
-    self.generators.truncate(self.WL.width());
-
     self.initial_transcript(transcript);
 
     let alpha = blind;
-    let mut A_terms = Vec::with_capacity((self.generators.multiexp_g_bold().len() * 3) + 1);
-    for (g_bold, aL) in self.generators.multiexp_g_bold().iter().zip(&witness.aL.0) {
-      A_terms.push((*aL, g_bold.point()));
+    let mut A_terms = Vec::with_capacity((witness.aL.len() * 3) + 1);
+    for (i, aL) in witness.aL.0.iter().enumerate() {
+      A_terms.push((*aL, self.generators.generator(GeneratorsList::GBold1, i).point()));
     }
-    for (h_bold, aR) in self.generators.multiexp_h_bold().iter().zip(&witness.aR.0) {
-      A_terms.push((*aR, h_bold.point()));
+    for (i, aR) in witness.aR.0.iter().enumerate() {
+      A_terms.push((*aR, self.generators.generator(GeneratorsList::HBold1, i).point()));
     }
-    for (g_bold2, aO) in self.generators.multiexp_g_bold2().iter().zip(&witness.aO.0) {
-      A_terms.push((*aO, g_bold2.point()));
+    for (i, aO) in witness.aO.0.iter().enumerate() {
+      A_terms.push((*aO, self.generators.generator(GeneratorsList::GBold2, i).point()));
     }
-    A_terms.push((alpha, self.generators.h()));
+    A_terms.push((alpha, self.generators.h().point()));
     let A = multiexp(&A_terms);
     A_terms.zeroize();
 
@@ -270,13 +281,12 @@ impl<T: Transcript, C: Ciphersuite> ArithmeticCircuitStatement<T, C> {
   }
 
   pub fn verify<R: RngCore + CryptoRng>(
-    mut self,
+    self,
     rng: &mut R,
     verifier: &mut BatchVerifier<(), C::G>,
     transcript: &mut T,
     proof: ArithmeticCircuitProof<C>,
   ) {
-    self.generators.truncate(self.WL.width());
     self.initial_transcript(transcript);
 
     let (y_n, inv_y_n, _, _, _, _, A_hat) = self.compute_A_hat(transcript, proof.A);

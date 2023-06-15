@@ -13,7 +13,8 @@ use ciphersuite::{
   Ciphersuite,
 };
 
-use crate::{ScalarVector, PointVector, Generators, weighted_inner_product};
+#[rustfmt::skip]
+use crate::{ScalarVector, PointVector, GeneratorsList, InnerProductGenerators, weighted_inner_product};
 
 #[derive(Clone, PartialEq, Eq, Debug, Zeroize)]
 enum P<C: Ciphersuite> {
@@ -22,12 +23,22 @@ enum P<C: Ciphersuite> {
 }
 
 // Figure 1
-#[derive(Clone, Debug, Zeroize)]
-pub struct WipStatement<T: Transcript, C: Ciphersuite> {
-  generators: Generators<T, C>,
+#[derive(Clone, Debug)]
+pub struct WipStatement<'a, T: Transcript, C: Ciphersuite, GB: AsRef<[MultiexpPoint<C::G>]>> {
+  generators: InnerProductGenerators<'a, T, C, GB>,
   P: P<C>,
   y: ScalarVector<C>,
   inv_y: Option<Vec<C::F>>,
+}
+
+impl<'a, T: Transcript, C: Ciphersuite, GB: AsRef<[MultiexpPoint<C::G>]>> Zeroize
+  for WipStatement<'a, T, C, GB>
+{
+  fn zeroize(&mut self) {
+    self.P.zeroize();
+    self.y.zeroize();
+    self.inv_y.zeroize();
+  }
 }
 
 #[derive(Clone, Debug, Zeroize, ZeroizeOnDrop)]
@@ -62,10 +73,12 @@ pub struct WipProof<C: Ciphersuite> {
   delta_answer: C::F,
 }
 
-impl<T: Transcript, C: Ciphersuite> WipStatement<T, C> {
-  pub fn new(generators: Generators<T, C>, P: C::G, y: C::F) -> Self {
+impl<'a, T: Transcript, C: Ciphersuite, GB: AsRef<[MultiexpPoint<C::G>]>>
+  WipStatement<'a, T, C, GB>
+{
+  pub fn new(generators: InnerProductGenerators<'a, T, C, GB>, P: C::G, y: C::F) -> Self {
     // y ** n
-    let mut y_vec = ScalarVector::new(generators.g_bold1.len());
+    let mut y_vec = ScalarVector::new(generators.len());
     y_vec[0] = y;
     for i in 1 .. y_vec.len() {
       y_vec[i] = y_vec[i - 1] * y;
@@ -75,7 +88,7 @@ impl<T: Transcript, C: Ciphersuite> WipStatement<T, C> {
   }
 
   pub(crate) fn new_without_P_transcript(
-    generators: Generators<T, C>,
+    generators: InnerProductGenerators<'a, T, C, GB>,
     P: Vec<(C::F, MultiexpPoint<C::G>)>,
     y_n: ScalarVector<C>,
     inv_y_n: Vec<C::F>,
@@ -224,7 +237,17 @@ impl<T: Transcript, C: Ciphersuite> WipStatement<T, C> {
     self.initial_transcript(transcript);
 
     let WipStatement { generators, P, mut y, inv_y } = self;
-    let (g, h, mut g_bold, mut h_bold) = generators.decompose();
+
+    assert_eq!(generators.len(), witness.a.len());
+    let (g, h) = (generators.g().point(), generators.h().point());
+    let mut g_bold = vec![];
+    let mut h_bold = vec![];
+    for i in 0 .. generators.len() {
+      g_bold.push(generators.generator(GeneratorsList::GBold1, i).point());
+      h_bold.push(generators.generator(GeneratorsList::HBold1, i).point());
+    }
+    let mut g_bold = PointVector(g_bold);
+    let mut h_bold = PointVector(h_bold);
 
     // Check P has the expected relationship
     if let P::Point(P) = &P {
@@ -365,21 +388,19 @@ impl<T: Transcript, C: Ciphersuite> WipStatement<T, C> {
     self.initial_transcript(transcript);
 
     let WipStatement { generators, P, y, inv_y } = self;
-    let (g, h, mut g_bold, mut h_bold) = generators.multiexp_decompose();
 
-    assert!(!g_bold.is_empty());
-    assert_eq!(g_bold.len(), h_bold.len());
+    let (g, h) = (generators.g().clone(), generators.h().clone());
 
     let mut tracked_g_bold = TrackedScalarVector::<C> {
-      raw: vec![C::F::ONE; g_bold.len() + (g_bold.len() % 2)],
-      positions: (0 .. g_bold.len()).map(|i| vec![i]).collect(),
+      raw: vec![C::F::ONE; generators.len() + (generators.len() % 2)],
+      positions: (0 .. generators.len()).map(|i| vec![i]).collect(),
     };
     let mut tracked_h_bold = tracked_g_bold.clone();
 
     // Verify the L/R lengths
     {
       let mut lr_len = 0;
-      while (1 << lr_len) < g_bold.len() {
+      while (1 << lr_len) < generators.len() {
         lr_len += 1;
       }
       assert_eq!(proof.L.len(), lr_len);
@@ -390,7 +411,7 @@ impl<T: Transcript, C: Ciphersuite> WipStatement<T, C> {
       P::Point(point) => vec![(C::F::ONE, MultiexpPoint::Variable(point))],
       P::Terms(terms) => terms,
     };
-    P_terms.reserve(6 + g_bold.len() + h_bold.len() + proof.L.len());
+    P_terms.reserve(6 + (2 * generators.len()) + proof.L.len());
     for (L, R) in proof.L.iter().zip(proof.R.iter()) {
       let n_hat = (tracked_g_bold.positions.len() + (tracked_g_bold.positions.len() % 2)) / 2;
       let y_n_hat = y[n_hat - 1];
@@ -418,13 +439,20 @@ impl<T: Transcript, C: Ciphersuite> WipStatement<T, C> {
     }
 
     let re = proof.r_answer * e;
-    for (i, point) in g_bold.drain(..).enumerate() {
-      multiexp.push((tracked_g_bold.raw[i] * re, point));
+    for i in 0 .. generators.len() {
+      // TODO: Have BatchVerifier take &MultiexpPoint
+      multiexp.push((
+        tracked_g_bold.raw[i] * re,
+        generators.generator(GeneratorsList::GBold1, i).clone(),
+      ));
     }
 
     let se = proof.s_answer * e;
-    for (i, point) in h_bold.drain(..).enumerate() {
-      multiexp.push((tracked_h_bold.raw[i] * se, point));
+    for i in 0 .. generators.len() {
+      multiexp.push((
+        tracked_h_bold.raw[i] * se,
+        generators.generator(GeneratorsList::HBold1, i).clone(),
+      ));
     }
 
     multiexp.push((-e, MultiexpPoint::Variable(proof.A)));

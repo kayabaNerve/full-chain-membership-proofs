@@ -61,11 +61,11 @@ fn test_incomplete_addition() {
     circuit.equals_constant(circuit.variable_to_product(res.y()).unwrap(), p3.1);
   };
 
-  let mut circuit = Circuit::new(generators.clone(), true, None);
+  let mut circuit = Circuit::new(generators.per_proof(), true, None);
   gadget(&mut circuit);
   let proof = circuit.prove(&mut OsRng, &mut transcript.clone());
 
-  let mut circuit = Circuit::new(generators, false, Some(vec![]));
+  let mut circuit = Circuit::new(generators.per_proof(), false, Some(vec![]));
   gadget(&mut circuit);
   let mut verifier = BatchVerifier::new(1);
   circuit.verify(&mut OsRng, &mut verifier, &mut transcript, proof);
@@ -112,12 +112,12 @@ fn test_dlog_pok() {
   };
 
   let test = |point: (_, _), dlog| {
-    let mut circuit = Circuit::new(generators.clone(), true, None);
+    let mut circuit = Circuit::new(generators.per_proof(), true, None);
     gadget(&mut circuit, point, Some(dlog));
     let (_, commitments, proof, proofs) =
       circuit.prove_with_vector_commitments(&mut OsRng, &mut transcript.clone());
 
-    let mut circuit = Circuit::new(generators.clone(), false, Some(commitments));
+    let mut circuit = Circuit::new(generators.per_proof(), false, Some(commitments));
     gadget(&mut circuit, point, None);
 
     let mut verifier = BatchVerifier::new(5);

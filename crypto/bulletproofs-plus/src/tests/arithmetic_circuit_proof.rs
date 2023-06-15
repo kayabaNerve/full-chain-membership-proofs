@@ -17,7 +17,7 @@ fn test_zero_arithmetic_circuit() {
 
   let value = <Ristretto as Ciphersuite>::F::random(&mut OsRng);
   let gamma = <Ristretto as Ciphersuite>::F::random(&mut OsRng);
-  let commitment = (generators.g() * value) + (generators.h() * gamma);
+  let commitment = (generators.g().point() * value) + (generators.h().point() * gamma);
   let V = PointVector(vec![commitment]);
 
   let zero_vec = || ScalarVector::<Ristretto>(vec![<Ristretto as Ciphersuite>::F::ZERO]);
@@ -35,7 +35,8 @@ fn test_zero_arithmetic_circuit() {
   WV.push(vec![(0, <Ristretto as Ciphersuite>::F::ZERO)]);
   let c = zero_vec();
 
-  let statement = ArithmeticCircuitStatement::<_, Ristretto>::new(generators, V, WL, WR, WO, WV, c);
+  let statement =
+    ArithmeticCircuitStatement::<_, Ristretto>::new(generators.per_proof(), V, WL, WR, WO, WV, c);
   let witness = ArithmeticCircuitWitness::<Ristretto>::new(
     aL,
     aR,
@@ -63,7 +64,7 @@ fn test_multiplication_arithmetic_circuit() {
 
   let generators = generators(n);
 
-  let commit = |value, gamma| (generators.g() * value) + (generators.h() * gamma);
+  let commit = |value, gamma| (generators.g().point() * value) + (generators.h().point() * gamma);
 
   let x = <Ristretto as Ciphersuite>::F::random(&mut OsRng);
   let x_mask = <Ristretto as Ciphersuite>::F::random(&mut OsRng);
@@ -125,7 +126,8 @@ fn test_multiplication_arithmetic_circuit() {
     <Ristretto as Ciphersuite>::F::ZERO,
   ]);
 
-  let statement = ArithmeticCircuitStatement::<_, Ristretto>::new(generators, V, WL, WR, WO, WV, c);
+  let statement =
+    ArithmeticCircuitStatement::<_, Ristretto>::new(generators.per_proof(), V, WL, WR, WO, WV, c);
   let witness = ArithmeticCircuitWitness::<Ristretto>::new(
     aL,
     aR,

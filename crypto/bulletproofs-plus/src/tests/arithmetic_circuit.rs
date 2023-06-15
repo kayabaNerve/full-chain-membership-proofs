@@ -13,8 +13,8 @@ use crate::{
 #[test]
 fn test_arithmetic_circuit() {
   let generators = generators(128);
-  let g = generators.g();
-  let h = generators.h();
+  let g = generators.g().point();
+  let h = generators.h().point();
 
   // Basic circuit for:
   // Commitments x, y, z, z1
@@ -85,7 +85,7 @@ fn test_arithmetic_circuit() {
 
   let mut transcript = RecommendedTranscript::new(b"Arithmetic Circuit Test");
 
-  let mut circuit = Circuit::new(generators.clone(), true, None);
+  let mut circuit = Circuit::new(generators.per_proof(), true, None);
   gadget(
     &mut circuit,
     Some((x.clone(), y.clone(), z.clone(), z1.clone())),
@@ -93,7 +93,7 @@ fn test_arithmetic_circuit() {
   );
   let proof = circuit.prove(&mut OsRng, &mut transcript.clone());
 
-  let mut circuit = Circuit::new(generators, false, Some(vec![]));
+  let mut circuit = Circuit::new(generators.per_proof(), false, Some(vec![]));
   gadget(
     &mut circuit,
     None,

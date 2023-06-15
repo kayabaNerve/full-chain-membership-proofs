@@ -11,7 +11,7 @@ use ciphersuite::{
 };
 
 use crate::{
-  ScalarVector,
+  ScalarVector, PointVector, GeneratorsList,
   weighted_inner_product::{WipStatement, WipWitness},
   weighted_inner_product,
   tests::generators,
@@ -22,7 +22,9 @@ fn test_zero_weighted_inner_product() {
   let P = <Ristretto as Ciphersuite>::G::identity();
   let y = <Ristretto as Ciphersuite>::F::random(&mut OsRng);
 
-  let statement = WipStatement::<_, Ristretto>::new(generators(1).reduce(1, false), P, y);
+  let generators = generators(1);
+  let statement =
+    WipStatement::<_, Ristretto, _>::new(generators.per_proof().reduce(1, false), P, y);
   let witness = WipWitness::<Ristretto>::new(
     ScalarVector::<Ristretto>::new(1),
     ScalarVector::<Ristretto>::new(1),
@@ -43,8 +45,18 @@ fn test_weighted_inner_product() {
   let mut verifier = BatchVerifier::new(6);
   let generators = generators(32);
   for i in [1, 2, 4, 8, 16, 32] {
-    let generators = generators.clone().reduce(i, false);
-    let (g, h, g_bold, h_bold) = generators.clone().decompose();
+    let generators = generators.per_proof().reduce(i, false);
+    let g = generators.g().point();
+    let h = generators.h().point();
+    assert_eq!(generators.len(), i);
+    let mut g_bold = vec![];
+    let mut h_bold = vec![];
+    for i in 0 .. i {
+      g_bold.push(generators.generator(GeneratorsList::GBold1, i).point());
+      h_bold.push(generators.generator(GeneratorsList::HBold1, i).point());
+    }
+    let g_bold = PointVector(g_bold);
+    let h_bold = PointVector(h_bold);
 
     let mut a = ScalarVector::<Ristretto>::new(i);
     let mut b = ScalarVector::<Ristretto>::new(i);
@@ -67,7 +79,7 @@ fn test_weighted_inner_product() {
       (g * weighted_inner_product(&a, &b, &y_vec)) +
       (h * alpha);
 
-    let statement = WipStatement::<_, Ristretto>::new(generators, P, y);
+    let statement = WipStatement::<_, Ristretto, _>::new(generators, P, y);
     let witness = WipWitness::<Ristretto>::new(a, b, alpha);
 
     let mut transcript = RecommendedTranscript::new(b"WIP Test");

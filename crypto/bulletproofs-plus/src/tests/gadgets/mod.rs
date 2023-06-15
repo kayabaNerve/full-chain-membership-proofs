@@ -35,11 +35,11 @@ fn test_is_non_zero_gadget() {
   let transcript = RecommendedTranscript::new(b"Is Non Zero Gadget Test");
 
   let test = |x| {
-    let mut circuit = Circuit::new(generators.clone(), true, None);
+    let mut circuit = Circuit::new(generators.per_proof(), true, None);
     gadget(&mut circuit, Some(x));
     let proof = circuit.prove(&mut OsRng, &mut transcript.clone());
 
-    let mut circuit = Circuit::new(generators.clone(), false, Some(vec![]));
+    let mut circuit = Circuit::new(generators.per_proof(), false, Some(vec![]));
     gadget(&mut circuit, None);
     let mut verifier = BatchVerifier::new(1);
     circuit.verify(&mut OsRng, &mut verifier, &mut transcript.clone(), proof);

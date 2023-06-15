@@ -1,9 +1,6 @@
 #![allow(non_snake_case)]
 
-use std::{
-  sync::{Arc, RwLock},
-  collections::HashSet,
-};
+use std::collections::{HashSet, HashMap};
 
 use zeroize::{Zeroize, ZeroizeOnDrop};
 
@@ -35,52 +32,6 @@ pub mod gadgets;
 pub mod tests;
 
 pub const RANGE_PROOF_BITS: usize = 64;
-
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
-pub(crate) enum GeneratorsList {
-  GBold1,
-  GBold2,
-  HBold1,
-}
-
-// TODO: Table these
-#[derive(Clone, Debug)]
-pub struct Generators<T: Transcript, C: Ciphersuite> {
-  g: MultiexpPoint<C::G>,
-  h: MultiexpPoint<C::G>,
-
-  g_bold1: Vec<MultiexpPoint<C::G>>,
-  g_bold2: Vec<MultiexpPoint<C::G>>,
-  h_bold1: Vec<MultiexpPoint<C::G>>,
-  h_bold2: Vec<MultiexpPoint<C::G>>,
-
-  proving_gs: Option<(MultiexpPoint<C::G>, MultiexpPoint<C::G>)>,
-  proving_h_bolds: Option<(Vec<MultiexpPoint<C::G>>, Vec<MultiexpPoint<C::G>>)>,
-
-  whitelisted_vector_commitments: Arc<RwLock<HashSet<Vec<u8>>>>,
-  // Uses a Vec<u8> since C::G doesn't impl Hash
-  set: Arc<RwLock<HashSet<Vec<u8>>>>,
-  transcript: T,
-
-  replaced: HashSet<(GeneratorsList, usize)>,
-}
-
-impl<T: Transcript, C: Ciphersuite> Zeroize for Generators<T, C> {
-  fn zeroize(&mut self) {
-    self.g.zeroize();
-    self.h.zeroize();
-
-    self.g_bold1.zeroize();
-    self.g_bold2.zeroize();
-    self.h_bold1.zeroize();
-    self.h_bold2.zeroize();
-
-    self.proving_gs.zeroize();
-    self.proving_h_bolds.zeroize();
-
-    // Since we don't zeroize set/transcript, this is of arguable practicality
-  }
-}
 
 // TODO: Table these
 #[derive(Clone, PartialEq, Eq, Debug)]
@@ -133,22 +84,73 @@ impl<T: Transcript, C: Ciphersuite> VectorCommitmentGenerators<T, C> {
   }
 }
 
-impl<T: Transcript, C: Ciphersuite> Zeroize for VectorCommitmentGenerators<T, C> {
-  fn zeroize(&mut self) {
-    self.generators.zeroize();
-    // Since we don't zeroize transcript, this is of arguable practicality
-  }
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub(crate) enum GeneratorsList {
+  GBold1,
+  GBold2,
+  HBold1,
+  HBold2,
 }
 
-type MultiexpDecompose<C> = (
-  MultiexpPoint<<C as Ciphersuite>::G>,
-  MultiexpPoint<<C as Ciphersuite>::G>,
-  Vec<MultiexpPoint<<C as Ciphersuite>::G>>,
-  Vec<MultiexpPoint<<C as Ciphersuite>::G>>,
-);
+// TODO: Should these all be static? Should MultiexpPoint itself work off &'static references?
+// TODO: Table these
+#[derive(Clone, Debug)]
+pub struct Generators<T: Transcript, C: Ciphersuite> {
+  g: MultiexpPoint<C::G>,
+  h: MultiexpPoint<C::G>,
 
-// TODO: This is a monolithic type which makes a ton of assumptions about its usage flow
-// It needs to be split into distinct types which clearly documented valid use cases
+  g_bold1: Vec<MultiexpPoint<C::G>>,
+  g_bold2: Vec<MultiexpPoint<C::G>>,
+  h_bold1: Vec<MultiexpPoint<C::G>>,
+  h_bold2: Vec<MultiexpPoint<C::G>>,
+
+  proving_gs: Option<(MultiexpPoint<C::G>, MultiexpPoint<C::G>)>,
+  proving_h_bolds: Option<(Vec<MultiexpPoint<C::G>>, Vec<MultiexpPoint<C::G>>)>,
+
+  whitelisted_vector_commitments: HashSet<Vec<u8>>,
+  // Uses a Vec<u8> since C::G doesn't impl Hash
+  set: HashSet<Vec<u8>>,
+  transcript: T,
+}
+
+#[derive(Clone, Debug)]
+pub struct ProofGenerators<'a, T: Transcript, C: Ciphersuite> {
+  g: &'a MultiexpPoint<C::G>,
+  h: &'a MultiexpPoint<C::G>,
+
+  g_bold1: &'a [MultiexpPoint<C::G>],
+  g_bold2: &'a [MultiexpPoint<C::G>],
+  h_bold1: &'a [MultiexpPoint<C::G>],
+  h_bold2: &'a [MultiexpPoint<C::G>],
+
+  proving_gs: Option<&'a (MultiexpPoint<C::G>, MultiexpPoint<C::G>)>,
+  proving_h_bolds: Option<(&'a [MultiexpPoint<C::G>], &'a [MultiexpPoint<C::G>])>,
+
+  whitelisted_vector_commitments: &'a HashSet<Vec<u8>>,
+  transcript: T,
+
+  replaced: HashMap<(GeneratorsList, usize), MultiexpPoint<C::G>>,
+}
+
+#[derive(Clone, Debug)]
+pub struct InnerProductGenerators<
+  'a,
+  T: Transcript,
+  C: Ciphersuite,
+  GB: AsRef<[MultiexpPoint<C::G>]>,
+> {
+  g: &'a MultiexpPoint<C::G>,
+  h: &'a MultiexpPoint<C::G>,
+
+  g_bold1: GB,
+  g_bold2: &'a [MultiexpPoint<C::G>],
+  h_bold1: &'a [MultiexpPoint<C::G>],
+  h_bold2: &'a [MultiexpPoint<C::G>],
+  replaced: HashMap<(GeneratorsList, usize), MultiexpPoint<C::G>>,
+
+  transcript: T,
+}
+
 impl<T: Transcript, C: Ciphersuite> Generators<T, C> {
   pub fn new(
     g: C::G,
@@ -201,28 +203,36 @@ impl<T: Transcript, C: Ciphersuite> Generators<T, C> {
       proving_gs: None,
       proving_h_bolds: None,
 
-      set: Arc::new(RwLock::new(set)),
-      whitelisted_vector_commitments: Arc::new(RwLock::new(HashSet::new())),
+      set,
+      whitelisted_vector_commitments: HashSet::new(),
       transcript,
-
-      replaced: HashSet::new(),
     }
   }
 
-  // Add generators used for proving the vector commitments validity
+  pub fn g(&self) -> &MultiexpPoint<C::G> {
+    &self.g
+  }
+
+  pub fn h(&self) -> &MultiexpPoint<C::G> {
+    &self.h
+  }
+
+  /// Add generators used for proving the vector commitments' validity.
+  // TODO: Remove when we get a proper VC scheme
   pub fn add_vector_commitment_proving_generators(
     &mut self,
     gs: (C::G, C::G),
     mut h_bold1: (Vec<C::G>, Vec<C::G>),
   ) {
+    assert!(self.proving_gs.is_none());
+
     self.transcript.domain_separate(b"vector_commitment_proving_generators");
 
-    let mut set = self.set.write().unwrap();
     let mut add_generator = |label, generator: &C::G| {
       assert!(!bool::from(generator.is_identity()));
       let bytes = generator.to_bytes();
       self.transcript.append_message(label, bytes.as_ref());
-      assert!(set.insert(bytes.as_ref().to_vec()));
+      assert!(self.set.insert(bytes.as_ref().to_vec()));
     };
 
     add_generator(b"g0", &gs.0);
@@ -242,32 +252,108 @@ impl<T: Transcript, C: Ciphersuite> Generators<T, C> {
     ));
   }
 
+  /// Whitelist a series of vector commitments generators.
+  ///
+  /// Used to ensure a lack of overlap between Generators and VectorCommitmentGenerators.
   pub fn whitelist_vector_commitments(
     &mut self,
     label: &'static [u8],
     generators: &VectorCommitmentGenerators<T, C>,
   ) {
-    let mut set = self.set.write().unwrap();
+    assert!(self.proving_gs.is_some());
+
     for generator in &generators.generators {
       let MultiexpPoint::Constant(bytes, _) = generator else { unreachable!() };
-      assert!(set.insert(bytes.clone()));
+      assert!(self.set.insert(bytes.clone()));
     }
 
     self.transcript.domain_separate(b"vector_commitment_generators");
     self.transcript.append_message(label, generators.transcript.as_ref());
-    assert!(self
-      .whitelisted_vector_commitments
-      .write()
-      .unwrap()
-      .insert(generators.transcript.as_ref().to_vec()));
+    assert!(self.whitelisted_vector_commitments.insert(generators.transcript.as_ref().to_vec()));
   }
 
-  fn vector_commitment_generators(
+  /// Take a presumably global Generators object and return a new object usable per-proof.
+  ///
+  /// Cloning Generators is expensive. This solely takes references to the generators.
+  pub fn per_proof(&self) -> ProofGenerators<'_, T, C> {
+    ProofGenerators {
+      g: &self.g,
+      h: &self.h,
+
+      g_bold1: &self.g_bold1,
+      g_bold2: &self.g_bold2,
+      h_bold1: &self.h_bold1,
+      h_bold2: &self.h_bold2,
+
+      proving_gs: self.proving_gs.as_ref(),
+      proving_h_bolds: self.proving_h_bolds.as_ref().map(|(h1, h2)| (h1.as_slice(), h2.as_slice())),
+
+      whitelisted_vector_commitments: &self.whitelisted_vector_commitments,
+      transcript: self.transcript.clone(),
+
+      replaced: HashMap::new(),
+    }
+  }
+}
+
+impl<'a, T: Transcript, C: Ciphersuite> ProofGenerators<'a, T, C> {
+  pub fn g(&self) -> &MultiexpPoint<C::G> {
+    self.g
+  }
+
+  pub fn h(&self) -> &MultiexpPoint<C::G> {
+    self.h
+  }
+
+  pub(crate) fn replace_generators(
+    &mut self,
+    from: &VectorCommitmentGenerators<T, C>,
+    mut to_replace: Vec<(GeneratorsList, usize)>,
+  ) {
+    debug_assert!(self.whitelisted_vector_commitments.contains(from.transcript.as_ref()));
+
+    assert_eq!(from.generators.len(), to_replace.len());
+
+    self.transcript.domain_separate(b"replaced_generators");
+    self.transcript.append_message(b"from", from.transcript.as_ref());
+
+    for (i, (list, index)) in to_replace.drain(..).enumerate() {
+      self.transcript.append_message(
+        b"list",
+        match list {
+          GeneratorsList::GBold1 => b"g_bold1",
+          GeneratorsList::GBold2 => b"g_bold2",
+          GeneratorsList::HBold1 => b"h_bold1",
+          GeneratorsList::HBold2 => panic!("vector commitments had h_bold2"),
+        },
+      );
+      self.transcript.append_message(b"index", u32::try_from(index).unwrap().to_le_bytes());
+
+      // TODO: Should replaced be &MultiexpPoint<C::G>?
+      assert!(self.replaced.insert((list, index), from.generators[i].clone()).is_none());
+    }
+  }
+
+  pub(crate) fn generator(&self, list: GeneratorsList, i: usize) -> &MultiexpPoint<C::G> {
+    self.replaced.get(&(list, i)).unwrap_or_else(|| {
+      &(match list {
+        GeneratorsList::GBold1 => self.g_bold1,
+        GeneratorsList::GBold2 => self.g_bold2,
+        GeneratorsList::HBold1 => self.h_bold1,
+        GeneratorsList::HBold2 => self.h_bold2,
+      }[i])
+    })
+  }
+
+  pub(crate) fn vector_commitment_generators(
     &self,
     vc_generators: Vec<(GeneratorsList, usize)>,
-  ) -> (Self, Self) {
-    let gs = self.proving_gs.clone().unwrap();
-    let (h_bold0, h_bold1) = self.proving_h_bolds.clone().unwrap();
+  ) -> (
+    InnerProductGenerators<'a, T, C, Vec<MultiexpPoint<C::G>>>,
+    InnerProductGenerators<'a, T, C, Vec<MultiexpPoint<C::G>>>,
+  ) {
+    let gs = self.proving_gs.unwrap();
+    let (h_bold0, h_bold1) = self.proving_h_bolds.unwrap();
 
     let mut g_bold1 = vec![];
     let mut transcript = self.transcript.clone();
@@ -277,193 +363,139 @@ impl<T: Transcript, C: Ciphersuite> Generators<T, C> {
         b"list",
         match list {
           GeneratorsList::GBold1 => {
-            g_bold1.push(self.g_bold1[i].clone());
+            g_bold1.push(self.generator(list, i).clone());
             b"g_bold1"
           }
           GeneratorsList::HBold1 => {
-            g_bold1.push(self.h_bold1[i].clone());
+            g_bold1.push(self.generator(list, i).clone());
             b"h_bold1"
           }
           GeneratorsList::GBold2 => {
-            g_bold1.push(self.g_bold2[i].clone());
+            g_bold1.push(self.generator(list, i).clone());
             b"g_bold2"
           }
+          GeneratorsList::HBold2 => panic!("vector commitments had h_bold2"),
         },
       );
       transcript
         .append_message(b"vector_commitment_generator", u32::try_from(i).unwrap().to_le_bytes());
     }
 
-    let mut generators_0 = Generators {
-      g: gs.0,
-      h: self.h.clone(),
+    let mut generators_0 = InnerProductGenerators {
+      g: &gs.0,
+      h: self.h,
 
       g_bold1: g_bold1.clone(),
-      g_bold2: vec![],
-      h_bold1: h_bold0,
-      h_bold2: vec![],
+      h_bold1: &h_bold0[.. g_bold1.len()],
+      g_bold2: &[],
+      h_bold2: &[],
+      replaced: HashMap::new(),
 
-      proving_gs: None,
-      proving_h_bolds: None,
-
-      set: self.set.clone(),
-      whitelisted_vector_commitments: Arc::new(RwLock::new(HashSet::new())),
       transcript: transcript.clone(),
-
-      replaced: HashSet::new(),
     };
     generators_0.transcript.append_message(b"generators", "0");
 
-    let mut generators_1 = Generators {
-      g: gs.1,
-      h: self.h.clone(),
+    let g_bold1_len = g_bold1.len();
+    let mut generators_1 = InnerProductGenerators {
+      g: &gs.1,
+      h: self.h,
 
       g_bold1,
-      g_bold2: vec![],
-      h_bold1,
-      h_bold2: vec![],
+      h_bold1: &h_bold1[.. g_bold1_len],
+      g_bold2: &[],
+      h_bold2: &[],
+      replaced: HashMap::new(),
 
-      proving_gs: None,
-      proving_h_bolds: None,
-
-      set: self.set.clone(),
-      whitelisted_vector_commitments: Arc::new(RwLock::new(HashSet::new())),
       transcript,
-
-      replaced: HashSet::new(),
     };
     generators_1.transcript.append_message(b"generators", "1");
 
     (generators_0, generators_1)
   }
 
-  // TODO: You can replace with generators multiple times, yet that should panic
-  pub(crate) fn replace_generators(
-    &mut self,
-    from: &VectorCommitmentGenerators<T, C>,
-    mut to_replace: Vec<(GeneratorsList, usize)>,
-  ) {
-    // Make sure this hasn't been used yet
-    assert!(!self.g_bold2.is_empty());
-
-    debug_assert!(self
-      .whitelisted_vector_commitments
-      .read()
-      .unwrap()
-      .contains(from.transcript.as_ref()));
-
-    assert_eq!(from.generators.len(), to_replace.len());
-
-    self.transcript.domain_separate(b"replaced_generators");
-    self.transcript.append_message(b"from", from.transcript.as_ref());
-
-    for (i, (list, index)) in to_replace.drain(..).enumerate() {
-      // assert!(self.replaced.insert((list, index))); // TODO
-
-      self.transcript.append_message(
-        b"list",
-        match list {
-          GeneratorsList::GBold1 => b"g_bold1",
-          GeneratorsList::GBold2 => b"g_bold2",
-          GeneratorsList::HBold1 => b"h_bold1",
-        },
-      );
-      self.transcript.append_message(b"index", u32::try_from(index).unwrap().to_le_bytes());
-
-      (match list {
-        GeneratorsList::GBold1 => &mut self.g_bold1,
-        GeneratorsList::GBold2 => &mut self.g_bold2,
-        GeneratorsList::HBold1 => &mut self.h_bold1,
-      })[index] = from.generators[i].clone();
-    }
-  }
-
-  // TODO: Just shorten the lengths of slices. Don't actually call truncate
-  pub(crate) fn truncate(&mut self, generators: usize) {
-    self.g_bold1.truncate(generators);
-    self.g_bold2.truncate(generators);
-    self.h_bold1.truncate(generators);
-    self.h_bold2.truncate(generators);
+  pub(crate) fn reduce(
+    mut self,
+    generators: usize,
+    with_secondaries: bool,
+  ) -> InnerProductGenerators<'a, T, C, &'a [MultiexpPoint<C::G>]> {
+    self.g_bold1 = &self.g_bold1[.. generators];
+    self.g_bold2 = &self.g_bold2[.. generators];
+    self.h_bold1 = &self.h_bold1[.. generators];
+    self.h_bold2 = &self.h_bold2[.. generators];
     self
       .transcript
       .append_message(b"used_generators", u32::try_from(generators).unwrap().to_le_bytes());
-  }
 
-  pub fn reduce(mut self, generators: usize, with_secondaries: bool) -> Self {
-    self.truncate(generators);
     if with_secondaries {
       self.transcript.append_message(b"secondaries", b"true");
-      self.g_bold1.append(&mut self.g_bold2);
-      self.h_bold1.append(&mut self.h_bold2);
+      InnerProductGenerators {
+        g: self.g,
+        h: self.h,
+
+        g_bold1: self.g_bold1,
+        h_bold1: self.h_bold1,
+        g_bold2: self.g_bold2,
+        h_bold2: self.h_bold2,
+        // TODO: Should this be Arc RwLock?
+        replaced: self.replaced.clone(),
+
+        // TODO: Can this be replaced with just a challenge?
+        transcript: self.transcript.clone(),
+      }
     } else {
       self.transcript.append_message(b"secondaries", b"false");
-      self.g_bold2.clear();
-      self.h_bold2.clear();
+      InnerProductGenerators {
+        g: self.g,
+        h: self.h,
+
+        g_bold1: self.g_bold1,
+        h_bold1: self.h_bold1,
+        g_bold2: &[],
+        h_bold2: &[],
+        replaced: self.replaced.clone(),
+
+        transcript: self.transcript.clone(),
+      }
     }
-    self
+  }
+}
+
+impl<'a, T: Transcript, C: Ciphersuite, GB: AsRef<[MultiexpPoint<C::G>]>>
+  InnerProductGenerators<'a, T, C, GB>
+{
+  pub(crate) fn len(&self) -> usize {
+    self.g_bold1.as_ref().len() + self.g_bold2.len()
   }
 
-  pub(crate) fn g(&self) -> C::G {
-    self.g.point()
+  pub(crate) fn g(&self) -> &MultiexpPoint<C::G> {
+    self.g
   }
 
-  pub fn h(&self) -> C::G {
-    self.h.point()
+  pub(crate) fn h(&self) -> &MultiexpPoint<C::G> {
+    self.h
   }
 
-  // TODO: Don't perform another allocation here
-  pub(crate) fn g_bold(&self) -> PointVector<C> {
-    PointVector(self.g_bold1.iter().map(MultiexpPoint::point).collect())
-  }
+  // TODO: Replace with g_bold + h_bold
+  pub(crate) fn generator(&self, mut list: GeneratorsList, mut i: usize) -> &MultiexpPoint<C::G> {
+    if i >= self.g_bold1.as_ref().len() {
+      i -= self.g_bold1.as_ref().len();
+      list = match list {
+        GeneratorsList::GBold1 => GeneratorsList::GBold2,
+        GeneratorsList::HBold1 => GeneratorsList::HBold2,
+        _ => panic!("InnerProductGenerators asked for g_bold2/h_bold2"),
+      };
+    }
 
-  pub(crate) fn h_bold(&self) -> PointVector<C> {
-    PointVector(self.h_bold1.iter().map(MultiexpPoint::point).collect())
-  }
-
-  /*
-  pub(crate) fn g_bold2(&self) -> PointVector<C> {
-    PointVector(self.g_bold2.iter().map(MultiexpPoint::point).collect())
-  }
-
-  pub(crate) fn h_bold2(&self) -> PointVector<C> {
-    PointVector(self.h_bold2.iter().map(MultiexpPoint::point).collect())
-  }
-  */
-
-  pub(crate) fn multiexp_g(&self) -> MultiexpPoint<C::G> {
-    self.g.clone()
-  }
-
-  /*
-  pub(crate) fn multiexp_h(&self) -> MultiexpPoint<C::G> {
-    self.h.clone()
-  }
-  */
-
-  pub(crate) fn multiexp_g_bold(&self) -> &[MultiexpPoint<C::G>] {
-    &self.g_bold1
-  }
-
-  pub(crate) fn multiexp_h_bold(&self) -> &[MultiexpPoint<C::G>] {
-    &self.h_bold1
-  }
-
-  pub(crate) fn multiexp_g_bold2(&self) -> &[MultiexpPoint<C::G>] {
-    &self.g_bold2
-  }
-
-  pub(crate) fn multiexp_h_bold2(&self) -> &[MultiexpPoint<C::G>] {
-    &self.h_bold2
-  }
-
-  pub fn decompose(self) -> (C::G, C::G, PointVector<C>, PointVector<C>) {
-    assert!(self.g_bold2.is_empty());
-    (self.g(), self.h(), self.g_bold(), self.h_bold())
-  }
-
-  pub fn multiexp_decompose(self) -> MultiexpDecompose<C> {
-    assert!(self.g_bold2.is_empty());
-    (self.g, self.h, self.g_bold1, self.h_bold1)
+    // TODO: What's the safety of this? replaced hasn't been updated for the reduction
+    // No generators above the truncation *should* have been replaced, and it's an error if so
+    self.replaced.get(&(list, i)).unwrap_or(
+      &(match list {
+        GeneratorsList::GBold1 => self.g_bold1.as_ref(),
+        GeneratorsList::GBold2 => self.g_bold2,
+        GeneratorsList::HBold1 => self.h_bold1,
+        GeneratorsList::HBold2 => self.h_bold2,
+      })[i],
+    )
   }
 }
 

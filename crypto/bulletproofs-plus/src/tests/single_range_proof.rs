@@ -13,12 +13,13 @@ use crate::{
 
 #[test]
 fn test_single_range_proof() {
-  let generators = generators(RANGE_PROOF_BITS).reduce(RANGE_PROOF_BITS, false);
+  let generators = generators(RANGE_PROOF_BITS);
+  let usable = generators.per_proof();
 
   let commitment =
     RangeCommitment::new(OsRng.next_u64(), <Ristretto as Ciphersuite>::F::random(&mut OsRng));
-  let commitment_point = commitment.calculate(generators.g(), generators.h());
-  let statement = SingleRangeStatement::<_, Ristretto>::new(generators, commitment_point);
+  let commitment_point = commitment.calculate(generators.g().point(), generators.h().point());
+  let statement = SingleRangeStatement::<_, Ristretto>::new(usable, commitment_point);
   let witness = SingleRangeWitness::<Ristretto>::new(commitment);
 
   let mut transcript = RecommendedTranscript::new(b"Single Range Proof Test");

@@ -68,18 +68,18 @@ fn test_layer_gadget() {
 
   let mut transcript = RecommendedTranscript::new(b"Layer Gadget Test");
 
-  let mut circuit = Circuit::new(generators.clone(), true, None);
+  let mut circuit = Circuit::new(generators.per_proof(), true, None);
   gadget(&mut circuit);
   let (blinds, commitments, proof, proofs) =
     circuit.prove_with_vector_commitments(&mut OsRng, &mut transcript.clone());
 
   assert_eq!(commitments.len(), 2);
   assert_eq!(
-    *commitments.last().unwrap() - (generators.h() * blinds.last().unwrap()),
+    *commitments.last().unwrap() - (generators.h().point() * blinds.last().unwrap()),
     pedersen_generators.commit_vartime(&raw_elems),
   );
 
-  let mut circuit = Circuit::new(generators, false, Some(commitments));
+  let mut circuit = Circuit::new(generators.per_proof(), false, Some(commitments));
   gadget(&mut circuit);
   let mut verifier = BatchVerifier::new(5);
   circuit.verify_with_vector_commitments(&mut OsRng, &mut verifier, &mut transcript, proof, proofs);

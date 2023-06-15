@@ -4,23 +4,30 @@ use zeroize::{Zeroize, ZeroizeOnDrop};
 
 use transcript::Transcript;
 
-use multiexp::{multiexp_vartime, BatchVerifier};
+use multiexp::{multiexp, multiexp_vartime, Point as MultiexpPoint, BatchVerifier};
 use ciphersuite::{
   group::{ff::Field, GroupEncoding},
   Ciphersuite,
 };
 
 use crate::{
-  RANGE_PROOF_BITS, ScalarVector, PointVector, Generators, RangeCommitment,
+  RANGE_PROOF_BITS, ScalarVector, GeneratorsList, ProofGenerators, InnerProductGenerators,
+  RangeCommitment,
   weighted_inner_product::{WipStatement, WipWitness, WipProof},
   u64_decompose,
 };
 
 // Figure 2
-#[derive(Clone, Debug, Zeroize)]
-pub struct SingleRangeStatement<T: Transcript, C: Ciphersuite> {
-  generators: Generators<T, C>,
+#[derive(Clone, Debug)]
+pub struct SingleRangeStatement<'a, T: Transcript, C: Ciphersuite> {
+  generators: ProofGenerators<'a, T, C>,
   V: C::G,
+}
+
+impl<'a, T: Transcript, C: Ciphersuite> Zeroize for SingleRangeStatement<'a, T, C> {
+  fn zeroize(&mut self) {
+    self.V.zeroize();
+  }
 }
 
 #[derive(Clone, Debug, Zeroize, ZeroizeOnDrop)]
@@ -41,8 +48,8 @@ pub struct SingleRangeProof<C: Ciphersuite> {
   wip: WipProof<C>,
 }
 
-impl<T: Transcript, C: Ciphersuite> SingleRangeStatement<T, C> {
-  pub fn new(generators: Generators<T, C>, V: C::G) -> Self {
+impl<'a, T: Transcript, C: Ciphersuite> SingleRangeStatement<'a, T, C> {
+  pub fn new(generators: ProofGenerators<'a, T, C>, V: C::G) -> Self {
     Self { generators, V }
   }
 
@@ -67,24 +74,21 @@ impl<T: Transcript, C: Ciphersuite> SingleRangeStatement<T, C> {
     (y, z)
   }
 
-  fn A_hat(
+  fn A_hat<GB: AsRef<[MultiexpPoint<C::G>]>>(
     transcript: &mut T,
-    g: C::G,
-    g_bold: &PointVector<C>,
-    h_bold: &PointVector<C>,
+    generators: &InnerProductGenerators<'a, T, C, GB>,
     V: C::G,
     A: C::G,
-  ) -> (C::F, ScalarVector<C>, C::F, ScalarVector<C>, C::G) {
-    assert_eq!(g_bold.len(), RANGE_PROOF_BITS);
+  ) -> (C::F, ScalarVector<C>, C::F, C::F, C::G) {
+    assert_eq!(generators.len(), RANGE_PROOF_BITS);
 
     // TODO: First perform the WIP transcript before acquiring challenges
     let (y, z) = Self::transcript_A(transcript, A);
 
     let two_pows = ScalarVector::powers(C::F::from(2), RANGE_PROOF_BITS);
-    // Collapse of [1; RANGE_PROOF_BITS] * z
-    let z_vec = ScalarVector(vec![z; RANGE_PROOF_BITS]);
 
-    let mut ascending_y = ScalarVector(vec![y]);
+    let mut ascending_y = ScalarVector(Vec::with_capacity(RANGE_PROOF_BITS));
+    ascending_y.0.push(y);
     for i in 1 .. RANGE_PROOF_BITS {
       ascending_y.0.push(ascending_y[i - 1] * y);
     }
@@ -97,17 +101,18 @@ impl<T: Transcript, C: Ciphersuite> SingleRangeStatement<T, C> {
     let y_pows = ascending_y.sum();
 
     let two_descending_y = two_pows.mul_vec(&descending_y);
-    let mut A_terms = Vec::with_capacity((g_bold.len() * 2) + 2);
+    let mut A_terms = Vec::with_capacity((generators.len() * 2) + 2);
     let neg_z = -z;
-    for g_bold in &g_bold.0 {
-      A_terms.push((neg_z, *g_bold));
-    }
-    for (h_bold, scalar) in h_bold.0.iter().zip(two_descending_y.add_vec(&z_vec).0.drain(..)) {
-      A_terms.push((scalar, *h_bold));
+    for (i, scalar) in two_descending_y.add(z).0.drain(..).enumerate() {
+      A_terms.push((neg_z, generators.generator(GeneratorsList::GBold1, i).point()));
+      A_terms.push((scalar, generators.generator(GeneratorsList::HBold1, i).point()));
     }
     A_terms.push((y_n_plus_one, V));
-    A_terms.push(((y_pows * z) - (two_pows.sum() * y_n_plus_one * z) - (y_pows * z.square()), g));
-    (y, two_descending_y, y_n_plus_one, z_vec, A + multiexp_vartime(&A_terms))
+    A_terms.push((
+      (y_pows * z) - (two_pows.sum() * y_n_plus_one * z) - (y_pows * z.square()),
+      generators.g().point(),
+    ));
+    (y, two_descending_y, y_n_plus_one, z, A + multiexp_vartime(&A_terms))
   }
 
   pub fn prove<R: RngCore + CryptoRng>(
@@ -119,9 +124,10 @@ impl<T: Transcript, C: Ciphersuite> SingleRangeStatement<T, C> {
     self.initial_transcript(transcript);
 
     let Self { generators, V } = self;
+    let generators = generators.reduce(64, false);
     debug_assert_eq!(
       RangeCommitment::<C>::new(witness.value, witness.gamma)
-        .calculate(generators.g(), generators.h()),
+        .calculate(generators.g().point(), generators.h().point()),
       V
     );
 
@@ -134,14 +140,20 @@ impl<T: Transcript, C: Ciphersuite> SingleRangeStatement<T, C> {
     let a_r = a_l.sub(C::F::ONE);
     debug_assert!(bool::from(a_l.inner_product(&a_r).is_zero()));
 
-    let g_bold = generators.g_bold();
-    let h_bold = generators.h_bold();
-    let A = g_bold.multiexp(&a_l) + h_bold.multiexp(&a_r) + (generators.h() * alpha);
-    let (y, two_descending_y, y_n_plus_one, z_vec, A_hat) =
-      Self::A_hat(transcript, generators.g(), &g_bold, &h_bold, V, A);
+    let mut A_terms = vec![];
+    for (i, a_l) in a_l.0.iter().enumerate() {
+      A_terms.push((*a_l, generators.generator(GeneratorsList::GBold1, i).point()));
+    }
+    for (i, a_r) in a_r.0.iter().enumerate() {
+      A_terms.push((*a_r, generators.generator(GeneratorsList::HBold1, i).point()));
+    }
+    A_terms.push((alpha, generators.h().point()));
+    let A = multiexp(&A_terms);
+    A_terms.zeroize();
+    let (y, two_descending_y, y_n_plus_one, z, A_hat) = Self::A_hat(transcript, &generators, V, A);
 
-    let a_l = a_l.sub_vec(&z_vec);
-    let a_r = a_r.add_vec(&two_descending_y).add_vec(&z_vec);
+    let a_l = a_l.sub(z);
+    let a_r = a_r.add_vec(&two_descending_y).add(z);
     let alpha = alpha + (witness.gamma * y_n_plus_one);
 
     SingleRangeProof {
@@ -164,14 +176,8 @@ impl<T: Transcript, C: Ciphersuite> SingleRangeStatement<T, C> {
     self.initial_transcript(transcript);
 
     let Self { generators, V } = self;
-    let (y, _, _, _, A_hat) = Self::A_hat(
-      transcript,
-      generators.g(),
-      &generators.g_bold(),
-      &generators.h_bold(),
-      V,
-      proof.A,
-    );
+    let generators = generators.reduce(64, false);
+    let (y, _, _, _, A_hat) = Self::A_hat(transcript, &generators, V, proof.A);
     (WipStatement::new(generators, A_hat, y)).verify(rng, verifier, transcript, proof.wip);
   }
 }

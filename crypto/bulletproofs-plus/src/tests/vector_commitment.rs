@@ -52,8 +52,8 @@ fn test_vector_commitment() {
       // TODO: Panic if a circuit doesn't finalize VCs
       {
         let blind = <Ristretto as Ciphersuite>::F::random(&mut OsRng);
-        expected_commitment_0 =
-          expected_commitment_0.or(Some((x_bind * x) + (y_bind * y) + (generators.h() * blind)));
+        expected_commitment_0 = expected_commitment_0
+          .or(Some((x_bind * x) + (y_bind * y) + (generators.h().point() * blind)));
         assert_eq!(
           circuit.finalize_commitment(vc, Some(blind).filter(|_| circuit.prover())),
           expected_commitment_0.unwrap()
@@ -66,7 +66,7 @@ fn test_vector_commitment() {
       {
         let blind = <Ristretto as Ciphersuite>::F::random(&mut OsRng);
         expected_commitment_1 = expected_commitment_1
-          .or(Some((z_bind * z) + (a_bind * (z * a)) + (generators.h() * blind)));
+          .or(Some((z_bind * z) + (a_bind * (z * a)) + (generators.h().point() * blind)));
         assert_eq!(
           circuit.finalize_commitment(vc, Some(blind).filter(|_| circuit.prover()),),
           expected_commitment_1.unwrap()
@@ -78,7 +78,7 @@ fn test_vector_commitment() {
 
   let mut transcript = RecommendedTranscript::new(b"Vector Commitment Test");
 
-  let mut circuit = Circuit::new(generators.clone(), true, None);
+  let mut circuit = Circuit::new(generators.per_proof(), true, None);
   gadget(&mut circuit, Some((x, y)), Some((z, a)));
   let (blinds, commitments, proof, proofs) =
     circuit.prove_with_vector_commitments(&mut OsRng, &mut transcript.clone());
@@ -86,7 +86,7 @@ fn test_vector_commitment() {
   assert_eq!(commitments.len(), 2);
   assert_eq!(proofs.len(), 3);
 
-  let mut circuit = Circuit::new(generators.clone(), false, Some(commitments.clone()));
+  let mut circuit = Circuit::new(generators.per_proof(), false, Some(commitments.clone()));
   gadget(&mut circuit, None, None);
   let mut verifier = BatchVerifier::new(5);
   circuit.verify_with_vector_commitments(&mut OsRng, &mut verifier, &mut transcript, proof, proofs);

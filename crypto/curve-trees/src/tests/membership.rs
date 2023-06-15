@@ -30,8 +30,8 @@ fn test_membership() {
     let mut pallas_generators = generators_fn::<Pallas>(512 * 4);
     let mut vesta_generators = generators_fn::<Vesta>(512 * 4);
 
-    let pallas_h = pallas_generators.h();
-    let vesta_h = vesta_generators.h();
+    let pallas_h = pallas_generators.h().point();
+    let vesta_h = vesta_generators.h().point();
 
     let permissible_c1 = Permissible::<<Pasta as CurveCycle>::C1> {
       h: pallas_h,
@@ -70,7 +70,7 @@ fn test_membership() {
       new_blind::<_, Pallas, Vesta>(&mut OsRng, DLogTable::<Pallas>::new(pallas_h).trits(), 0).0;
     let point = leaves[usize::try_from(OsRng.next_u64() % (1 << 30)).unwrap() % leaves.len()];
     assert!(permissible_c1.point(point));
-    let blinded_point = point - (pallas_generators.h() * blind_c1);
+    let blinded_point = point - (pallas_generators.h().point() * blind_c1);
 
     let gadget = |circuit_c1: &mut Circuit<_, Pallas>, circuit_c2: &mut Circuit<_, Vesta>| {
       membership_gadget::<_, _, Pasta>(
@@ -85,8 +85,8 @@ fn test_membership() {
 
     let mut transcript = RecommendedTranscript::new(b"Membership Gadget Test");
 
-    let mut circuit_c1 = Circuit::new(pallas_generators.clone(), true, None);
-    let mut circuit_c2 = Circuit::new(vesta_generators.clone(), true, None);
+    let mut circuit_c1 = Circuit::new(pallas_generators.per_proof(), true, None);
+    let mut circuit_c2 = Circuit::new(vesta_generators.per_proof(), true, None);
     gadget(&mut circuit_c1, &mut circuit_c2);
 
     let mut prove_transcript = transcript.clone();
@@ -95,8 +95,9 @@ fn test_membership() {
     let (_, vesta_commitments, vesta_proof, vesta_proofs) =
       circuit_c2.prove_with_vector_commitments(&mut OsRng, &mut prove_transcript);
 
-    let mut circuit_c1 = Circuit::new(pallas_generators.clone(), false, Some(pallas_commitments));
-    let mut circuit_c2 = Circuit::new(vesta_generators.clone(), false, Some(vesta_commitments));
+    let mut circuit_c1 =
+      Circuit::new(pallas_generators.per_proof(), false, Some(pallas_commitments));
+    let mut circuit_c2 = Circuit::new(vesta_generators.per_proof(), false, Some(vesta_commitments));
     gadget(&mut circuit_c1, &mut circuit_c2);
 
     circuit_c1.verify_with_vector_commitments(
