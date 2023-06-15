@@ -12,7 +12,7 @@ The BP+ library utilized implements its own vector commitment scheme pending
 formalization of the author's work.
 
 This work uses the BP+ library's provided ECC gadgets, which include a DLog PoK
-which is roughly 50% more efficient than the incomplete addition series
+which is roughly 33% more efficient than the incomplete addition series
 described in the Curve Trees paper.
 
 ## Status
@@ -22,10 +22,6 @@ described in the Curve Trees paper.
   2) A more-efficient in-memory algorithm. The current one grows by power of
      two, and doesn't archive no longer needed left hand nodes.
   3) A pop algorithm, so reorgs can be successfully handled.
-
-- Some optimizations from the Curve Trees paper are missing, most notably
-  single-coordinate hashing. Set membership can be done in n gates, yet the
-  dual set-membership currently used takes 5n.
 
 - This library uses asserts instead of `Result`. It also has extraneous asserts
   which should be moved to debug.

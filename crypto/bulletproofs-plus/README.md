@@ -21,10 +21,6 @@ Several optimizations are possible, such as:
 - Post-processing of gates/constraints in `Circuit::compile`
 - Reduction of the amount of `clone`s
 
-Despite that, this library is performant enough to write and work with circuits.
-Accordingly, optimization has been delayed until after the initial proof of
-concept is ready.
-
 This library uses asserts instead of `Result`. It also has extraneous asserts
 which should be moved to debug.
 
