@@ -62,7 +62,7 @@ pub trait EmbeddedCurveOperations: Ciphersuite {
   type Embedded: Ecip<FieldElement = Self::F>;
 
   /// Constrains a point to being on curve AND not being the identity.
-  fn constrain_on_curve<T: Transcript>(
+  fn constrain_on_curve<T: 'static + Transcript>(
     circuit: &mut Circuit<T, Self>,
     x: VariableReference,
     y: VariableReference,
@@ -71,7 +71,7 @@ pub trait EmbeddedCurveOperations: Ciphersuite {
   // Curve Trees, Appendix A.[4, 5]
   // This uses 4 gates theoretically, 5 as implemented here, and 6 constraints
   #[doc(hidden)]
-  fn incomplete_add_internal<T: Transcript>(
+  fn incomplete_add_internal<T: 'static + Transcript>(
     circuit: &mut Circuit<T, Self>,
     p1: OnCurvePoint,
     p2_vars_with_prods: Option<(VariableReference, VariableReference)>,
@@ -203,7 +203,7 @@ pub trait EmbeddedCurveOperations: Ciphersuite {
   ///
   /// The only checks performed by this function are P1 != P2 and P1 != -P2. Neither point is
   /// checked to not be identity.
-  fn incomplete_add<T: Transcript>(
+  fn incomplete_add<T: 'static + Transcript>(
     circuit: &mut Circuit<T, Self>,
     p1: OnCurvePoint,
     p2: OnCurvePoint,
@@ -220,7 +220,7 @@ pub trait EmbeddedCurveOperations: Ciphersuite {
   /// This uses the same function internally as incomplete_add and accordingly isn't more
   /// performant. Its advantage is in avoiding the neccessity of constraining a point to be on
   /// curve.
-  fn incomplete_add_constant<T: Transcript>(
+  fn incomplete_add_constant<T: 'static + Transcript>(
     circuit: &mut Circuit<T, Self>,
     p1: OnCurvePoint,
     p2: <Self::Embedded as Ciphersuite>::G,
@@ -249,7 +249,7 @@ pub trait EmbeddedCurveOperations: Ciphersuite {
   // Gate count is notated GC
 
   // TODO: Can we impl a batch DLog PoK?
-  fn dlog_pok<R: RngCore + CryptoRng, T: Transcript>(
+  fn dlog_pok<R: RngCore + CryptoRng, T: 'static + Transcript>(
     rng: &mut R,
     circuit: &mut Circuit<T, Self>,
     G: &'static DLogTable<Self::Embedded>,
@@ -270,7 +270,7 @@ impl<C: EmbeddedShortWeierstrass> EmbeddedCurveOperations for C {
   type Embedded = <C as EmbeddedShortWeierstrass>::Embedded;
 
   // y**2 = x**3 + B
-  fn constrain_on_curve<T: Transcript>(
+  fn constrain_on_curve<T: 'static + Transcript>(
     circuit: &mut Circuit<T, Self>,
     x: VariableReference,
     y: VariableReference,

@@ -19,12 +19,12 @@ use crate::{
 
 // Figure 2
 #[derive(Clone, Debug)]
-pub struct SingleRangeStatement<'a, T: Transcript, C: Ciphersuite> {
+pub struct SingleRangeStatement<'a, T: 'static + Transcript, C: Ciphersuite> {
   generators: ProofGenerators<'a, T, C>,
   V: C::G,
 }
 
-impl<'a, T: Transcript, C: Ciphersuite> Zeroize for SingleRangeStatement<'a, T, C> {
+impl<'a, T: 'static + Transcript, C: Ciphersuite> Zeroize for SingleRangeStatement<'a, T, C> {
   fn zeroize(&mut self) {
     self.V.zeroize();
   }
@@ -48,7 +48,7 @@ pub struct SingleRangeProof<C: Ciphersuite> {
   wip: WipProof<C>,
 }
 
-impl<'a, T: Transcript, C: Ciphersuite> SingleRangeStatement<'a, T, C> {
+impl<'a, T: 'static + Transcript, C: Ciphersuite> SingleRangeStatement<'a, T, C> {
   pub fn new(generators: ProofGenerators<'a, T, C>, V: C::G) -> Self {
     Self { generators, V }
   }
@@ -156,7 +156,7 @@ impl<'a, T: Transcript, C: Ciphersuite> SingleRangeStatement<'a, T, C> {
 
     SingleRangeProof {
       A,
-      wip: WipStatement::new(generators, A_hat, y).prove(
+      wip: WipStatement::new(&generators, A_hat, y).prove(
         rng,
         transcript,
         WipWitness::new(a_l, a_r, alpha),
@@ -176,6 +176,6 @@ impl<'a, T: Transcript, C: Ciphersuite> SingleRangeStatement<'a, T, C> {
     let Self { generators, V } = self;
     let generators = generators.reduce(64, false);
     let (y, _, _, _, A_hat) = Self::A_hat(transcript, &generators, V, proof.A);
-    (WipStatement::new(generators, A_hat, y)).verify(rng, verifier, transcript, proof.wip);
+    (WipStatement::new(&generators, A_hat, y)).verify(rng, verifier, transcript, proof.wip);
   }
 }

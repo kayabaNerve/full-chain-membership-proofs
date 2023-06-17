@@ -44,7 +44,7 @@ impl<C: Ciphersuite> ScalarMatrix<C> {
     res
   }
 
-  pub fn transcript<T: Transcript>(&self, transcript: &mut T, label: &'static [u8]) {
+  pub fn transcript<T: 'static + Transcript>(&self, transcript: &mut T, label: &'static [u8]) {
     // Prevent conflicts between 2x3 and 3x2
     transcript.append_message(b"length", u32::try_from(self.length()).unwrap().to_le_bytes());
     transcript.append_message(b"width", u32::try_from(self.width()).unwrap().to_le_bytes());

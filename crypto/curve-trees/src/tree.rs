@@ -40,7 +40,7 @@ struct Node<C: CurveCycle> {
 // leaves
 // When the tree reaches capacity, it has a parent node added, growing its capacity
 #[derive(Clone, Debug)]
-pub struct Tree<T: Transcript, C: CurveCycle>
+pub struct Tree<T: 'static + Transcript, C: CurveCycle>
 where
   T::Challenge: Debug,
 {
@@ -93,7 +93,7 @@ fn depth<C: CurveCycle>(node: &Node<C>) -> usize {
   }
 }
 
-impl<T: Transcript, C: CurveCycle> Tree<T, C>
+impl<T: 'static + Transcript, C: CurveCycle> Tree<T, C>
 where
   T::Challenge: Debug,
 {
@@ -350,7 +350,7 @@ where
       self.paths.insert(leaf.to_bytes().as_ref().to_vec(), path.unwrap());
     }
 
-    fn clean<T: Transcript, C: CurveCycle>(
+    fn clean<T: 'static + Transcript, C: CurveCycle>(
       permissible_c1: &Permissible<C::C1>,
       permissible_c2: &Permissible<C::C2>,
       odd_generators: &[VectorCommitmentGenerators<T, C::C2>],

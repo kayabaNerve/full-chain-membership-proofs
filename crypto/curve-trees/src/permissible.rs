@@ -38,7 +38,7 @@ impl<C: Ecip> Permissible<C> {
   }
 
   pub(crate) fn gadget<
-    T: Transcript,
+    T: 'static + Transcript,
     C2: Ciphersuite<F = C::FieldElement> + EmbeddedCurveOperations<Embedded = C>,
   >(
     &self,

@@ -12,7 +12,7 @@ pub mod elliptic_curve;
 
 /// Assert a variable isn't zero.
 // One gate, one contraint.
-pub fn assert_non_zero_gadget<T: Transcript, C: Ciphersuite>(
+pub fn assert_non_zero_gadget<T: 'static + Transcript, C: Ciphersuite>(
   circuit: &mut Circuit<T, C>,
   var: VariableReference,
 ) {
@@ -31,7 +31,7 @@ pub fn assert_non_zero_gadget<T: Transcript, C: Ciphersuite>(
 
 /// Returns a Bit if the value is non-zero.
 // One gate and the combined constraints/gates of assert_non_zero_gadget, Bit::new_from_var.
-pub fn is_non_zero_gadget<T: Transcript, C: Ciphersuite>(
+pub fn is_non_zero_gadget<T: 'static + Transcript, C: Ciphersuite>(
   circuit: &mut Circuit<T, C>,
   var: VariableReference,
 ) -> Bit {

@@ -76,7 +76,8 @@ fn bench_membership() {
   dbg!(std::time::Instant::now() - tree_time);
 
   let transcript = RecommendedTranscript::new(b"Membership Gadget Test");
-  let gadget = |transcript: &mut RecommendedTranscript, circuit_c1: &mut Circuit<_, Pallas>,
+  let gadget = |transcript: &mut RecommendedTranscript,
+                circuit_c1: &mut Circuit<_, Pallas>,
                 circuit_c2: &mut Circuit<_, Vesta>,
                 blinded_point: Option<_>,
                 blind: Option<_>| {
@@ -107,18 +108,18 @@ fn bench_membership() {
     let mut prove_transcript = transcript.clone();
     let mut circuit_c1 = Circuit::new(pallas_generators.per_proof(), true);
     let mut circuit_c2 = Circuit::new(vesta_generators.per_proof(), true);
-    gadget(&mut prove_transcript, &mut circuit_c1, &mut circuit_c2, Some(blinded_point), Some(blind_c1));
+    gadget(
+      &mut prove_transcript,
+      &mut circuit_c1,
+      &mut circuit_c2,
+      Some(blinded_point),
+      Some(blind_c1),
+    );
 
-    let (pallas_commitments, _, pallas_vector_commitments, pallas_proof, pallas_proofs) = circuit_c1
-      .prove_with_vector_commitments(
-        &mut OsRng,
-        &mut prove_transcript,
-      );
-    let (vesta_commitments, _, vesta_vector_commitments, vesta_proof, vesta_proofs) = circuit_c2
-      .prove_with_vector_commitments(
-        &mut OsRng,
-        &mut prove_transcript,
-      );
+    let (pallas_commitments, _, pallas_vector_commitments, pallas_proof, pallas_proofs) =
+      circuit_c1.prove_with_vector_commitments(&mut OsRng, &mut prove_transcript);
+    let (vesta_commitments, _, vesta_vector_commitments, vesta_proof, vesta_proofs) =
+      circuit_c2.prove_with_vector_commitments(&mut OsRng, &mut prove_transcript);
 
     statements.push(blinded_point);
     proofs.push((
@@ -140,67 +141,69 @@ fn bench_membership() {
   let verification = std::time::Instant::now();
   let mut verifier_c1 = BatchVerifier::new((runs * (depth * 3)).try_into().unwrap());
   let mut verifier_c2 = BatchVerifier::new((runs * (depth * 3)).try_into().unwrap());
-  for i in 0 .. runs {
-    let blinded_point = statements[usize::try_from(i).unwrap()];
-    let (
-      (pallas_commitments, pallas_vector_commitments, pallas_proof, pallas_proofs),
-      (vesta_commitments, vesta_vector_commitments, vesta_proof, vesta_proofs),
-    ) = proofs[usize::try_from(i).unwrap()].clone();
+  for _ in 0 .. 10 {
+    for i in 0 .. runs {
+      let blinded_point = statements[usize::try_from(i).unwrap()];
+      let (
+        (pallas_commitments, pallas_vector_commitments, pallas_proof, pallas_proofs),
+        (vesta_commitments, vesta_vector_commitments, vesta_proof, vesta_proofs),
+      ) = proofs[usize::try_from(i).unwrap()].clone();
 
-    // We need to arrange the points as post-vars
-    let mut c1_additional = vec![];
-    for (i, commitment) in vesta_vector_commitments.iter().enumerate() {
-      if (i % 2) != 1 {
-        continue;
+      // We need to arrange the points as post-vars
+      let mut c1_additional = vec![];
+      for (i, commitment) in vesta_vector_commitments.iter().enumerate() {
+        if (i % 2) != 1 {
+          continue;
+        }
+        let coords = Pasta::c2_coords(*commitment);
+        c1_additional.push(coords.0);
+        c1_additional.push(coords.1);
       }
-      let coords = Pasta::c2_coords(*commitment);
-      c1_additional.push(coords.0);
-      c1_additional.push(coords.1);
-    }
-    let blinded_point_coords = Pasta::c1_coords(blinded_point);
-    let mut c2_additional = vec![blinded_point_coords.0, blinded_point_coords.1];
-    for (i, commitment) in pallas_vector_commitments.iter().enumerate() {
-      if (i % 2) != 1 {
-        continue;
+      let blinded_point_coords = Pasta::c1_coords(blinded_point);
+      let mut c2_additional = vec![blinded_point_coords.0, blinded_point_coords.1];
+      for (i, commitment) in pallas_vector_commitments.iter().enumerate() {
+        if (i % 2) != 1 {
+          continue;
+        }
+        let coords = Pasta::c1_coords(*commitment);
+        c2_additional.push(coords.0);
+        c2_additional.push(coords.1);
       }
-      let coords = Pasta::c1_coords(*commitment);
-      c2_additional.push(coords.0);
-      c2_additional.push(coords.1);
+
+      // The caller must check the tree root aligns
+      if (tree.depth() % 2) == 1 {
+        assert_eq!(Hash::Odd(*vesta_vector_commitments.last().unwrap()), tree.root());
+        c1_additional.pop();
+        c1_additional.pop();
+      } else {
+        assert_eq!(Hash::Even(*pallas_vector_commitments.last().unwrap()), tree.root());
+        c2_additional.pop();
+        c2_additional.pop();
+      }
+
+      let mut verify_transcript = verify_transcript.clone();
+
+      circuit_c1.verify(
+        &mut OsRng,
+        &mut verifier_c1,
+        &mut verify_transcript,
+        pallas_commitments,
+        pallas_vector_commitments,
+        &c1_additional,
+        pallas_proof,
+        pallas_proofs,
+      );
+      circuit_c2.verify(
+        &mut OsRng,
+        &mut verifier_c2,
+        &mut verify_transcript,
+        vesta_commitments,
+        vesta_vector_commitments,
+        &c2_additional,
+        vesta_proof,
+        vesta_proofs,
+      );
     }
-
-    // The caller must check the tree root aligns
-    if (tree.depth() % 2) == 1 {
-      assert_eq!(Hash::Odd(*vesta_vector_commitments.last().unwrap()), tree.root());
-      c1_additional.pop();
-      c1_additional.pop();
-    } else {
-      assert_eq!(Hash::Even(*pallas_vector_commitments.last().unwrap()), tree.root());
-      c2_additional.pop();
-      c2_additional.pop();
-    }
-
-    let mut verify_transcript = verify_transcript.clone();
-
-    circuit_c1.verify(
-      &mut OsRng,
-      &mut verifier_c1,
-      &mut verify_transcript,
-      pallas_commitments,
-      pallas_vector_commitments,
-      &c1_additional,
-      pallas_proof,
-      pallas_proofs,
-    );
-    circuit_c2.verify(
-      &mut OsRng,
-      &mut verifier_c2,
-      &mut verify_transcript,
-      vesta_commitments,
-      vesta_vector_commitments,
-      &c2_additional,
-      vesta_proof,
-      vesta_proofs,
-    );
   }
   dbg!(std::time::Instant::now() - verification);
 

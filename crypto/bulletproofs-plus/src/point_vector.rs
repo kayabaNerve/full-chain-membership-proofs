@@ -116,7 +116,7 @@ impl<C: Ciphersuite> PointVector<C> {
     (self, PointVector(r))
   }
 
-  pub(crate) fn transcript<T: Transcript>(&self, transcript: &mut T, label: &'static [u8]) {
+  pub(crate) fn transcript<T: 'static + Transcript>(&self, transcript: &mut T, label: &'static [u8]) {
     for point in &self.0 {
       transcript.append_message(label, point.to_bytes());
     }

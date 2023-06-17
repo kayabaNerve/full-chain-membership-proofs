@@ -6,7 +6,7 @@ use crate::arithmetic_circuit::{ProductReference, Constraint, Circuit};
 // Core set membership gadget, shared between the variable/constant routines.
 // member should be Some if matching against a variable, None for a constant.
 // value should be Some if variable + prover, Some if constant, otherwise None.
-fn set_membership<T: Transcript, C: Ciphersuite>(
+fn set_membership<T: 'static + Transcript, C: Ciphersuite>(
   circuit: &mut Circuit<T, C>,
   member: Option<ProductReference>,
   value: Option<C::F>,
@@ -59,7 +59,7 @@ fn set_membership<T: Transcript, C: Ciphersuite>(
 }
 
 /// Assert a variable is within a set.
-pub fn assert_variable_in_set_gadget<T: Transcript, C: Ciphersuite>(
+pub fn assert_variable_in_set_gadget<T: 'static + Transcript, C: Ciphersuite>(
   circuit: &mut Circuit<T, C>,
   member: ProductReference,
   set: &[ProductReference],
@@ -70,7 +70,7 @@ pub fn assert_variable_in_set_gadget<T: Transcript, C: Ciphersuite>(
 }
 
 /// Assert a constant is within a set.
-pub fn assert_constant_in_set_gadget<T: Transcript, C: Ciphersuite>(
+pub fn assert_constant_in_set_gadget<T: 'static + Transcript, C: Ciphersuite>(
   circuit: &mut Circuit<T, C>,
   constant: C::F,
   set: &[ProductReference],
@@ -85,7 +85,7 @@ pub fn assert_constant_in_set_gadget<T: Transcript, C: Ciphersuite>(
 //
 // It's efficiency is by not requiring prior usage in products before performing the set
 // membership.
-pub(crate) fn set_with_constant<T: Transcript, C: Ciphersuite>(
+pub(crate) fn set_with_constant<T: 'static + Transcript, C: Ciphersuite>(
   circuit: &mut Circuit<T, C>,
   constant: C::F,
   set: &[Option<C::F>],

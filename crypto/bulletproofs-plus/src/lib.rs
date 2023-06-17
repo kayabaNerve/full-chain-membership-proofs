@@ -43,12 +43,12 @@ pub fn padded_pow_of_2(i: usize) -> usize {
 
 // TODO: Table these
 #[derive(Clone, PartialEq, Eq, Debug)]
-pub struct VectorCommitmentGenerators<T: Transcript, C: Ciphersuite> {
+pub struct VectorCommitmentGenerators<T: 'static + Transcript, C: Ciphersuite> {
   generators: Vec<MultiexpPoint<C::G>>,
   transcript: T::Challenge,
 }
 
-impl<T: Transcript, C: Ciphersuite> VectorCommitmentGenerators<T, C> {
+impl<T: 'static + Transcript, C: Ciphersuite> VectorCommitmentGenerators<T, C> {
   pub fn new(generators: &[C::G]) -> Self {
     assert!(!generators.is_empty());
 
@@ -107,7 +107,7 @@ pub(crate) enum GeneratorsList {
 // TODO: Should these all be static? Should MultiexpPoint itself work off &'static references?
 // TODO: Table these
 #[derive(Clone, Debug)]
-pub struct Generators<T: Transcript, C: Ciphersuite> {
+pub struct Generators<T: 'static + Transcript, C: Ciphersuite> {
   g: MultiexpPoint<C::G>,
   h: MultiexpPoint<C::G>,
 
@@ -126,7 +126,7 @@ pub struct Generators<T: Transcript, C: Ciphersuite> {
 }
 
 #[derive(Clone, Debug)]
-pub struct ProofGenerators<'a, T: Transcript, C: Ciphersuite> {
+pub struct ProofGenerators<'a, T: 'static + Transcript, C: Ciphersuite> {
   g: &'a MultiexpPoint<C::G>,
   h: &'a MultiexpPoint<C::G>,
 
@@ -147,7 +147,7 @@ pub struct ProofGenerators<'a, T: Transcript, C: Ciphersuite> {
 #[derive(Clone, Debug)]
 pub struct InnerProductGenerators<
   'a,
-  T: Transcript,
+  T: 'static + Transcript,
   C: Ciphersuite,
   GB: Clone + AsRef<[MultiexpPoint<C::G>]>,
 > {
@@ -163,7 +163,7 @@ pub struct InnerProductGenerators<
   transcript: T,
 }
 
-impl<T: Transcript, C: Ciphersuite> Generators<T, C> {
+impl<T: 'static + Transcript, C: Ciphersuite> Generators<T, C> {
   pub fn new(
     g: C::G,
     h: C::G,
@@ -312,7 +312,7 @@ impl<T: Transcript, C: Ciphersuite> Generators<T, C> {
   }
 }
 
-impl<'a, T: Transcript, C: Ciphersuite> ProofGenerators<'a, T, C> {
+impl<'a, T: 'static + Transcript, C: Ciphersuite> ProofGenerators<'a, T, C> {
   pub fn g(&self) -> &MultiexpPoint<C::G> {
     self.g
   }
@@ -489,7 +489,7 @@ impl<'a, T: Transcript, C: Ciphersuite> ProofGenerators<'a, T, C> {
   }
 }
 
-impl<'a, T: Transcript, C: Ciphersuite, GB: Clone + AsRef<[MultiexpPoint<C::G>]>>
+impl<'a, T: 'static + Transcript, C: Ciphersuite, GB: Clone + AsRef<[MultiexpPoint<C::G>]>>
   InnerProductGenerators<'a, T, C, GB>
 {
   pub(crate) fn len(&self) -> usize {

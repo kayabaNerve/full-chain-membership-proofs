@@ -26,15 +26,15 @@ enum P<C: Ciphersuite> {
 
 // Figure 1
 #[derive(Clone, Debug)]
-pub struct WipStatement<'a, T: Transcript, C: Ciphersuite, GB: Clone + AsRef<[MultiexpPoint<C::G>]>>
+pub struct WipStatement<'a, T: 'static + Transcript, C: Ciphersuite, GB: Clone + AsRef<[MultiexpPoint<C::G>]>>
 {
-  generators: InnerProductGenerators<'a, T, C, GB>,
+  generators: &'a InnerProductGenerators<'a, T, C, GB>,
   P: P<C>,
   y: ScalarVector<C>,
   inv_y: Option<Vec<C::F>>,
 }
 
-impl<'a, T: Transcript, C: Ciphersuite, GB: Clone + AsRef<[MultiexpPoint<C::G>]>> Zeroize
+impl<'a, T: 'static + Transcript, C: Ciphersuite, GB: Clone + AsRef<[MultiexpPoint<C::G>]>> Zeroize
   for WipStatement<'a, T, C, GB>
 {
   fn zeroize(&mut self) {
@@ -80,10 +80,10 @@ pub struct WipProof<C: Ciphersuite> {
   delta_answer: C::F,
 }
 
-impl<'a, T: Transcript, C: Ciphersuite, GB: Clone + AsRef<[MultiexpPoint<C::G>]>>
+impl<'a, T: 'static + Transcript, C: Ciphersuite, GB: 'a + Clone + AsRef<[MultiexpPoint<C::G>]>>
   WipStatement<'a, T, C, GB>
 {
-  pub fn new(generators: InnerProductGenerators<'a, T, C, GB>, P: C::G, y: C::F) -> Self {
+  pub fn new(generators: &'a InnerProductGenerators<'a, T, C, GB>, P: C::G, y: C::F) -> Self {
     debug_assert_eq!(generators.len(), padded_pow_of_2(generators.len()));
 
     // y ** n
@@ -97,7 +97,7 @@ impl<'a, T: Transcript, C: Ciphersuite, GB: Clone + AsRef<[MultiexpPoint<C::G>]>
   }
 
   pub(crate) fn new_without_P_transcript(
-    generators: InnerProductGenerators<'a, T, C, GB>,
+    generators: &'a InnerProductGenerators<'a, T, C, GB>,
     P: Vec<(C::F, MultiexpPoint<C::G>)>,
     mut y_n: ScalarVector<C>,
     mut inv_y_n: Vec<C::F>,
@@ -113,7 +113,7 @@ impl<'a, T: Transcript, C: Ciphersuite, GB: Clone + AsRef<[MultiexpPoint<C::G>]>
 
     debug_assert_eq!(
       Self::new(
-        generators.clone(),
+        generators,
         multiexp(&P.iter().map(|P| (P.0, P.1.point())).collect::<Vec<_>>()),
         y_n[0]
       )
@@ -127,7 +127,7 @@ impl<'a, T: Transcript, C: Ciphersuite, GB: Clone + AsRef<[MultiexpPoint<C::G>]>
 
   fn initial_transcript(&mut self, transcript: &mut T) {
     transcript.domain_separate(b"weighted_inner_product");
-    transcript.append_message(b"generators", self.generators.transcript.challenge(b"summary"));
+    transcript.append_message(b"generators", self.generators.transcript.clone().challenge(b"summary"));
     if let P::Point(P) = &self.P {
       transcript.append_message(b"P", P.to_bytes());
     }

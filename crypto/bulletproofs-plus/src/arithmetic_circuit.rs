@@ -71,8 +71,8 @@ mod sealed {
   use transcript::Transcript;
   use ciphersuite::Ciphersuite;
 
-  pub trait Challenger<T: Transcript, C: Ciphersuite>: Fn(T::Challenge) -> Vec<C::F> {}
-  impl<T: Transcript, C: Ciphersuite, F: Fn(T::Challenge) -> Vec<C::F>> Challenger<T, C> for F {}
+  pub trait Challenger<T: 'static + Transcript, C: Ciphersuite>: Fn(T::Challenge) -> Vec<C::F> {}
+  impl<T: 'static + Transcript, C: Ciphersuite, F: Fn(T::Challenge) -> Vec<C::F>> Challenger<T, C> for F {}
 
   pub trait ChallengeApplicator<C: Ciphersuite>: Fn(&[C::F]) -> C::F {}
   impl<C: Ciphersuite, F: Fn(&[C::F]) -> C::F> ChallengeApplicator<C> for F {}
@@ -212,7 +212,7 @@ impl<C: Ciphersuite> Constraint<C> {
 }
 
 // TODO: Take in a transcript
-fn commitment_challenge<T: Transcript, C: Ciphersuite>(commitment: C::G) -> T::Challenge {
+fn commitment_challenge<T: 'static + Transcript, C: Ciphersuite>(commitment: C::G) -> T::Challenge {
   let mut transcript = T::new(b"Bulletproofs+ Commitment Challenge");
   transcript.append_message(b"commitment", commitment.to_bytes());
   transcript.challenge(b"challenge")
@@ -265,7 +265,7 @@ struct Product {
   variable: usize,
 }
 
-pub struct Circuit<'a, T: Transcript, C: Ciphersuite> {
+pub struct Circuit<'a, T: 'static + Transcript, C: Ciphersuite> {
   generators: ProofGenerators<'a, T, C>,
 
   prover: bool,
@@ -283,7 +283,7 @@ pub struct Circuit<'a, T: Transcript, C: Ciphersuite> {
   post_constraints: Vec<(Constraint<C>, Option<C::F>)>,
 }
 
-impl<'a, T: Transcript, C: Ciphersuite> Circuit<'a, T, C> {
+impl<'a, T: 'static + Transcript, C: Ciphersuite> Circuit<'a, T, C> {
   pub fn new(generators: ProofGenerators<'a, T, C>, prover: bool) -> Self {
     Self {
       generators,
@@ -854,7 +854,7 @@ impl<'a, T: Transcript, C: Ciphersuite> Circuit<'a, T, C> {
   }
 
   fn vector_commitment_statement<GB: Clone + AsRef<[MultiexpPoint<C::G>]>>(
-    alt_generators: InnerProductGenerators<'a, T, C, GB>,
+    alt_generators: &'a InnerProductGenerators<'a, T, C, GB>,
     transcript: &mut T,
     commitment: C::G,
   ) -> WipStatement<'a, T, C, GB> {
@@ -938,7 +938,7 @@ impl<'a, T: Transcript, C: Ciphersuite> Circuit<'a, T, C> {
       'a,
       R: RngCore + CryptoRng,
       C: Ciphersuite,
-      T: Transcript,
+      T: 'static + Transcript,
       GB: Clone + AsRef<[MultiexpPoint<C::G>]>,
     >(
       rng: &mut R,
@@ -967,11 +967,11 @@ impl<'a, T: Transcript, C: Ciphersuite> Circuit<'a, T, C> {
         commitment,
         (
           {
-            Circuit::<T, C>::vector_commitment_statement(alt_generators_1, transcript, commitment)
+            Circuit::<T, C>::vector_commitment_statement(&alt_generators_1, transcript, commitment)
               .prove(&mut *rng, transcript, witness.clone())
           },
           {
-            Circuit::<T, C>::vector_commitment_statement(alt_generators_2, transcript, commitment)
+            Circuit::<T, C>::vector_commitment_statement(&alt_generators_2, transcript, commitment)
               .prove(&mut *rng, transcript, witness)
           },
         ),
@@ -1113,7 +1113,7 @@ impl<'a, T: Transcript, C: Ciphersuite> Circuit<'a, T, C> {
   }
 }
 
-pub struct ArithmeticCircuitWithoutVectorCommitments<'a, T: Transcript, C: Ciphersuite> {
+pub struct ArithmeticCircuitWithoutVectorCommitments<'a, T: 'static + Transcript, C: Ciphersuite> {
   proof_generators: ProofGenerators<'a, T, C>,
 
   WL: ScalarMatrix<C>,
@@ -1123,7 +1123,7 @@ pub struct ArithmeticCircuitWithoutVectorCommitments<'a, T: Transcript, C: Ciphe
   c: ScalarVector<C>,
 }
 
-impl<'a, T: Transcript, C: Ciphersuite> ArithmeticCircuitWithoutVectorCommitments<'a, T, C> {
+impl<'a, T: 'static + Transcript, C: Ciphersuite> ArithmeticCircuitWithoutVectorCommitments<'a, T, C> {
   pub fn verify<R: RngCore + CryptoRng>(
     &self,
     rng: &mut R,
@@ -1154,7 +1154,7 @@ impl<'a, T: Transcript, C: Ciphersuite> ArithmeticCircuitWithoutVectorCommitment
 
 pub struct ArithmeticCircuitWithVectorCommitments<
   'a,
-  T: Transcript,
+  T: 'static + Transcript,
   C: Ciphersuite,
   GB: Clone + AsRef<[MultiexpPoint<C::G>]>,
 > {
@@ -1173,7 +1173,7 @@ pub struct ArithmeticCircuitWithVectorCommitments<
   c_challenges: Vec<Option<(ChallengeReference, Box<dyn ChallengeApplicator<C>>)>>,
 }
 
-impl<'a, T: Transcript, C: Ciphersuite, GB: Clone + AsRef<[MultiexpPoint<C::G>]>>
+impl<'a, T: 'static + Transcript, C: Ciphersuite, GB: Clone + AsRef<[MultiexpPoint<C::G>]>>
   ArithmeticCircuitWithVectorCommitments<'a, T, C, GB>
 {
   pub fn verify<R: RngCore + CryptoRng>(
@@ -1193,9 +1193,9 @@ impl<'a, T: Transcript, C: Ciphersuite, GB: Clone + AsRef<[MultiexpPoint<C::G>]>
        commitment: C::G,
        proofs: (_, _)| {
         transcript.append_message(b"vector_commitment", commitment.to_bytes());
-        Circuit::vector_commitment_statement(wip_generators.0.clone(), transcript, commitment)
+        Circuit::vector_commitment_statement(&wip_generators.0, transcript, commitment)
           .verify(rng, verifier, transcript, proofs.0);
-        Circuit::vector_commitment_statement(wip_generators.1.clone(), transcript, commitment)
+        Circuit::vector_commitment_statement(&wip_generators.1, transcript, commitment)
           .verify(rng, verifier, transcript, proofs.1);
       };
 

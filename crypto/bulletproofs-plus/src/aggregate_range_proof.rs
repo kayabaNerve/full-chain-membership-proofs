@@ -21,12 +21,12 @@ const N: usize = RANGE_PROOF_BITS;
 
 // Figure 3
 #[derive(Clone, Debug)]
-pub struct AggregateRangeStatement<'a, T: Transcript, C: Ciphersuite> {
+pub struct AggregateRangeStatement<'a, T: 'static + Transcript, C: Ciphersuite> {
   generators: ProofGenerators<'a, T, C>,
   V: PointVector<C>,
 }
 
-impl<'a, T: Transcript, C: Ciphersuite> Zeroize for AggregateRangeStatement<'a, T, C> {
+impl<'a, T: 'static + Transcript, C: Ciphersuite> Zeroize for AggregateRangeStatement<'a, T, C> {
   fn zeroize(&mut self) {
     self.V.zeroize();
   }
@@ -56,7 +56,7 @@ pub struct AggregateRangeProof<C: Ciphersuite> {
   wip: WipProof<C>,
 }
 
-impl<'a, T: Transcript, C: Ciphersuite> AggregateRangeStatement<'a, T, C> {
+impl<'a, T: 'static + Transcript, C: Ciphersuite> AggregateRangeStatement<'a, T, C> {
   pub fn new(generators: ProofGenerators<'a, T, C>, V: Vec<C::G>) -> Self {
     assert!(!V.is_empty());
     Self { generators, V: PointVector(V) }
@@ -212,7 +212,7 @@ impl<'a, T: Transcript, C: Ciphersuite> AggregateRangeStatement<'a, T, C> {
 
     AggregateRangeProof {
       A,
-      wip: WipStatement::new(generators, A_hat, y).prove(
+      wip: WipStatement::new(&generators, A_hat, y).prove(
         rng,
         transcript,
         WipWitness::new(a_l, a_r, alpha),
@@ -233,6 +233,6 @@ impl<'a, T: Transcript, C: Ciphersuite> AggregateRangeStatement<'a, T, C> {
     let generators = generators.reduce(V.len() * RANGE_PROOF_BITS, false);
 
     let (y, _, _, _, _, A_hat) = Self::compute_A_hat(&V, &generators, transcript, proof.A);
-    (WipStatement::new(generators, A_hat, y)).verify(rng, verifier, transcript, proof.wip);
+    (WipStatement::new(&generators, A_hat, y)).verify(rng, verifier, transcript, proof.wip);
   }
 }

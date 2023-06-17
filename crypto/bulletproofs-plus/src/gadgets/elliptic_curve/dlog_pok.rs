@@ -124,7 +124,7 @@ impl<C: Ecip> DLogTable<C> {
 // TODO: Can we impl a batch DLog PoK?
 pub(crate) fn divisor_dlog_pok<
   R: RngCore + CryptoRng,
-  T: Transcript,
+  T: 'static + Transcript,
   C: EmbeddedCurveOperations,
 >(
   rng: &mut R,

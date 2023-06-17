@@ -17,7 +17,7 @@ use crate::{
 
 // Figure 4
 #[derive(Clone, Debug)]
-pub struct ArithmeticCircuitStatement<'a, T: Transcript, C: Ciphersuite> {
+pub struct ArithmeticCircuitStatement<'a, T: 'static + Transcript, C: Ciphersuite> {
   generators: ProofGenerators<'a, T, C>,
   V: PointVector<C>,
   WL: ScalarMatrix<C>,
@@ -27,7 +27,7 @@ pub struct ArithmeticCircuitStatement<'a, T: Transcript, C: Ciphersuite> {
   c: ScalarVector<C>,
 }
 
-impl<'a, T: Transcript, C: Ciphersuite> Zeroize for ArithmeticCircuitStatement<'a, T, C> {
+impl<'a, T: 'static + Transcript, C: Ciphersuite> Zeroize for ArithmeticCircuitStatement<'a, T, C> {
   fn zeroize(&mut self) {
     self.V.zeroize();
     self.WL.zeroize();
@@ -68,7 +68,7 @@ pub struct ArithmeticCircuitProof<C: Ciphersuite> {
   wip: WipProof<C>,
 }
 
-impl<'a, T: Transcript, C: Ciphersuite> ArithmeticCircuitStatement<'a, T, C> {
+impl<'a, T: 'static + Transcript, C: Ciphersuite> ArithmeticCircuitStatement<'a, T, C> {
   /// Create a new ArithmeticCircuitStatement for the specified relationship.
   ///
   /// The weights and c vector are not transcripted. They're expected to be deterministic from the
@@ -281,7 +281,7 @@ impl<'a, T: Transcript, C: Ciphersuite> ArithmeticCircuitStatement<'a, T, C> {
     ArithmeticCircuitProof {
       A,
       wip: WipStatement::new_without_P_transcript(
-        self.generators.reduce(self.WL.width(), true),
+        &self.generators.reduce(self.WL.width(), true),
         A_hat,
         y_n,
         inv_y_n,
@@ -310,8 +310,9 @@ impl<'a, T: Transcript, C: Ciphersuite> ArithmeticCircuitStatement<'a, T, C> {
     self.initial_transcript(transcript);
 
     let (y_n, inv_y_n, _, _, _, _, A_hat) = self.compute_A_hat(transcript, proof.A);
+    let reduced = self.generators.reduce(self.WL.width(), true);
     (WipStatement::new_without_P_transcript(
-      self.generators.reduce(self.WL.width(), true),
+      &reduced,
       A_hat,
       y_n,
       inv_y_n,

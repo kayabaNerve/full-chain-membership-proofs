@@ -164,7 +164,7 @@ fn test_tree() {
 
       let mut even = leaves[.. usize::try_from(i).unwrap()].to_vec();
       let mut odd = vec![];
-      fn hash<T: Transcript, C: Ecip>(
+      fn hash<T: 'static + Transcript, C: Ecip>(
         permissible: &Permissible<C>,
         width: usize,
         values: &mut Vec<C::F>,

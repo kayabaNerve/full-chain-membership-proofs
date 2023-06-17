@@ -84,7 +84,7 @@ pub fn new_blind<R: RngCore + CryptoRng, C1: Ciphersuite, C2: Ciphersuite>(
   (res, C2::F::from_repr(c2_repr).unwrap())
 }
 
-pub fn layer_gadget<R: RngCore + CryptoRng, T: Transcript, C: CurveCycle>(
+pub fn layer_gadget<R: RngCore + CryptoRng, T: 'static + Transcript, C: CurveCycle>(
   rng: &mut R,
   circuit: &mut Circuit<T, C::C2>,
   permissible: &Permissible<C::C1>,
@@ -183,7 +183,7 @@ pub fn layer_gadget<R: RngCore + CryptoRng, T: Transcript, C: CurveCycle>(
   }
 }
 
-pub fn membership_gadget<R: RngCore + CryptoRng, T: Transcript, C: CurveCycle>(
+pub fn membership_gadget<R: RngCore + CryptoRng, T: 'static + Transcript, C: CurveCycle>(
   rng: &mut R,
   transcript: &mut T,
   circuit_c1: &mut Circuit<T, C::C1>,
