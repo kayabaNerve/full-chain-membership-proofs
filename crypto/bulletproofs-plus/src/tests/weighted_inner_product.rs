@@ -23,8 +23,8 @@ fn test_zero_weighted_inner_product() {
   let y = <Ristretto as Ciphersuite>::F::random(&mut OsRng);
 
   let generators = generators(1);
-  let statement =
-    WipStatement::<_, Ristretto, _>::new(generators.per_proof().reduce(1, false), P, y);
+  let reduced = generators.per_proof().reduce(1, false);
+  let statement = WipStatement::<_, Ristretto, _>::new(&reduced, P, y);
   let witness = WipWitness::<Ristretto>::new(
     ScalarVector::<Ristretto>::new(1),
     ScalarVector::<Ristretto>::new(1),
@@ -79,7 +79,7 @@ fn test_weighted_inner_product() {
       (g * weighted_inner_product(&a, &b, &y_vec)) +
       (h * alpha);
 
-    let statement = WipStatement::<_, Ristretto, _>::new(generators, P, y);
+    let statement = WipStatement::<_, Ristretto, _>::new(&generators, P, y);
     let witness = WipWitness::<Ristretto>::new(a, b, alpha);
 
     let mut transcript = RecommendedTranscript::new(b"WIP Test");
