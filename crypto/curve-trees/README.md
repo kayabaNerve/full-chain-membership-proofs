@@ -25,3 +25,5 @@ described in the Curve Trees paper.
 
 - This library uses asserts instead of `Result`. It also has extraneous asserts
   which should be moved to debug.
+
+- Wallets likely want to be able to prune irrelevant sub-trees/pathing data.
