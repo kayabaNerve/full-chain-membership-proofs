@@ -12,6 +12,7 @@ mod tree;
 
 mod layer;
 mod membership;
+mod bench_membership;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct Pasta {}
