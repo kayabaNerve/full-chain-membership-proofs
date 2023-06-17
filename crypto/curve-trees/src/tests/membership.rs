@@ -165,7 +165,7 @@ fn test_membership() {
       &mut transcript,
       pallas_commitments,
       pallas_vector_commitments,
-      &c1_additional,
+      c1_additional,
       pallas_proof,
       pallas_proofs,
     );
@@ -175,7 +175,7 @@ fn test_membership() {
       &mut transcript,
       vesta_commitments,
       vesta_vector_commitments,
-      &c2_additional,
+      c2_additional,
       vesta_proof,
       vesta_proofs,
     );

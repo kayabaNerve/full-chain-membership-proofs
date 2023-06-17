@@ -311,12 +311,7 @@ impl<'a, T: 'static + Transcript, C: Ciphersuite> ArithmeticCircuitStatement<'a,
 
     let (y_n, inv_y_n, _, _, _, _, A_hat) = self.compute_A_hat(transcript, proof.A);
     let reduced = self.generators.reduce(self.WL.width(), true);
-    (WipStatement::new_without_P_transcript(
-      &reduced,
-      A_hat,
-      y_n,
-      inv_y_n,
-    ))
-    .verify(rng, verifier, transcript, proof.wip);
+    (WipStatement::new_without_P_transcript(&reduced, A_hat, y_n, inv_y_n))
+      .verify(rng, verifier, transcript, proof.wip);
   }
 }

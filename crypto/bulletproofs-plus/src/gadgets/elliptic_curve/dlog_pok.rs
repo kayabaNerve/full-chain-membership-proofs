@@ -417,7 +417,7 @@ pub(crate) fn divisor_dlog_pok<
 
     x_res.push(if circuit.prover() {
       Some(
-        (circuit.unchecked_value(circuit.variable(x_coefficients_sub_one[i])) + C::F::ONE) *
+        (circuit.unchecked_value(x_coefficients_sub_one[i].variable()) + C::F::ONE) *
           challenge_xy.as_ref().unwrap()[i],
       )
     } else {
@@ -451,7 +451,7 @@ pub(crate) fn divisor_dlog_pok<
     yx_res.push(if circuit.prover() {
       Some(
         (*challenge_xy.as_ref().unwrap().last().unwrap() * challenge_xy.as_ref().unwrap()[i]) *
-          circuit.unchecked_value(circuit.variable(yx_coefficients[i])),
+          circuit.unchecked_value(yx_coefficients[i].variable()),
       )
     } else {
       None
@@ -470,10 +470,10 @@ pub(crate) fn divisor_dlog_pok<
   );
 
   let (lhs, neg_lhs) = if circuit.prover() {
-    let common = circuit.unchecked_value(circuit.variable(zero_coefficient)) +
+    let common = circuit.unchecked_value(zero_coefficient.variable()) +
       x_res.drain(..).map(Option::unwrap).sum::<C::F>();
     let yx = yx_res.drain(..).map(Option::unwrap).sum::<C::F>();
-    let y = circuit.unchecked_value(circuit.variable(y_coefficient)) *
+    let y = circuit.unchecked_value(y_coefficient.variable()) *
       challenge_xy.as_ref().unwrap().last().unwrap();
     (Some(common + yx + y), Some(common - yx - y))
   } else {

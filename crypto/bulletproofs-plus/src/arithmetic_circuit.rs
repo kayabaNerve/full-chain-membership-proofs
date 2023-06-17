@@ -17,6 +17,7 @@ use crate::{
 };
 pub use arithmetic_circuit_proof::*;
 
+/// Blinded commitment to some variable.
 #[allow(non_snake_case)]
 #[derive(Clone, PartialEq, Eq, Debug, Zeroize, ZeroizeOnDrop)]
 pub struct Commitment<C: Ciphersuite> {
@@ -44,20 +45,40 @@ impl<C: Ciphersuite> Commitment<C> {
 }
 
 #[derive(Clone, Debug, Zeroize, ZeroizeOnDrop)]
-pub enum Variable<C: Ciphersuite> {
+enum Variable<C: Ciphersuite> {
   Secret(Option<C::F>),
   Committed(Option<Commitment<C>>),
   Product(usize, Option<C::F>),
 }
-
-#[derive(Copy, Clone, PartialEq, Eq, Hash, Debug, Zeroize)]
+/// A reference to a variable (some value), each usage guaranteed to be equivalent to all others.
+#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Hash, Debug, Zeroize)]
 pub struct VariableReference(usize);
+
+/// A reference to a specific term in a product statement.
+// Product is the product index it itself has, variable is the variable for each term.
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Hash, Debug, Zeroize)]
 pub enum ProductReference {
-  Left { product: usize, variable: usize },
-  Right { product: usize, variable: usize },
-  Output { product: usize, variable: usize },
+  Left { product: usize, variable: VariableReference },
+  Right { product: usize, variable: VariableReference },
+  Output { product: usize, variable: VariableReference },
 }
+impl ProductReference {
+  fn id(&self) -> usize {
+    match self {
+      ProductReference::Left { product, .. } => *product,
+      ProductReference::Right { product, .. } => *product,
+      ProductReference::Output { product, .. } => *product,
+    }
+  }
+  pub fn variable(&self) -> VariableReference {
+    match self {
+      ProductReference::Left { variable, .. } => *variable,
+      ProductReference::Right { variable, .. } => *variable,
+      ProductReference::Output { variable, .. } => *variable,
+    }
+  }
+}
+
 #[derive(Copy, Clone, Debug, Zeroize)]
 pub struct CommitmentReference(usize);
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug, Zeroize)]
@@ -71,9 +92,17 @@ mod sealed {
   use transcript::Transcript;
   use ciphersuite::Ciphersuite;
 
-  pub trait Challenger<T: 'static + Transcript, C: Ciphersuite>: Fn(T::Challenge) -> Vec<C::F> {}
-  impl<T: 'static + Transcript, C: Ciphersuite, F: Fn(T::Challenge) -> Vec<C::F>> Challenger<T, C> for F {}
+  /// Derive challenge scalars through some arbitrary process from a challenge.
+  pub trait Challenger<T: 'static + Transcript, C: Ciphersuite>:
+    Fn(T::Challenge) -> Vec<C::F>
+  {
+  }
+  impl<T: 'static + Transcript, C: Ciphersuite, F: Fn(T::Challenge) -> Vec<C::F>> Challenger<T, C>
+    for F
+  {
+  }
 
+  /// Transform a challenge as needed by a specified weight.
   pub trait ChallengeApplicator<C: Ciphersuite>: Fn(&[C::F]) -> C::F {}
   impl<C: Ciphersuite, F: Fn(&[C::F]) -> C::F> ChallengeApplicator<C> for F {}
 }
@@ -88,9 +117,14 @@ pub struct Constraint<C: Ciphersuite> {
   WR: Vec<(usize, C::F)>,
   WO: Vec<(usize, C::F)>,
   WV: Vec<(usize, C::F)>,
+  // Challenges are post-decided and accordingly can't be inserted into WL/WR/WO/WV at time of
+  // execution. This post-expands to weighting the specified ProductReference by the specified
+  // weight, derived from the challenge.
   challenge_weights:
     HashMap<ProductReference, (ChallengeReference, Box<dyn ChallengeApplicator<C>>)>,
+
   c: C::F,
+  // challenge_weights yet for c.
   c_challenge: Option<(ChallengeReference, Box<dyn ChallengeApplicator<C>>)>,
 }
 
@@ -132,6 +166,14 @@ impl<C: Ciphersuite> Constraint<C> {
     }
   }
 
+  fn relevant_weights(&mut self, product: ProductReference) -> &mut Vec<(usize, C::F)> {
+    match product {
+      ProductReference::Left { .. } => &mut self.WL,
+      ProductReference::Right { .. } => &mut self.WR,
+      ProductReference::Output { .. } => &mut self.WO,
+    }
+  }
+
   /// Cummulatively weight the specified product by the specified weight.
   pub fn weight(&mut self, product: ProductReference, weight: C::F) -> &mut Self {
     assert!(
@@ -139,11 +181,8 @@ impl<C: Ciphersuite> Constraint<C> {
       "weighted product already has a challenge weight"
     );
 
-    let (weights, id) = match product {
-      ProductReference::Left { product: id, variable: _ } => (&mut self.WL, id),
-      ProductReference::Right { product: id, variable: _ } => (&mut self.WR, id),
-      ProductReference::Output { product: id, variable: _ } => (&mut self.WO, id),
-    };
+    let weights = self.relevant_weights(product);
+    let id = product.id();
     for existing in &mut *weights {
       if existing.0 == id {
         existing.1 += weight;
@@ -163,19 +202,10 @@ impl<C: Ciphersuite> Constraint<C> {
     challenge: ChallengeReference,
     applicator: Box<dyn ChallengeApplicator<C>>,
   ) -> &mut Self {
-    assert!(self.challenge_weights.insert(product, (challenge, applicator)).is_none());
-
-    let (weights, id) = match product {
-      ProductReference::Left { product: id, variable: _ } => (&self.WL, id),
-      ProductReference::Right { product: id, variable: _ } => (&self.WR, id),
-      ProductReference::Output { product: id, variable: _ } => (&self.WO, id),
-    };
-    for existing in weights {
-      if existing.0 == id {
-        panic!("product weighted by challenge already has a non-challenge weight");
-      }
+    if self.relevant_weights(product).iter().any(|existing| existing.0 == product.id()) {
+      panic!("product weighted by challenge already has a non-challenge weight");
     }
-
+    assert!(self.challenge_weights.insert(product, (challenge, applicator)).is_none());
     self
   }
 
@@ -211,37 +241,103 @@ impl<C: Ciphersuite> Constraint<C> {
   }
 }
 
+struct Weights<C: Ciphersuite> {
+  WL: ScalarMatrix<C>,
+  WR: ScalarMatrix<C>,
+  WO: ScalarMatrix<C>,
+  WV: ScalarMatrix<C>,
+  c: ScalarVector<C>,
+
+  challenge_weights:
+    Vec<HashMap<ProductReference, (ChallengeReference, Box<dyn ChallengeApplicator<C>>)>>,
+  c_challenge: Vec<Option<(ChallengeReference, Box<dyn ChallengeApplicator<C>>)>>,
+}
+
+impl<C: Ciphersuite> Weights<C> {
+  fn new(
+    products: usize,
+    commitments: usize,
+    constraints: Vec<Constraint<C>>,
+    post_constraints: Vec<Constraint<C>>,
+  ) -> Self {
+    let mut WL = ScalarMatrix::new(products);
+    let mut WR = ScalarMatrix::new(products);
+    let mut WO = ScalarMatrix::new(products);
+    let mut WV = ScalarMatrix::new(commitments);
+    let mut c = Vec::with_capacity(constraints.len() + post_constraints.len());
+
+    let mut challenge_weights = vec![];
+    let mut c_challenge = vec![];
+
+    for constraint in constraints {
+      WL.push(constraint.WL);
+      WR.push(constraint.WR);
+      WO.push(constraint.WO);
+      WV.push(constraint.WV);
+      c.push(constraint.c);
+
+      challenge_weights.push(constraint.challenge_weights);
+      c_challenge.push(constraint.c_challenge);
+    }
+
+    for constraint in post_constraints {
+      WL.push(constraint.WL);
+      WR.push(constraint.WR);
+      WO.push(constraint.WO);
+      WV.push(vec![]);
+      assert!(constraint.WV.is_empty());
+      assert!(constraint.challenge_weights.is_empty());
+      assert!(constraint.c_challenge.is_none());
+    }
+    Self { WL, WR, WO, WV, c: ScalarVector(c), challenge_weights, c_challenge }
+  }
+
+  fn build(
+    &self,
+    post_values: Vec<C::F>,
+    challenges: &[Vec<C::F>],
+  ) -> (ScalarMatrix<C>, ScalarMatrix<C>, ScalarMatrix<C>, ScalarMatrix<C>, ScalarVector<C>) {
+    let mut WL = self.WL.clone();
+    let mut WR = self.WR.clone();
+    let mut WO = self.WO.clone();
+    let WV = self.WV.clone();
+    let mut c = self.c.clone();
+
+    // Post-constraints are defined as terms on the left-hand side expecting to be equal with the
+    // now-specified values
+    // We just push them to the right-hand side vector accordingly
+    // Note this is only safe since:
+    // 1) Post-constraints are last
+    // 2) Nothing else is so positionally indexed
+    for post_value in post_values {
+      c.0.push(post_value);
+    }
+    assert_eq!(WL.length(), c.len());
+
+    for i in 0 .. self.challenge_weights.len() {
+      for (product, (challenge, applicator)) in &self.challenge_weights[i] {
+        let (weights, id) = match product {
+          ProductReference::Left { product: id, variable: _ } => (&mut WL.data[i], id),
+          ProductReference::Right { product: id, variable: _ } => (&mut WR.data[i], id),
+          ProductReference::Output { product: id, variable: _ } => (&mut WO.data[i], id),
+        };
+        weights.push((*id, applicator(&challenges[challenge.0])));
+      }
+
+      if let Some(c_challenge) = self.c_challenge[i].as_ref() {
+        c[i] = c_challenge.1(&challenges[c_challenge.0 .0]);
+      }
+    }
+
+    (WL, WR, WO, WV, c)
+  }
+}
+
 // TODO: Take in a transcript
 fn commitment_challenge<T: 'static + Transcript, C: Ciphersuite>(commitment: C::G) -> T::Challenge {
   let mut transcript = T::new(b"Bulletproofs+ Commitment Challenge");
   transcript.append_message(b"commitment", commitment.to_bytes());
   transcript.challenge(b"challenge")
-}
-
-fn embed_challenges<C: Ciphersuite>(
-  WL: &mut Vec<(usize, C::F)>,
-  WR: &mut Vec<(usize, C::F)>,
-  WO: &mut Vec<(usize, C::F)>,
-  challenge_weights: &HashMap<
-    ProductReference,
-    (ChallengeReference, Box<dyn ChallengeApplicator<C>>),
-  >,
-  c: &mut C::F,
-  c_challenge: &Option<(ChallengeReference, Box<dyn ChallengeApplicator<C>>)>,
-  challenges: &[Vec<C::F>],
-) {
-  for (product, (challenge, applicator)) in challenge_weights {
-    let (weights, id) = match product {
-      ProductReference::Left { product: id, variable: _ } => (&mut *WL, id),
-      ProductReference::Right { product: id, variable: _ } => (&mut *WR, id),
-      ProductReference::Output { product: id, variable: _ } => (&mut *WO, id),
-    };
-    weights.push((*id, applicator(&challenges[challenge.0])));
-  }
-
-  if let Some(c_challenge) = c_challenge {
-    *c = c_challenge.1(&challenges[c_challenge.0 .0]);
-  }
 }
 
 impl<C: Ciphersuite> Variable<C> {
@@ -260,9 +356,9 @@ impl<C: Ciphersuite> Variable<C> {
 
 #[derive(Clone, PartialEq, Eq, Debug, Zeroize)]
 struct Product {
-  left: usize,
-  right: usize,
-  variable: usize,
+  left: VariableReference,
+  right: VariableReference,
+  variable: VariableReference,
 }
 
 pub struct Circuit<'a, T: 'static + Transcript, C: Ciphersuite> {
@@ -271,7 +367,7 @@ pub struct Circuit<'a, T: 'static + Transcript, C: Ciphersuite> {
   prover: bool,
 
   commitments: usize,
-  pub(crate) variables: Vec<Variable<C>>,
+  variables: Vec<Variable<C>>,
 
   products: Vec<Product>,
   bound_products: Vec<Vec<ProductReference>>,
@@ -321,29 +417,21 @@ impl<'a, T: 'static + Transcript, C: Ciphersuite> Circuit<'a, T, C> {
     self.variables[variable.0].value().expect("prover didn't have a variable's value")
   }
 
-  pub fn variable(&self, product: ProductReference) -> VariableReference {
-    match product {
-      ProductReference::Left { variable, .. } => VariableReference(variable),
-      ProductReference::Right { variable, .. } => VariableReference(variable),
-      ProductReference::Output { variable, .. } => VariableReference(variable),
-    }
-  }
-
   pub fn variable_to_product(&self, variable: VariableReference) -> Option<ProductReference> {
     if let Variable::Product(product, _) = self.variables[variable.0] {
-      return Some(ProductReference::Output { product, variable: variable.0 });
+      return Some(ProductReference::Output { product, variable });
     }
 
     for (product_id, product) in self.products.iter().enumerate() {
       let Product { left: l, right: r, variable: this_variable } = product;
 
-      if !((variable.0 == *l) || (variable.0 == *r)) {
+      if !((variable == *l) || (variable == *r)) {
         continue;
       }
 
-      if let Variable::Product(var_product_id, _) = self.variables[*this_variable] {
+      if let Variable::Product(var_product_id, _) = self.variables[this_variable.0] {
         debug_assert_eq!(var_product_id, product_id);
-        if variable.0 == *l {
+        if variable == *l {
           return Some(ProductReference::Left {
             product: product_id,
             variable: self.products[var_product_id].left,
@@ -369,14 +457,14 @@ impl<'a, T: 'static + Transcript, C: Ciphersuite> Circuit<'a, T, C> {
     b: VariableReference,
   ) -> ((ProductReference, ProductReference, ProductReference), VariableReference) {
     for (id, product) in self.products.iter().enumerate() {
-      if (a.0 == product.left) && (b.0 == product.right) {
+      if (a == product.left) && (b == product.right) {
         return (
           (
-            ProductReference::Left { product: id, variable: a.0 },
-            ProductReference::Right { product: id, variable: b.0 },
+            ProductReference::Left { product: id, variable: a },
+            ProductReference::Right { product: id, variable: b },
             ProductReference::Output { product: id, variable: product.variable },
           ),
-          VariableReference(product.variable),
+          product.variable,
         );
       }
     }
@@ -390,12 +478,12 @@ impl<'a, T: 'static + Transcript, C: Ciphersuite> Circuit<'a, T, C> {
     let product_id = self.products.len();
     let variable = VariableReference(self.variables.len());
     let products = (
-      ProductReference::Left { product: product_id, variable: a.0 },
-      ProductReference::Right { product: product_id, variable: b.0 },
-      ProductReference::Output { product: product_id, variable: variable.0 },
+      ProductReference::Left { product: product_id, variable: a },
+      ProductReference::Right { product: product_id, variable: b },
+      ProductReference::Output { product: product_id, variable },
     );
 
-    self.products.push(Product { left: a.0, right: b.0, variable: variable.0 });
+    self.products.push(Product { left: a, right: b, variable });
     self.variables.push(Variable::Product(
       product_id,
       Some(()).filter(|_| self.prover).map(|_| left.value().unwrap() * right.value().unwrap()),
@@ -480,7 +568,7 @@ impl<'a, T: 'static + Transcript, C: Ciphersuite> Circuit<'a, T, C> {
     constraint.weight(a, C::F::ONE);
     self.post_constraints.push((
       constraint,
-      if self.prover { Some(self.unchecked_value(self.variable(a))) } else { None },
+      if self.prover { Some(self.unchecked_value(a.variable())) } else { None },
     ));
     res
   }
@@ -550,19 +638,19 @@ impl<'a, T: 'static + Transcript, C: Ciphersuite> Circuit<'a, T, C> {
           match product {
             ProductReference::Left { product, variable } => {
               terms.push((
-                self.variables[variable].value().unwrap(),
+                self.variables[variable.0].value().unwrap(),
                 self.generators.generator(GeneratorsList::GBold1, product).point(),
               ));
             }
             ProductReference::Right { product, variable } => {
               terms.push((
-                self.variables[variable].value().unwrap(),
+                self.variables[variable.0].value().unwrap(),
                 self.generators.generator(GeneratorsList::HBold1, product).point(),
               ));
             }
             ProductReference::Output { product, variable } => {
               terms.push((
-                self.variables[variable].value().unwrap(),
+                self.variables[variable.0].value().unwrap(),
                 self.generators.generator(GeneratorsList::GBold2, product).point(),
               ));
             }
@@ -623,14 +711,9 @@ impl<'a, T: 'static + Transcript, C: Ciphersuite> Circuit<'a, T, C> {
   ) -> (
     ProofGenerators<'a, T, C>,
     Option<Vec<C::G>>,
-    ScalarMatrix<C>,
-    ScalarMatrix<C>,
-    ScalarMatrix<C>,
-    ScalarMatrix<C>,
-    ScalarVector<C>,
     HashMap<ChallengeReference, Box<dyn Challenger<T, C>>>,
-    Vec<HashMap<ProductReference, (ChallengeReference, Box<dyn ChallengeApplicator<C>>)>>,
-    Vec<Option<(ChallengeReference, Box<dyn ChallengeApplicator<C>>)>>,
+    Weights<C>,
+    Vec<C::F>,
     Vec<Vec<(Option<C::F>, (GeneratorsList, usize))>>,
     Vec<(Option<C::F>, (GeneratorsList, usize))>,
     Option<ArithmeticCircuitWitness<C>>,
@@ -655,8 +738,8 @@ impl<'a, T: 'static + Transcript, C: Ciphersuite> Circuit<'a, T, C> {
           }
           Variable::Product(product_id, _) => {
             let product = &self.products[*product_id];
-            aL.push(self.variables[product.left].value().unwrap());
-            aR.push(self.variables[product.right].value().unwrap());
+            aL.push(self.variables[product.left.0].value().unwrap());
+            aR.push(self.variables[product.right.0].value().unwrap());
           }
         }
       }
@@ -683,75 +766,32 @@ impl<'a, T: 'static + Transcript, C: Ciphersuite> Circuit<'a, T, C> {
         Variable::Product(_, _) => n += 1,
       }
     }
+    assert_eq!(self.commitments, V_len);
 
-    // WL, WR, WO, WV, c
-    let mut WL = ScalarMatrix::new(n);
-    let mut WR = ScalarMatrix::new(n);
-    let mut WO = ScalarMatrix::new(n);
-    let mut WV = ScalarMatrix::new(V_len);
-    let mut c = Vec::with_capacity(n);
-    let mut challenge_weights = Vec::with_capacity(n);
-    let mut c_challenges = Vec::with_capacity(n);
+    // Check the constraints are well-formed
+    if self.prover() {
+      for constraint in &self.constraints {
+        if !(constraint.challenge_weights.is_empty() && constraint.c_challenge.is_none()) {
+          continue;
+        }
 
-    for constraint in self.constraints {
-      // WL aL WR aR WO aO == WV v + c
-      let mut eval = C::F::ZERO;
-
-      let mut this_wl = vec![];
-      let mut this_wr = vec![];
-      let mut this_wo = vec![];
-      let mut this_wv = vec![];
-
-      for wl in constraint.WL {
-        if self.prover {
+        // WL aL WR aR WO aO == WV v + c
+        let mut eval = C::F::ZERO;
+        for wl in &constraint.WL {
           eval += wl.1 * witness.as_ref().unwrap().aL[wl.0];
         }
-        this_wl.push(wl);
-      }
-      for wr in constraint.WR {
-        if self.prover {
+        for wr in &constraint.WR {
           eval += wr.1 * witness.as_ref().unwrap().aR[wr.0];
         }
-        this_wr.push(wr);
-      }
-      for wo in constraint.WO {
-        if self.prover {
+        for wo in &constraint.WO {
           eval += wo.1 * (witness.as_ref().unwrap().aL[wo.0] * witness.as_ref().unwrap().aR[wo.0]);
         }
-        this_wo.push(wo);
-      }
-      for wv in constraint.WV {
-        if self.prover {
+        for wv in &constraint.WV {
           eval -= wv.1 * witness.as_ref().unwrap().v[wv.0];
         }
-        this_wv.push(wv);
-      }
 
-      if constraint.challenge_weights.is_empty() && constraint.c_challenge.is_none() && self.prover
-      {
         assert_eq!(eval, constraint.c, "faulty constraint: {}", constraint.label);
       }
-
-      WL.push(this_wl);
-      WR.push(this_wr);
-      WO.push(this_wo);
-      WV.push(this_wv);
-      c.push(constraint.c);
-      challenge_weights.push(constraint.challenge_weights);
-      c_challenges.push(constraint.c_challenge);
-    }
-
-    for (constraint, value) in self.post_constraints {
-      WL.push(constraint.WL);
-      WR.push(constraint.WR);
-      WO.push(constraint.WO);
-      assert!(constraint.WV.is_empty());
-      WV.push(vec![]);
-      if self.prover {
-        c.push(value.unwrap());
-      }
-      challenge_weights.push(constraint.challenge_weights);
-      c_challenges.push(constraint.c_challenge);
     }
 
     // The A commitment is g1 aL, g2 aO, h1 aR
@@ -817,17 +857,22 @@ impl<'a, T: 'static + Transcript, C: Ciphersuite> Circuit<'a, T, C> {
       &mut others,
     );
 
+    let mut post_constraints = Vec::with_capacity(self.post_constraints.len());
+    let mut post_values = Vec::with_capacity(self.post_constraints.len());
+    for post_constraint in self.post_constraints {
+      post_constraints.push(post_constraint.0);
+      if let Some(value) = post_constraint.1 {
+        post_values.push(value);
+      }
+    }
+    let weights = Weights::new(n, V_len, self.constraints, post_constraints);
+
     (
       self.generators,
       commitments,
-      WL,
-      WR,
-      WO,
-      WV,
-      ScalarVector(c),
       self.challengers,
-      challenge_weights,
-      c_challenges,
+      weights,
+      post_values,
       vector_commitments,
       others,
       witness,
@@ -840,16 +885,25 @@ impl<'a, T: 'static + Transcript, C: Ciphersuite> Circuit<'a, T, C> {
     transcript: &mut T,
   ) -> (Vec<C::G>, ArithmeticCircuitProof<C>) {
     assert!(self.prover);
-    let (generators, V, WL, WR, WO, WV, c, _, _, _, vector_commitments, _, witness) =
-      self.compile();
+    let (generators, V, _, weights, post_values, vector_commitments, _, witness) = self.compile();
+    assert!(vector_commitments.is_empty());
 
     // TODO: Transcript all constraints
 
-    assert!(vector_commitments.is_empty());
+    let weights = weights.build(post_values, &[]);
+
     (
       V.clone().unwrap(),
-      ArithmeticCircuitStatement::new(generators, PointVector(V.unwrap()), WL, WR, WO, WV, c)
-        .prove(rng, transcript, witness.unwrap()),
+      ArithmeticCircuitStatement::new(
+        generators,
+        PointVector(V.unwrap()),
+        weights.0,
+        weights.1,
+        weights.2,
+        weights.3,
+        weights.4,
+      )
+      .prove(rng, transcript, witness.unwrap()),
     )
   }
 
@@ -866,10 +920,10 @@ impl<'a, T: 'static + Transcript, C: Ciphersuite> Circuit<'a, T, C> {
 
   pub fn verification_statement(self) -> ArithmeticCircuitWithoutVectorCommitments<'a, T, C> {
     assert!(!self.prover);
-    let (proof_generators, _, WL, WR, WO, WV, c, _, _, _, vector_commitments, _, _) =
-      self.compile();
+    let (proof_generators, _, _, weights, _, vector_commitments, _, _) = self.compile();
     assert!(vector_commitments.is_empty());
-    ArithmeticCircuitWithoutVectorCommitments { proof_generators, WL, WR, WO, WV, c }
+
+    ArithmeticCircuitWithoutVectorCommitments { proof_generators, weights }
   }
 
   // Returns the blinds used, the blinded vector commitments, the proof, and proofs the vector
@@ -887,14 +941,9 @@ impl<'a, T: 'static + Transcript, C: Ciphersuite> Circuit<'a, T, C> {
     let (
       proof_generators,
       V,
-      mut WL,
-      mut WR,
-      mut WO,
-      WV,
-      mut c,
       challengers,
-      challenge_weights,
-      c_challenges,
+      weights,
+      post_values,
       mut vector_commitments,
       others,
       witness,
@@ -1014,19 +1063,6 @@ impl<'a, T: 'static + Transcript, C: Ciphersuite> Circuit<'a, T, C> {
       challenges[challenge.0] =
         challenger(commitment_challenge::<T, C>(vector_commitments[challenge.0]));
     }
-    for (i, (challenge_weights, c_challenge)) in
-      challenge_weights.iter().zip(c_challenges.iter()).enumerate()
-    {
-      embed_challenges(
-        &mut WL.data[i],
-        &mut WR.data[i],
-        &mut WO.data[i],
-        challenge_weights,
-        &mut c[i],
-        c_challenge,
-        &challenges,
-      );
-    }
 
     // Push one final WIP proof for all other variables
     let other_commitment;
@@ -1051,14 +1087,15 @@ impl<'a, T: 'static + Transcript, C: Ciphersuite> Circuit<'a, T, C> {
       proofs.push(proof);
     }
 
+    let weights = weights.build(post_values, &challenges);
     let proof = ArithmeticCircuitStatement::new(
       proof_generators,
       PointVector(V.clone().unwrap()),
-      WL,
-      WR,
-      WO,
-      WV,
-      c,
+      weights.0,
+      weights.1,
+      weights.2,
+      weights.3,
+      weights.4,
     )
     .prove_with_blind(rng, transcript, witness, blinds.iter().sum::<C::F>() + other_blind);
     debug_assert_eq!(proof.A, vector_commitments.iter().sum::<C::G>() + other_commitment);
@@ -1071,21 +1108,8 @@ impl<'a, T: 'static + Transcript, C: Ciphersuite> Circuit<'a, T, C> {
   ) -> ArithmeticCircuitWithVectorCommitments<'a, T, C, impl Clone + AsRef<[MultiexpPoint<C::G>]>>
   {
     assert!(!self.prover);
-    let (
-      proof_generators,
-      _,
-      WL,
-      WR,
-      WO,
-      WV,
-      c,
-      challengers,
-      challenge_weights,
-      c_challenges,
-      mut vector_commitments_data,
-      mut others,
-      _,
-    ) = self.compile();
+    let (proof_generators, _, challengers, weights, _, mut vector_commitments_data, mut others, _) =
+      self.compile();
 
     let mut vector_commitment_generators = vec![];
     for mut data in vector_commitments_data.drain(..) {
@@ -1102,51 +1126,38 @@ impl<'a, T: 'static + Transcript, C: Ciphersuite> Circuit<'a, T, C> {
       vector_commitment_generators,
 
       challengers,
-      WL,
-      WR,
-      WO,
-      WV,
-      c,
-      challenge_weights,
-      c_challenges,
+      weights,
     }
   }
 }
 
 pub struct ArithmeticCircuitWithoutVectorCommitments<'a, T: 'static + Transcript, C: Ciphersuite> {
   proof_generators: ProofGenerators<'a, T, C>,
-
-  WL: ScalarMatrix<C>,
-  WR: ScalarMatrix<C>,
-  WO: ScalarMatrix<C>,
-  WV: ScalarMatrix<C>,
-  c: ScalarVector<C>,
+  weights: Weights<C>,
 }
 
-impl<'a, T: 'static + Transcript, C: Ciphersuite> ArithmeticCircuitWithoutVectorCommitments<'a, T, C> {
+impl<'a, T: 'static + Transcript, C: Ciphersuite>
+  ArithmeticCircuitWithoutVectorCommitments<'a, T, C>
+{
   pub fn verify<R: RngCore + CryptoRng>(
     &self,
     rng: &mut R,
     verifier: &mut BatchVerifier<(), C::G>,
     transcript: &mut T,
     commitments: Vec<C::G>,
-    post_values: &[C::F],
+    post_values: Vec<C::F>,
     proof: ArithmeticCircuitProof<C>,
   ) {
-    let mut c = self.c.clone();
-    assert_eq!(c.len() + post_values.len(), self.WL.length());
-    for post in post_values {
-      c.0.push(*post);
-    }
+    let weights = self.weights.build(post_values, &[]);
 
     ArithmeticCircuitStatement::new(
       self.proof_generators.clone(),
       PointVector(commitments),
-      self.WL.clone(),
-      self.WR.clone(),
-      self.WO.clone(),
-      self.WV.clone(),
-      c,
+      weights.0,
+      weights.1,
+      weights.2,
+      weights.3,
+      weights.4,
     )
     .verify(rng, verifier, transcript, proof)
   }
@@ -1163,14 +1174,7 @@ pub struct ArithmeticCircuitWithVectorCommitments<
     Vec<(InnerProductGenerators<'a, T, C, GB>, InnerProductGenerators<'a, T, C, GB>)>,
 
   challengers: HashMap<ChallengeReference, Box<dyn Challenger<T, C>>>,
-  WL: ScalarMatrix<C>,
-  WR: ScalarMatrix<C>,
-  WO: ScalarMatrix<C>,
-  WV: ScalarMatrix<C>,
-  c: ScalarVector<C>,
-  challenge_weights:
-    Vec<HashMap<ProductReference, (ChallengeReference, Box<dyn ChallengeApplicator<C>>)>>,
-  c_challenges: Vec<Option<(ChallengeReference, Box<dyn ChallengeApplicator<C>>)>>,
+  weights: Weights<C>,
 }
 
 impl<'a, T: 'static + Transcript, C: Ciphersuite, GB: Clone + AsRef<[MultiexpPoint<C::G>]>>
@@ -1183,7 +1187,7 @@ impl<'a, T: 'static + Transcript, C: Ciphersuite, GB: Clone + AsRef<[MultiexpPoi
     transcript: &mut T,
     commitments: Vec<C::G>,
     mut vector_commitments: Vec<C::G>,
-    post_values: &[C::F],
+    post_values: Vec<C::F>,
     proof: ArithmeticCircuitProof<C>,
     mut vc_proofs: Vec<(WipProof<C>, WipProof<C>)>,
   ) {
@@ -1202,13 +1206,6 @@ impl<'a, T: 'static + Transcript, C: Ciphersuite, GB: Clone + AsRef<[MultiexpPoi
     // Make sure this had the expected amount of vector commitments.
     assert_eq!(vector_commitments.len(), self.vector_commitment_generators.len() - 1);
     assert_eq!(vc_proofs.len(), self.vector_commitment_generators.len());
-
-    // Apply the post-values
-    let mut c = self.c.clone();
-    assert_eq!(self.c.len() + post_values.len(), self.WL.length());
-    for post in post_values {
-      c.0.push(*post);
-    }
 
     let mut challenges = vec![vec![]; vector_commitments.len()];
     for (challenge, challenger) in &self.challengers {
@@ -1231,33 +1228,15 @@ impl<'a, T: 'static + Transcript, C: Ciphersuite, GB: Clone + AsRef<[MultiexpPoi
       vc_proofs.swap_remove(0),
     );
 
-    let mut WL = self.WL.clone();
-    let mut WR = self.WR.clone();
-    let mut WO = self.WO.clone();
-    let WV = self.WV.clone();
-
-    for (i, (challenge_weights, c_challenge)) in
-      self.challenge_weights.iter().zip(self.c_challenges.iter()).enumerate()
-    {
-      embed_challenges(
-        &mut WL.data[i],
-        &mut WR.data[i],
-        &mut WO.data[i],
-        challenge_weights,
-        &mut c[i],
-        c_challenge,
-        &challenges,
-      );
-    }
-
+    let weights = self.weights.build(post_values, &challenges);
     ArithmeticCircuitStatement::new(
       self.proof_generators.clone(),
       PointVector(commitments),
-      WL,
-      WR,
-      WO,
-      WV,
-      c,
+      weights.0,
+      weights.1,
+      weights.2,
+      weights.3,
+      weights.4,
     )
     .verify(rng, verifier, transcript, proof);
   }

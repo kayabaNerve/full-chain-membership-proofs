@@ -91,7 +91,7 @@ fn test_arithmetic_circuit() {
     &mut verifier,
     &mut transcript,
     commitments,
-    &[],
+    vec![],
     proof,
   );
   assert!(verifier.verify_vartime());

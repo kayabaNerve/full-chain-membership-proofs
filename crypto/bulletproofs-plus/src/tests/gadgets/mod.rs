@@ -48,7 +48,7 @@ fn test_is_non_zero_gadget() {
       &mut verifier,
       &mut transcript.clone(),
       commitments,
-      &[],
+      vec![],
       proof,
     );
     assert!(verifier.verify_vartime());

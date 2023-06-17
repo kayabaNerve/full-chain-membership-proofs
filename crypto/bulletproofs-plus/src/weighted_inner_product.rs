@@ -26,8 +26,12 @@ enum P<C: Ciphersuite> {
 
 // Figure 1
 #[derive(Clone, Debug)]
-pub struct WipStatement<'a, T: 'static + Transcript, C: Ciphersuite, GB: Clone + AsRef<[MultiexpPoint<C::G>]>>
-{
+pub struct WipStatement<
+  'a,
+  T: 'static + Transcript,
+  C: Ciphersuite,
+  GB: Clone + AsRef<[MultiexpPoint<C::G>]>,
+> {
   generators: &'a InnerProductGenerators<'a, T, C, GB>,
   P: P<C>,
   y: ScalarVector<C>,
@@ -127,7 +131,8 @@ impl<'a, T: 'static + Transcript, C: Ciphersuite, GB: 'a + Clone + AsRef<[Multie
 
   fn initial_transcript(&mut self, transcript: &mut T) {
     transcript.domain_separate(b"weighted_inner_product");
-    transcript.append_message(b"generators", self.generators.transcript.clone().challenge(b"summary"));
+    transcript
+      .append_message(b"generators", self.generators.transcript.clone().challenge(b"summary"));
     if let P::Point(P) = &self.P {
       transcript.append_message(b"P", P.to_bytes());
     }

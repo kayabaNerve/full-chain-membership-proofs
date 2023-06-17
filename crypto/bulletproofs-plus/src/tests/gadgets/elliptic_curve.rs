@@ -74,7 +74,7 @@ fn test_incomplete_addition() {
     &mut verifier,
     &mut transcript,
     commitments,
-    &[],
+    vec![],
     proof,
   );
   assert!(verifier.verify_vartime());
@@ -137,7 +137,7 @@ fn test_dlog_pok() {
       &mut transcript.clone(),
       commitments,
       vector_commitments,
-      &[],
+      vec![],
       proof,
       proofs,
     );

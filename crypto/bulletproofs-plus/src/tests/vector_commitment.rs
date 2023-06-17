@@ -111,7 +111,7 @@ fn test_vector_commitment() {
     &mut transcript,
     commitments,
     vector_commitments.clone(),
-    &[],
+    vec![],
     proof,
     proofs,
   );

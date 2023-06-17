@@ -91,7 +91,7 @@ fn test_layer_gadget() {
     &mut transcript,
     commitments,
     vector_commitments,
-    &[Pasta::c1_coords(blinded_point).0, Pasta::c1_coords(blinded_point).1],
+    vec![Pasta::c1_coords(blinded_point).0, Pasta::c1_coords(blinded_point).1],
     proof,
     proofs,
   );

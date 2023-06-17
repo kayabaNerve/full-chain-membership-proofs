@@ -14,9 +14,9 @@ fn set_membership<T: 'static + Transcript, C: Ciphersuite>(
 ) {
   assert!(set.len() >= 2);
 
-  let sub_member = |circuit: &mut Circuit<T, C>, var| {
+  let sub_member = |circuit: &mut Circuit<T, C>, var: ProductReference| {
     let sub = if circuit.prover() {
-      Some(circuit.unchecked_value(circuit.variable(var)) - value.unwrap())
+      Some(circuit.unchecked_value(var.variable()) - value.unwrap())
     } else {
       None
     };
@@ -65,7 +65,7 @@ pub fn assert_variable_in_set_gadget<T: 'static + Transcript, C: Ciphersuite>(
   set: &[ProductReference],
 ) {
   let value =
-    if circuit.prover() { Some(circuit.unchecked_value(circuit.variable(member))) } else { None };
+    if circuit.prover() { Some(circuit.unchecked_value(member.variable())) } else { None };
   set_membership(circuit, Some(member), value, set);
 }
 
