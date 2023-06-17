@@ -59,9 +59,9 @@ impl<T: Transcript, C: Ciphersuite> VectorCommitmentGenerators<T, C> {
     let mut set = HashSet::new();
     let mut add_generator = |generator: &C::G| {
       assert!(!bool::from(generator.is_identity()));
+      res.push(MultiexpPoint::new_constant(*generator));
       let bytes = generator.to_bytes();
-      res.push(MultiexpPoint::Constant(bytes.as_ref().to_vec(), *generator));
-      transcript.append_message(b"generator", bytes);
+      transcript.append_message(b"generator", bytes.as_ref());
       assert!(set.insert(bytes.as_ref().to_vec()));
     };
 
@@ -280,7 +280,7 @@ impl<T: Transcript, C: Ciphersuite> Generators<T, C> {
 
     for generator in &generators.generators {
       let MultiexpPoint::Constant(bytes, _) = generator else { unreachable!() };
-      assert!(self.set.insert(bytes.clone()));
+      assert!(self.set.insert(bytes.to_vec()));
     }
 
     self.transcript.domain_separate(b"vector_commitment_generators");
