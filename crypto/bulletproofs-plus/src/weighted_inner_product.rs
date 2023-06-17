@@ -197,7 +197,6 @@ impl<'a, T: Transcript, C: Ciphersuite, GB: Clone + AsRef<[MultiexpPoint<C::G>]>
     (e, inv_e, e_square, inv_e_square, PointVector(new_g_bold), PointVector(new_h_bold))
   }
 
-
   /*
 
   This has room for optimization worth investigating further. It currently takes
@@ -220,10 +219,9 @@ impl<'a, T: Transcript, C: Ciphersuite, GB: Clone + AsRef<[MultiexpPoint<C::G>]>
 
   */
   fn challenge_products(challenges: &[(C::F, C::F)]) -> Vec<C::F> {
-    let mut products =
-      vec![C::F::ZERO; if challenges.is_empty() { 0 } else { 1 << challenges.len() }];
+    let mut products = vec![C::F::ONE; 1 << challenges.len()];
 
-    if !products.is_empty() {
+    if !challenges.is_empty() {
       products[0] = challenges[0].1;
       products[1] = challenges[0].0;
 
@@ -435,34 +433,40 @@ impl<'a, T: Transcript, C: Ciphersuite, GB: Clone + AsRef<[MultiexpPoint<C::G>]>
       P::Terms(terms) => terms,
     };
     P_terms.reserve(6 + (2 * generators.len()) + proof.L.len());
+
     let mut challenges = Vec::with_capacity(proof.L.len());
-
-    for (L, R) in proof.L.iter().zip(proof.R.iter()) {
-      let e = Self::transcript_L_R(transcript, *L, *R);
-      // TODO: Create all e challenges, then use a batch inversion
-      let inv_e = e.invert().unwrap();
-      challenges.push((e, inv_e));
-
-      let e_square = e.square();
-      let inv_e_square = inv_e.square();
-      P_terms.push((e_square, MultiexpPoint::Variable(*L)));
-      P_terms.push((inv_e_square, MultiexpPoint::Variable(*R)));
-    }
-    let product_cache = Self::challenge_products(&challenges);
-
-    let mut tracked_g_bold = vec![C::F::ONE; generators.len()];
-    let mut tracked_h_bold = tracked_g_bold.clone();
-    for i in 0 .. product_cache.len() {
-      tracked_g_bold[i] = product_cache[i];
-      tracked_h_bold[i] = product_cache[product_cache.len() - 1 - i];
-
-      if i > 0 {
-        let y_inv_n_hat = inv_y[i - 1];
-        debug_assert_eq!(y_inv_n_hat, y[i - 1].invert().unwrap());
-
-        tracked_g_bold[i] *= y_inv_n_hat;
+    let product_cache = {
+      let mut es = Vec::with_capacity(proof.L.len());
+      for (L, R) in proof.L.iter().zip(proof.R.iter()) {
+        es.push(Self::transcript_L_R(transcript, *L, *R));
       }
-    }
+
+      let mut inv_es = es.clone();
+      let mut scratch = vec![C::F::ZERO; es.len()];
+      ciphersuite::group::ff::BatchInverter::invert_with_external_scratch(
+        &mut inv_es,
+        &mut scratch,
+      );
+      drop(scratch);
+
+      assert_eq!(es.len(), inv_es.len());
+      assert_eq!(es.len(), proof.L.len());
+      assert_eq!(es.len(), proof.R.len());
+      for ((e, inv_e), (L, R)) in
+        es.drain(..).zip(inv_es.drain(..)).zip(proof.L.iter().zip(proof.R.iter()))
+      {
+        debug_assert_eq!(e.invert().unwrap(), inv_e);
+
+        challenges.push((e, inv_e));
+
+        let e_square = e.square();
+        let inv_e_square = inv_e.square();
+        P_terms.push((e_square, MultiexpPoint::Variable(*L)));
+        P_terms.push((inv_e_square, MultiexpPoint::Variable(*R)));
+      }
+
+      Self::challenge_products(&challenges)
+    };
 
     let e = Self::transcript_A_B(transcript, proof.A, proof.B);
     let neg_e_square = -e.square();
@@ -475,17 +479,18 @@ impl<'a, T: Transcript, C: Ciphersuite, GB: Clone + AsRef<[MultiexpPoint<C::G>]>
 
     let re = proof.r_answer * e;
     for i in 0 .. generators.len() {
+      let mut scalar = product_cache[i] * re;
+      if i > 0 {
+        scalar *= inv_y[i - 1];
+      }
       // TODO: Have BatchVerifier take &MultiexpPoint
-      multiexp.push((
-        tracked_g_bold[i] * re,
-        generators.generator(GeneratorsList::GBold1, i).clone(),
-      ));
+      multiexp.push((scalar, generators.generator(GeneratorsList::GBold1, i).clone()));
     }
 
     let se = proof.s_answer * e;
     for i in 0 .. generators.len() {
       multiexp.push((
-        tracked_h_bold[i] * se,
+        se * product_cache[product_cache.len() - 1 - i],
         generators.generator(GeneratorsList::HBold1, i).clone(),
       ));
     }
