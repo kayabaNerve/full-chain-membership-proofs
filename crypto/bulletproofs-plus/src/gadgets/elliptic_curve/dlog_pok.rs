@@ -65,7 +65,7 @@ use crate::{
 */
 // TODO: Transcript this
 #[derive(Debug)]
-pub struct DLogTable<C: Ecip>(Vec<C::G>, usize);
+pub struct DLogTable<C: Ecip>(Vec<C::G>, Vec<C::FieldElement>, usize);
 impl<C: Ecip> DLogTable<C> {
   pub fn new(point: C::G) -> DLogTable<C> {
     assert!(point != C::G::identity(), "creating a DLogTable for identity");
@@ -89,7 +89,11 @@ impl<C: Ecip> DLogTable<C> {
     for i in 1 .. trits {
       G_pow_3[i] = G_pow_3[i - 1].double() + G_pow_3[i - 1];
     }
-    DLogTable(G_pow_3, trits)
+    let mut xs = vec![];
+    for G in &G_pow_3 {
+      xs.push(C::to_xy(*G).0);
+    }
+    DLogTable(G_pow_3, xs, trits)
   }
 
   pub fn trits(&self) -> usize {
@@ -145,11 +149,11 @@ pub(crate) fn divisor_dlog_pok<
 
     // TODO: This block is not const time
     {
-      trits.truncate(G.1);
-      while trits.len() < G.1 {
+      trits.truncate(G.2);
+      while trits.len() < G.2 {
         trits.push(Trit::Zero);
       }
-      debug_assert_eq!(trits.len(), G.1);
+      debug_assert_eq!(trits.len(), G.2);
     }
 
     let mut bits = vec![];
@@ -169,7 +173,7 @@ pub(crate) fn divisor_dlog_pok<
     }
     (bits, Some(Gs))
   } else {
-    (vec![None; G.1], None)
+    (vec![None; G.2], None)
   };
 
   let mut dlog = Vec::with_capacity(bits.len());
@@ -181,7 +185,7 @@ pub(crate) fn divisor_dlog_pok<
   let yx_coeffs = |points| if points <= 4 { None } else { Some((points / 2) - 2) };
   let x_coeffs = |points| points / 2;
 
-  let points = G.1 + 1;
+  let points = G.2 + 1;
 
   // Create the divisor
   let (y_coefficient, yx_coefficients, x_coefficients, zero_coefficient) = if circuit.prover() {
@@ -494,7 +498,7 @@ pub(crate) fn divisor_dlog_pok<
 
   // GC: 1 per point
   let mut accum = None;
-  for (bit, G) in dlog.iter().zip(G.0.iter()).take(points - 1) {
+  for (bit, G) in dlog.iter().zip(G.1.iter()).take(points - 1) {
     // let this_rhs =
     //   bit.select_constant(circuit, C::F::ONE, challenge_x - C::Embedded::to_xy(*G).0);
     // Inlined due to the usage of a challenge
@@ -504,7 +508,7 @@ pub(crate) fn divisor_dlog_pok<
       let chosen = Some(()).filter(|_| circuit.prover()).map(|_| {
         C::F::conditional_select(
           &if_false,
-          &(challenge_xy.as_ref().unwrap()[0] - C::Embedded::to_xy(*G).0),
+          &(challenge_xy.as_ref().unwrap()[0] - G),
           bit.value.unwrap(),
         )
       });
@@ -516,7 +520,7 @@ pub(crate) fn divisor_dlog_pok<
       chosen_constraint.weight_with_challenge(
         circuit.variable_to_product(bit.variable).unwrap(),
         challenge,
-        Box::new(move |x_pows_y| x_pows_y[0] - C::Embedded::to_xy(*G).0),
+        Box::new(move |x_pows_y| x_pows_y[0] - G),
       );
       chosen_constraint.weight(circuit.variable_to_product(bit.minus_one).unwrap(), -if_false);
       circuit.set_variable_constraint(chosen, chosen_constraint);
