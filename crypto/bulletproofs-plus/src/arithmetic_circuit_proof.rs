@@ -13,7 +13,6 @@ use ciphersuite::{
 use crate::{
   ScalarVector, ScalarMatrix, PointVector, GeneratorsList, ProofGenerators, padded_pow_of_2,
   weighted_inner_product::{WipStatement, WipWitness, WipProof},
-  weighted_inner_product,
 };
 
 // Figure 4
@@ -50,19 +49,13 @@ pub struct ArithmeticCircuitWitness<C: Ciphersuite> {
 
 impl<C: Ciphersuite> ArithmeticCircuitWitness<C> {
   pub fn new(
-    mut aL: ScalarVector<C>,
-    mut aR: ScalarVector<C>,
+    aL: ScalarVector<C>,
+    aR: ScalarVector<C>,
     v: ScalarVector<C>,
     gamma: ScalarVector<C>,
   ) -> Self {
     assert_eq!(aL.len(), aR.len());
     assert_eq!(v.len(), gamma.len());
-
-    let pow_2 = padded_pow_of_2(aL.len());
-    while aL.len() < pow_2 {
-      aL.0.push(C::F::ZERO);
-      aR.0.push(C::F::ZERO);
-    }
 
     let aO = aL.mul_vec(&aR);
     ArithmeticCircuitWitness { aL, aR, aO, v, gamma }
@@ -150,36 +143,36 @@ impl<'a, T: Transcript, C: Ciphersuite> ArithmeticCircuitStatement<'a, T, C> {
     assert!(n != 0);
 
     let z2 = z * z;
-    let mut z_q = vec![z];
+    let mut z_q = Vec::with_capacity(q);
+    z_q.push(z);
     while z_q.len() < q {
       z_q.push(*z_q.last().unwrap() * z2);
     }
     let z_q = ScalarVector(z_q);
 
-    let mut y_n = vec![y];
-    let mut inv_y_n = vec![y.invert().unwrap()];
+    let n = padded_pow_of_2(n);
+    let mut y_n = Vec::with_capacity(n);
+    y_n.push(y);
+    let mut inv_y_n = Vec::with_capacity(n);
+    inv_y_n.push(y.invert().unwrap());
     while y_n.len() < n {
-      y_n.push(*y_n.last().unwrap() * y);
-      inv_y_n.push(*inv_y_n.last().unwrap() * inv_y_n[0]);
+      y_n.push(y_n[y_n.len() - 1] * y);
+      inv_y_n.push(inv_y_n[inv_y_n.len() - 1] * inv_y_n[0]);
     }
-    let inv_y_n = ScalarVector(inv_y_n);
-
-    //let z_q_inv_y_n = z_q.mul_vec(&inv_y_n);
+    let inv_y_n = ScalarVector::<C>(inv_y_n);
 
     let t_y_z = |W: &ScalarMatrix<C>| {
-      // TODO: Can these latter two mul_vecs be merged?
-      let res = W.mul_vec(&z_q).mul_vec(&inv_y_n);
-      assert_eq!(res.len(), n);
-      res
+      ScalarVector(W.mul_vec(&z_q).0.drain(..).enumerate().map(|(i, w)| w * inv_y_n[i]).collect())
     };
     let WL_y_z = t_y_z(&self.WL);
     let WR_y_z = t_y_z(&self.WR);
     let WO_y_z = t_y_z(&self.WO);
 
     let z_q_WV = self.WV.mul_vec(&z_q);
+    // This line ensures we didn't have too many commitments specified
     assert_eq!(z_q_WV.len(), self.V.len());
 
-    let mut A_terms = Vec::with_capacity(1 + (3 * self.c.len()) + self.V.len() + 1);
+    let mut A_terms = Vec::with_capacity(1 + (3 * y_n.len()) + self.V.len() + 1);
     A_terms.push((C::F::ONE, MultiexpPoint::Variable(A)));
     for (i, scalar) in WR_y_z.0.iter().enumerate() {
       A_terms.push((*scalar, self.generators.generator(GeneratorsList::GBold1, i).clone()));
@@ -187,18 +180,29 @@ impl<'a, T: Transcript, C: Ciphersuite> ArithmeticCircuitStatement<'a, T, C> {
     for (i, scalar) in WL_y_z.0.iter().enumerate() {
       A_terms.push((*scalar, self.generators.generator(GeneratorsList::HBold1, i).clone()));
     }
+
     for (i, scalar) in WO_y_z.0.iter().enumerate() {
       A_terms.push((
         (*scalar - C::F::ONE) * inv_y_n.0.last().unwrap(),
         self.generators.generator(GeneratorsList::HBold2, i).clone(),
       ));
     }
+    let neg_inv_y_n = -*inv_y_n.0.last().unwrap();
+    for i in WO_y_z.len() .. inv_y_n.len() {
+      A_terms.push((neg_inv_y_n, self.generators.generator(GeneratorsList::HBold2, i).clone()));
+    }
+
     for pair in z_q_WV.0.iter().zip(self.V.0.iter()) {
       A_terms.push((*pair.0, MultiexpPoint::Variable(*pair.1)));
     }
     let y_n = ScalarVector(y_n);
+
+    let mut w_WL = WL_y_z.clone();
+    for (i, w) in w_WL.0.iter_mut().enumerate() {
+      *w *= y_n.0[i];
+    }
     A_terms.push((
-      z_q.inner_product(&self.c) + weighted_inner_product(&WR_y_z, &WL_y_z, &y_n),
+      z_q.inner_product(&self.c) + WR_y_z.inner_product(&w_WL),
       self.generators.g().clone(),
     ));
 
@@ -251,9 +255,26 @@ impl<'a, T: Transcript, C: Ciphersuite> ArithmeticCircuitStatement<'a, T, C> {
     let (y_n, inv_y_n, z_q_WV, WL_y_z, WR_y_z, WO_y_z, A_hat) = self.compute_A_hat(transcript, A);
 
     let mut aL = witness.aL.add_vec(&WR_y_z);
-    aL.0.append(&mut witness.aO.0);
     let mut aR = witness.aR.add_vec(&WL_y_z);
-    aR.0.append(&mut WO_y_z.sub(C::F::ONE).mul(inv_y_n[aR.len() - 1]).0);
+    let pow_2 = padded_pow_of_2(aL.len());
+    aL.0.reserve(2 * pow_2);
+    aR.0.reserve(2 * pow_2);
+    while aL.len() < pow_2 {
+      aL.0.push(C::F::ZERO);
+      aR.0.push(C::F::ZERO);
+    }
+
+    aL.0.append(&mut witness.aO.0);
+    for o in WO_y_z.0 {
+      aR.0.push((o - C::F::ONE) * inv_y_n.last().unwrap());
+    }
+
+    let neg_inv_y_n = -*inv_y_n.last().unwrap();
+    while aR.len() < (2 * pow_2) {
+      aL.0.push(C::F::ZERO);
+      aR.0.push(neg_inv_y_n);
+    }
+
     let alpha = alpha + z_q_WV.inner_product(&witness.gamma);
 
     // Safe to not transcript A_hat since A_hat is solely derivative of transcripted values

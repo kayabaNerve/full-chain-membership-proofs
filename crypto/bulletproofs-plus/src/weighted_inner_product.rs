@@ -464,6 +464,7 @@ impl<'a, T: Transcript, C: Ciphersuite, GB: Clone + AsRef<[MultiexpPoint<C::G>]>
     let neg_e_square = -e.square();
 
     let mut multiexp = P_terms;
+    multiexp.reserve(4 + (2 * generators.len()));
     for (scalar, _) in multiexp.iter_mut() {
       *scalar *= neg_e_square;
     }

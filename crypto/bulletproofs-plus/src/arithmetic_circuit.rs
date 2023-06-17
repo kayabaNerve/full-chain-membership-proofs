@@ -14,7 +14,6 @@ use ciphersuite::{
 use crate::{
   ScalarVector, ScalarMatrix, PointVector, VectorCommitmentGenerators, GeneratorsList,
   ProofGenerators, InnerProductGenerators, weighted_inner_product::*, arithmetic_circuit_proof,
-  padded_pow_of_2,
 };
 pub use arithmetic_circuit_proof::*;
 
@@ -685,10 +684,6 @@ impl<'a, T: Transcript, C: Ciphersuite> Circuit<'a, T, C> {
       }
     }
 
-    // Since the WIP requires a power of 2 length list, the gates will be padded to a power of 2
-    // Acknowledge this before we proceed to build matrixes
-    let n = padded_pow_of_2(n);
-
     // WL, WR, WO, WV, c
     let mut WL = ScalarMatrix::new(n);
     let mut WR = ScalarMatrix::new(n);
@@ -1203,8 +1198,6 @@ impl<'a, T: Transcript, C: Ciphersuite, GB: Clone + AsRef<[MultiexpPoint<C::G>]>
         Circuit::vector_commitment_statement(wip_generators.1.clone(), transcript, commitment)
           .verify(rng, verifier, transcript, proofs.1);
       };
-
-    // TODO: Make sure this has the expected amount of commitments
 
     // Make sure this had the expected amount of vector commitments.
     assert_eq!(vector_commitments.len(), self.vector_commitment_generators.len() - 1);
