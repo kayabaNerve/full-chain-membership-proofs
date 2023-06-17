@@ -69,12 +69,6 @@ impl<C: Ciphersuite> WipWitness<C> {
   }
 }
 
-#[derive(Clone)]
-struct TrackedScalarVector<C: Ciphersuite> {
-  raw: Vec<C::F>,
-  positions: Vec<Vec<usize>>,
-}
-
 #[derive(Clone, PartialEq, Eq, Debug, Zeroize)]
 pub struct WipProof<C: Ciphersuite> {
   L: Vec<C::G>,
@@ -203,58 +197,53 @@ impl<'a, T: Transcript, C: Ciphersuite, GB: Clone + AsRef<[MultiexpPoint<C::G>]>
     (e, inv_e, e_square, inv_e_square, PointVector(new_g_bold), PointVector(new_h_bold))
   }
 
-  // TODO: This is O(n log n). It should be feasible to make O(n) (specifically 2n)
-  fn next_G_H_P_without_permutation(
-    transcript: &mut T,
-    g_bold: &mut TrackedScalarVector<C>,
-    h_bold: &mut TrackedScalarVector<C>,
-    P_terms: &mut Vec<(C::F, MultiexpPoint<C::G>)>,
-    L: C::G,
-    R: C::G,
-    y_inv_n_hat: C::F,
-  ) {
-    assert_eq!(g_bold.positions.len(), h_bold.positions.len());
 
-    let e = Self::transcript_L_R(transcript, L, R);
-    // TODO: Create all e challenges, then use a batch inversion
-    let inv_e = e.invert().unwrap();
+  /*
 
-    let e_y_inv = e * y_inv_n_hat;
+  This has room for optimization worth investigating further. It currently takes
+  an iterative approach. It can be optimized further via divide and conquer.
 
-    let section_len = g_bold.positions.len() / 2;
-    let scale_section = |generators: &mut TrackedScalarVector<C>, section, scalar| {
-      for s in (section * section_len) .. ((section + 1) * section_len) {
-        for pos in &generators.positions[s] {
-          let pos: &usize = pos;
-          generators.raw[*pos] *= scalar;
+  Assume there are 4 challenges.
+
+  Iterative approach (current):
+    1. Do the optimal multiplications across challenge column 0 and 1.
+    2. Do the optimal multiplications across that result and column 2.
+    3. Do the optimal multiplications across that result and column 3.
+
+  Divide and conquer (worth investigating further):
+    1. Do the optimal multiplications across challenge column 0 and 1.
+    2. Do the optimal multiplications across challenge column 2 and 3.
+    3. Multiply both results together.
+
+  When there are 4 challenges (n=16), the iterative approach does 28 multiplications
+  versus divide and conquer's 24.
+
+  */
+  fn challenge_products(challenges: &[(C::F, C::F)]) -> Vec<C::F> {
+    let mut products =
+      vec![C::F::ZERO; if challenges.is_empty() { 0 } else { 1 << challenges.len() }];
+
+    if !products.is_empty() {
+      products[0] = challenges[0].1;
+      products[1] = challenges[0].0;
+
+      for (j, challenge) in challenges.iter().enumerate().skip(1) {
+        let mut slots = (1 << (j + 1)) - 1;
+        while slots > 0 {
+          products[slots] = products[slots / 2] * challenge.0;
+          products[slots - 1] = products[slots / 2] * challenge.1;
+
+          slots = slots.saturating_sub(2);
         }
       }
-    };
-    // g_bold1
-    scale_section(g_bold, 0, inv_e);
-    // g_bold2
-    scale_section(g_bold, 1, e_y_inv);
-    // h_bold1
-    scale_section(h_bold, 0, e);
-    // h_bold2
-    scale_section(h_bold, 1, inv_e);
 
-    // Now merge their positions
-    let merge_positions = |generators: &mut TrackedScalarVector<_>| {
-      let high = generators.positions.len() / 2;
-      for i in 1 ..= high {
-        let mut popped = generators.positions.pop().unwrap();
-        generators.positions[high - i].append(&mut popped);
+      // Sanity check since if the above failed to populate, it'd be critical
+      for product in &products {
+        debug_assert!(!bool::from(product.is_zero()));
       }
-      assert_eq!(generators.positions.len(), high);
-    };
-    merge_positions(g_bold);
-    merge_positions(h_bold);
+    }
 
-    let e_square = e.square();
-    let inv_e_square = inv_e.square();
-    P_terms.push((e_square, MultiexpPoint::Variable(L)));
-    P_terms.push((inv_e_square, MultiexpPoint::Variable(R)));
+    products
   }
 
   pub fn prove<R: RngCore + CryptoRng>(
@@ -420,12 +409,6 @@ impl<'a, T: Transcript, C: Ciphersuite, GB: Clone + AsRef<[MultiexpPoint<C::G>]>
 
     let (g, h) = (generators.g().clone(), generators.h().clone());
 
-    let mut tracked_g_bold = TrackedScalarVector::<C> {
-      raw: vec![C::F::ONE; generators.len()],
-      positions: (0 .. generators.len()).map(|i| vec![i]).collect(),
-    };
-    let mut tracked_h_bold = tracked_g_bold.clone();
-
     // Verify the L/R lengths
     {
       let mut lr_len = 0;
@@ -452,21 +435,33 @@ impl<'a, T: Transcript, C: Ciphersuite, GB: Clone + AsRef<[MultiexpPoint<C::G>]>
       P::Terms(terms) => terms,
     };
     P_terms.reserve(6 + (2 * generators.len()) + proof.L.len());
-    for (L, R) in proof.L.iter().zip(proof.R.iter()) {
-      let n_hat = tracked_g_bold.positions.len() / 2;
-      let y_n_hat = y[n_hat - 1];
-      let y_inv_n_hat = inv_y[n_hat - 1];
-      debug_assert_eq!(y_inv_n_hat, y_n_hat.invert().unwrap());
+    let mut challenges = Vec::with_capacity(proof.L.len());
 
-      Self::next_G_H_P_without_permutation(
-        transcript,
-        &mut tracked_g_bold,
-        &mut tracked_h_bold,
-        &mut P_terms,
-        *L,
-        *R,
-        y_inv_n_hat,
-      );
+    for (L, R) in proof.L.iter().zip(proof.R.iter()) {
+      let e = Self::transcript_L_R(transcript, *L, *R);
+      // TODO: Create all e challenges, then use a batch inversion
+      let inv_e = e.invert().unwrap();
+      challenges.push((e, inv_e));
+
+      let e_square = e.square();
+      let inv_e_square = inv_e.square();
+      P_terms.push((e_square, MultiexpPoint::Variable(*L)));
+      P_terms.push((inv_e_square, MultiexpPoint::Variable(*R)));
+    }
+    let product_cache = Self::challenge_products(&challenges);
+
+    let mut tracked_g_bold = vec![C::F::ONE; generators.len()];
+    let mut tracked_h_bold = tracked_g_bold.clone();
+    for i in 0 .. product_cache.len() {
+      tracked_g_bold[i] = product_cache[i];
+      tracked_h_bold[i] = product_cache[product_cache.len() - 1 - i];
+
+      if i > 0 {
+        let y_inv_n_hat = inv_y[i - 1];
+        debug_assert_eq!(y_inv_n_hat, y[i - 1].invert().unwrap());
+
+        tracked_g_bold[i] *= y_inv_n_hat;
+      }
     }
 
     let e = Self::transcript_A_B(transcript, proof.A, proof.B);
@@ -482,7 +477,7 @@ impl<'a, T: Transcript, C: Ciphersuite, GB: Clone + AsRef<[MultiexpPoint<C::G>]>
     for i in 0 .. generators.len() {
       // TODO: Have BatchVerifier take &MultiexpPoint
       multiexp.push((
-        tracked_g_bold.raw[i] * re,
+        tracked_g_bold[i] * re,
         generators.generator(GeneratorsList::GBold1, i).clone(),
       ));
     }
@@ -490,7 +485,7 @@ impl<'a, T: Transcript, C: Ciphersuite, GB: Clone + AsRef<[MultiexpPoint<C::G>]>
     let se = proof.s_answer * e;
     for i in 0 .. generators.len() {
       multiexp.push((
-        tracked_h_bold.raw[i] * se,
+        tracked_h_bold[i] * se,
         generators.generator(GeneratorsList::HBold1, i).clone(),
       ));
     }
