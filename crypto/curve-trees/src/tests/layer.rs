@@ -45,7 +45,7 @@ fn test_layer_gadget() {
     formatted_elems.push(Some(x));
   }
 
-  let H_table = DLogTable::new(H);
+  let H_table: &'static DLogTable<Pallas> = Box::leak(Box::new(DLogTable::new(H)));
   let blind_c1 = new_blind::<_, Pallas, Vesta>(&mut OsRng, H_table.trits(), 0).0;
   let point = elems[usize::try_from(OsRng.next_u64() % 4).unwrap()];
   // Uses - so the blind is added back
@@ -53,15 +53,14 @@ fn test_layer_gadget() {
 
   let mut transcript = RecommendedTranscript::new(b"Layer Gadget Test");
 
-  let gadget = |transcript: &mut RecommendedTranscript, circuit: &mut Circuit<_, Vesta>| {
+  let gadget = |circuit: &mut Circuit<_, Vesta>| {
     layer_gadget::<_, _, Pasta>(
       &mut OsRng,
-      transcript,
       circuit,
       &permissible,
-      &H_table,
+      H_table,
       &pedersen_generators,
-      blinded_point,
+      Some(blinded_point).filter(|_| circuit.prover()),
       Some(blind_c1).filter(|_| circuit.prover()),
       0,
       formatted_elems.iter().cloned().map(|x| x.filter(|_| circuit.prover())).collect(),
@@ -69,22 +68,32 @@ fn test_layer_gadget() {
     )
   };
 
-  let (blinds, commitments, proof, proofs) = {
+  let (commitments, blinds, vector_commitments, proof, proofs) = {
     let mut transcript = transcript.clone();
-    let mut circuit = Circuit::new(generators.per_proof(), true, None);
-    gadget(&mut transcript, &mut circuit);
+    let mut circuit = Circuit::new(generators.per_proof(), true);
+    gadget(&mut circuit);
     circuit.prove_with_vector_commitments(&mut OsRng, &mut transcript)
   };
 
-  assert_eq!(commitments.len(), 2);
+  assert!(commitments.is_empty());
+  assert_eq!(vector_commitments.len(), 2);
   assert_eq!(
-    *commitments.last().unwrap() - (generators.h().point() * blinds.last().unwrap()),
+    *vector_commitments.last().unwrap() - (generators.h().point() * blinds.last().unwrap()),
     pedersen_generators.commit_vartime(&raw_elems),
   );
 
-  let mut circuit = Circuit::new(generators.per_proof(), false, Some(commitments));
-  gadget(&mut transcript, &mut circuit);
+  let mut circuit = Circuit::new(generators.per_proof(), false);
+  gadget(&mut circuit);
   let mut verifier = BatchVerifier::new(5);
-  circuit.verify_with_vector_commitments(&mut OsRng, &mut verifier, &mut transcript, proof, proofs);
+  circuit.verification_statement_with_vector_commitments().verify(
+    &mut OsRng,
+    &mut verifier,
+    &mut transcript,
+    commitments,
+    vector_commitments,
+    &[Pasta::c1_coords(blinded_point).0, Pasta::c1_coords(blinded_point).1],
+    proof,
+    proofs,
+  );
   assert!(verifier.verify_vartime());
 }

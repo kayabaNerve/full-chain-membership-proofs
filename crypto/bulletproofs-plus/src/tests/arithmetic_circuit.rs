@@ -29,26 +29,16 @@ fn test_arithmetic_circuit() {
       Commitment<Ristretto>,
       Commitment<Ristretto>,
     )>,
-    commitments: (
-      <Ristretto as Ciphersuite>::G,
-      <Ristretto as Ciphersuite>::G,
-      <Ristretto as Ciphersuite>::G,
-      <Ristretto as Ciphersuite>::G,
-    ),
   ) {
     let x_var = circuit.add_secret_input(x_y_z_z1.as_ref().map(|xyz| xyz.0.value));
-    let x_com =
-      circuit.add_committed_input(x_y_z_z1.as_ref().map(|xyz| xyz.0.clone()), commitments.0);
+    let x_com = circuit.add_committed_input(x_y_z_z1.as_ref().map(|xyz| xyz.0.clone()));
 
     let y_var = circuit.add_secret_input(x_y_z_z1.as_ref().map(|xyz| xyz.1.value));
-    let y_com =
-      circuit.add_committed_input(x_y_z_z1.as_ref().map(|xyz| xyz.1.clone()), commitments.1);
+    let y_com = circuit.add_committed_input(x_y_z_z1.as_ref().map(|xyz| xyz.1.clone()));
 
-    let z_com =
-      circuit.add_committed_input(x_y_z_z1.as_ref().map(|xyz| xyz.2.clone()), commitments.2);
+    let z_com = circuit.add_committed_input(x_y_z_z1.as_ref().map(|xyz| xyz.2.clone()));
 
-    let z1_com =
-      circuit.add_committed_input(x_y_z_z1.as_ref().map(|xyz| xyz.3.clone()), commitments.3);
+    let z1_com = circuit.add_committed_input(x_y_z_z1.as_ref().map(|xyz| xyz.3.clone()));
 
     let ((product_l, product_r, product_o), _o_var) = circuit.product(x_var, y_var);
 
@@ -85,21 +75,24 @@ fn test_arithmetic_circuit() {
 
   let mut transcript = RecommendedTranscript::new(b"Arithmetic Circuit Test");
 
-  let mut circuit = Circuit::new(generators.per_proof(), true, None);
-  gadget(
-    &mut circuit,
-    Some((x.clone(), y.clone(), z.clone(), z1.clone())),
-    (x.calculate(g, h), y.calculate(g, h), z.calculate(g, h), z1.calculate(g, h)),
+  let mut circuit = Circuit::new(generators.per_proof(), true);
+  gadget(&mut circuit, Some((x.clone(), y.clone(), z.clone(), z1.clone())));
+  let (commitments, proof) = circuit.prove(&mut OsRng, &mut transcript.clone());
+  assert_eq!(
+    commitments,
+    vec![x.calculate(g, h), y.calculate(g, h), z.calculate(g, h), z1.calculate(g, h)]
   );
-  let proof = circuit.prove(&mut OsRng, &mut transcript.clone());
 
-  let mut circuit = Circuit::new(generators.per_proof(), false, Some(vec![]));
-  gadget(
-    &mut circuit,
-    None,
-    (x.calculate(g, h), y.calculate(g, h), z.calculate(g, h), z1.calculate(g, h)),
-  );
+  let mut circuit = Circuit::new(generators.per_proof(), false);
+  gadget(&mut circuit, None);
   let mut verifier = BatchVerifier::new(1);
-  circuit.verify(&mut OsRng, &mut verifier, &mut transcript, proof);
+  circuit.verification_statement().verify(
+    &mut OsRng,
+    &mut verifier,
+    &mut transcript,
+    commitments,
+    &[],
+    proof,
+  );
   assert!(verifier.verify_vartime());
 }

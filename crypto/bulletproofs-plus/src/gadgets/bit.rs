@@ -10,7 +10,7 @@ use crate::arithmetic_circuit::{VariableReference, Constraint, Circuit};
 pub struct Bit {
   pub value: Option<Choice>,
   pub variable: VariableReference,
-  minus_one: VariableReference,
+  pub(crate) minus_one: VariableReference,
 }
 
 impl Bit {

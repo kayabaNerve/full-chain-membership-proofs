@@ -10,7 +10,7 @@ use crate::ScalarVector;
 #[derive(Clone, PartialEq, Eq, Debug, Zeroize, ZeroizeOnDrop)]
 pub struct ScalarMatrix<C: Ciphersuite> {
   width: usize,
-  data: Vec<Vec<(usize, C::F)>>,
+  pub(crate) data: Vec<Vec<(usize, C::F)>>,
 }
 
 impl<C: Ciphersuite> ScalarMatrix<C> {

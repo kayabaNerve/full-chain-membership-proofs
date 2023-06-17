@@ -35,14 +35,22 @@ fn test_is_non_zero_gadget() {
   let transcript = RecommendedTranscript::new(b"Is Non Zero Gadget Test");
 
   let test = |x| {
-    let mut circuit = Circuit::new(generators.per_proof(), true, None);
+    let mut circuit = Circuit::new(generators.per_proof(), true);
     gadget(&mut circuit, Some(x));
-    let proof = circuit.prove(&mut OsRng, &mut transcript.clone());
+    let (commitments, proof) = circuit.prove(&mut OsRng, &mut transcript.clone());
+    assert_eq!(commitments, vec![]);
 
-    let mut circuit = Circuit::new(generators.per_proof(), false, Some(vec![]));
+    let mut circuit = Circuit::new(generators.per_proof(), false);
     gadget(&mut circuit, None);
     let mut verifier = BatchVerifier::new(1);
-    circuit.verify(&mut OsRng, &mut verifier, &mut transcript.clone(), proof);
+    circuit.verification_statement().verify(
+      &mut OsRng,
+      &mut verifier,
+      &mut transcript.clone(),
+      commitments,
+      &[],
+      proof,
+    );
     assert!(verifier.verify_vartime());
   };
 

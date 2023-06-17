@@ -6,10 +6,7 @@ use rand_core::{RngCore, CryptoRng};
 
 use transcript::Transcript;
 use ciphersuite::{
-  group::{
-    ff::{Field, PrimeField},
-    GroupEncoding,
-  },
+  group::ff::{Field, PrimeField},
   Ciphersuite,
 };
 
@@ -89,22 +86,16 @@ pub fn new_blind<R: RngCore + CryptoRng, C1: Ciphersuite, C2: Ciphersuite>(
 
 pub fn layer_gadget<R: RngCore + CryptoRng, T: Transcript, C: CurveCycle>(
   rng: &mut R,
-  transcript: &mut T,
   circuit: &mut Circuit<T, C::C2>,
   permissible: &Permissible<C::C1>,
-  H: &DLogTable<C::C1>,
+  H: &'static DLogTable<C::C1>,
   pedersen_generators: &VectorCommitmentGenerators<T, C::C2>,
-  blinded_point: <C::C1 as Ciphersuite>::G,
+  blinded_point: Option<<C::C1 as Ciphersuite>::G>,
   blind: Option<<C::C1 as Ciphersuite>::F>,
   permissibility_offset: u64,
   elements: Vec<Option<<C::C2 as Ciphersuite>::F>>,
   last: bool,
-) -> (Option<<C::C2 as Ciphersuite>::F>, <C::C2 as Ciphersuite>::G) {
-  {
-    transcript.domain_separate(b"curve_trees_layer");
-    transcript.append_message(b"blinded_member", blinded_point.to_bytes());
-  }
-
+) -> (Option<<C::C2 as Ciphersuite>::F>, Option<<C::C2 as Ciphersuite>::G>) {
   // Unblind the point
   let unblinded = {
     let (blind_x, blind_y) = if let Some(blind) = blind {
@@ -122,7 +113,20 @@ pub fn layer_gadget<R: RngCore + CryptoRng, T: Transcript, C: CurveCycle>(
     C::C2::dlog_pok(&mut *rng, circuit, H, blind_var, blind);
 
     // Perform the addition
-    C::C2::incomplete_add_constant(circuit, blind_var, blinded_point)
+    {
+      let blinded_point = blinded_point.map(C::c1_coords);
+      let blinded_point_x = circuit.add_secret_input(blinded_point.map(|point| point.0));
+      let blinded_point_y = circuit.add_secret_input(blinded_point.map(|point| point.1));
+      // TODO: We don't need to constrain it's on curve since we know it is
+      let blinded_point = C::C2::constrain_on_curve(circuit, blinded_point_x, blinded_point_y);
+
+      let x_prod = circuit.variable_to_product(blinded_point.x()).unwrap();
+      let y_prod = circuit.variable_to_product(blinded_point.y()).unwrap();
+      circuit.post_constrain_equality(x_prod);
+      circuit.post_constrain_equality(y_prod);
+
+      C::C2::incomplete_add(circuit, blind_var, blinded_point)
+    }
   };
 
   // Make sure the point is permissible
@@ -185,7 +189,7 @@ pub fn membership_gadget<R: RngCore + CryptoRng, T: Transcript, C: CurveCycle>(
   circuit_c1: &mut Circuit<T, C::C1>,
   circuit_c2: &mut Circuit<T, C::C2>,
   tree: &Tree<T, C>,
-  blinded_point: <C::C1 as Ciphersuite>::G,
+  blinded_point: Option<<C::C1 as Ciphersuite>::G>,
   blind: Option<<C::C1 as Ciphersuite>::F>,
 ) where
   T::Challenge: Debug,
@@ -193,28 +197,34 @@ pub fn membership_gadget<R: RngCore + CryptoRng, T: Transcript, C: CurveCycle>(
   {
     transcript.domain_separate(b"curve_trees");
     transcript.append_message(b"tree_parameters", tree.parameters_hash());
-    match tree.root() {
-      Hash::Even(point) => transcript.append_message(b"tree_root", point.to_bytes()),
-      Hash::Odd(point) => transcript.append_message(b"tree_root", point.to_bytes()),
-    }
   }
 
-  let mut membership =
-    blind.map(|blind| tree.membership(blinded_point + (circuit_c1.h() * blind)).unwrap());
+  // All tree accessses must be consistent for the lifetime of the tree for this baking to work
+  // The one exception is depth. New circuit verification statements will be needed for each depth
+  let depth = tree.depth();
+  let width = tree.width();
+  let permissible_c1 = tree.permissible_c1();
+  let permissible_c2 = tree.permissible_c2();
+  let dlog_table1 = tree.dlog_table1;
+  let dlog_table2 = tree.dlog_table2;
 
-  let mut blinded_point = Hash::Even(blinded_point);
+  let mut membership =
+    blind.map(|blind| tree.membership(blinded_point.unwrap() + (circuit_c1.h() * blind)).unwrap());
+
+  // We do still access the tree's generators later on
+
+  let mut blinded_point = blinded_point.map(Hash::<C>::Even);
   let mut even_blind = None;
   let mut odd_blind = Some(blind);
 
-  // TODO: Create these out of gadget (inside tree?)
-  let c1_h = DLogTable::<C::C1>::new(circuit_c1.h());
-  let c2_h = DLogTable::<C::C2>::new(circuit_c2.h());
-
-  for i in 1 ..= tree.depth() {
+  for i in 1 ..= depth {
     if (i % 2) == 1 {
-      let Hash::Even(this_blinded_point) = blinded_point else {
-        panic!("blinded_point was odd at odd layer")
-      };
+      let this_blinded_point = blinded_point.map(|point| {
+        let Hash::Even(point) = point else {
+          panic!("blinded_point was odd at odd layer")
+        };
+        point
+      });
 
       let (permissibility_offset, elems) = if let Some(membership) = membership.as_mut() {
         let mut elems = vec![];
@@ -225,29 +235,31 @@ pub fn membership_gadget<R: RngCore + CryptoRng, T: Transcript, C: CurveCycle>(
         }
         (permissibility_offset, elems)
       } else {
-        (0, vec![None; tree.width()])
+        (0, vec![None; width])
       };
 
       let (blind, point) = layer_gadget::<_, _, C>(
         rng,
-        transcript,
         circuit_c2,
-        tree.permissible_c1(),
-        &c1_h,
+        permissible_c1,
+        dlog_table1,
         tree.odd_generators(i).unwrap(),
         this_blinded_point,
         odd_blind.take().unwrap(),
         permissibility_offset,
         elems,
-        i == tree.depth(),
+        i == depth,
       );
 
-      blinded_point = Hash::Odd(point);
+      blinded_point = point.map(Hash::Odd);
       even_blind = Some(blind);
     } else {
-      let Hash::Odd(this_blinded_point) = blinded_point else {
-        panic!("blinded_point was even at even layer")
-      };
+      let this_blinded_point = blinded_point.map(|point| {
+        let Hash::Odd(point) = point else {
+          panic!("blinded_point was even at even layer")
+        };
+        point
+      });
 
       let (permissibility_offset, elems) = if let Some(membership) = membership.as_mut() {
         let mut elems = vec![];
@@ -258,28 +270,26 @@ pub fn membership_gadget<R: RngCore + CryptoRng, T: Transcript, C: CurveCycle>(
         }
         (permissibility_offset, elems)
       } else {
-        (0, vec![None; tree.width()])
+        (0, vec![None; width])
       };
 
       let (blind, point) = layer_gadget::<_, _, FlipCurveCycle<C>>(
         rng,
-        transcript,
         circuit_c1,
-        tree.permissible_c2(),
-        &c2_h,
+        permissible_c2,
+        dlog_table2,
         tree.even_generators(i).unwrap(),
         this_blinded_point,
         even_blind.take().unwrap(),
         permissibility_offset,
         elems,
-        i == tree.depth(),
+        i == depth,
       );
 
-      blinded_point = Hash::Even(point);
+      blinded_point = point.map(Hash::Even);
       odd_blind = Some(blind);
     }
   }
 
   // TODO: We don't need proofs that the tree root VC is well formed. We can just add it ourselves
-  assert_eq!(blinded_point, tree.root());
 }

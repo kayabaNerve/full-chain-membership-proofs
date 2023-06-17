@@ -61,14 +61,22 @@ fn test_incomplete_addition() {
     circuit.equals_constant(circuit.variable_to_product(res.y()).unwrap(), p3.1);
   };
 
-  let mut circuit = Circuit::new(generators.per_proof(), true, None);
+  let mut circuit = Circuit::new(generators.per_proof(), true);
   gadget(&mut circuit);
-  let proof = circuit.prove(&mut OsRng, &mut transcript.clone());
+  let (commitments, proof) = circuit.prove(&mut OsRng, &mut transcript.clone());
+  assert_eq!(commitments, vec![]);
 
-  let mut circuit = Circuit::new(generators.per_proof(), false, Some(vec![]));
+  let mut circuit = Circuit::new(generators.per_proof(), false);
   gadget(&mut circuit);
   let mut verifier = BatchVerifier::new(1);
-  circuit.verify(&mut OsRng, &mut verifier, &mut transcript, proof);
+  circuit.verification_statement().verify(
+    &mut OsRng,
+    &mut verifier,
+    &mut transcript,
+    commitments,
+    &[],
+    proof,
+  );
   assert!(verifier.verify_vartime());
 }
 
@@ -98,7 +106,8 @@ fn test_dlog_pok() {
 
   let transcript = RecommendedTranscript::new(b"Point DLog PoK Circuit Test");
 
-  let G_table = DLogTable::<Pallas>::new(<Pallas as Ciphersuite>::G::generator());
+  let G_table =
+    Box::leak(Box::new(DLogTable::<Pallas>::new(<Pallas as Ciphersuite>::G::generator())));
 
   let gadget = |circuit: &mut Circuit<RecommendedTranscript, Vesta>, point: (_, _), dlog| {
     let prover = circuit.prover();
@@ -108,23 +117,27 @@ fn test_dlog_pok() {
 
     let point = <Vesta as EmbeddedCurveOperations>::constrain_on_curve(circuit, point_x, point_y);
 
-    <Vesta as EmbeddedCurveOperations>::dlog_pok(&mut OsRng, circuit, &G_table, point, dlog);
+    <Vesta as EmbeddedCurveOperations>::dlog_pok(&mut OsRng, circuit, G_table, point, dlog);
   };
 
   let test = |point: (_, _), dlog| {
-    let mut circuit = Circuit::new(generators.per_proof(), true, None);
+    let mut circuit = Circuit::new(generators.per_proof(), true);
     gadget(&mut circuit, point, Some(dlog));
-    let (_, commitments, proof, proofs) =
+    let (commitments, _, vector_commitments, proof, proofs) =
       circuit.prove_with_vector_commitments(&mut OsRng, &mut transcript.clone());
+    assert!(commitments.is_empty());
 
-    let mut circuit = Circuit::new(generators.per_proof(), false, Some(commitments));
+    let mut circuit = Circuit::new(generators.per_proof(), false);
     gadget(&mut circuit, point, None);
 
     let mut verifier = BatchVerifier::new(5);
-    circuit.verify_with_vector_commitments(
+    circuit.verification_statement_with_vector_commitments().verify(
       &mut OsRng,
       &mut verifier,
       &mut transcript.clone(),
+      commitments,
+      vector_commitments,
+      &[],
       proof,
       proofs,
     );

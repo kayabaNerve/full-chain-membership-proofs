@@ -46,13 +46,13 @@ impl<C: Ciphersuite> Commitment<C> {
 #[derive(Clone, Debug, Zeroize, ZeroizeOnDrop)]
 pub enum Variable<C: Ciphersuite> {
   Secret(Option<C::F>),
-  Committed(Option<Commitment<C>>, C::G),
+  Committed(Option<Commitment<C>>),
   Product(usize, Option<C::F>),
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug, Zeroize)]
 pub struct VariableReference(usize);
-#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Debug, Zeroize)]
+#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Hash, Debug, Zeroize)]
 pub enum ProductReference {
   Left { product: usize, variable: usize },
   Right { product: usize, variable: usize },
@@ -62,25 +62,83 @@ pub enum ProductReference {
 pub struct CommitmentReference(usize);
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug, Zeroize)]
 pub struct VectorCommitmentReference(usize);
+#[derive(Copy, Clone, PartialEq, Eq, Hash, Debug, Zeroize)]
+pub struct ChallengeReference(usize);
+#[derive(Copy, Clone, PartialEq, Eq, Debug, Zeroize)]
+pub struct PostValueReference(usize);
 
-#[derive(Clone, Debug)]
+mod sealed {
+  use transcript::Transcript;
+  use ciphersuite::Ciphersuite;
+
+  pub trait Challenger<T: Transcript, C: Ciphersuite>: Fn(T::Challenge) -> Vec<C::F> {}
+  impl<T: Transcript, C: Ciphersuite, F: Fn(T::Challenge) -> Vec<C::F>> Challenger<T, C> for F {}
+
+  pub trait ChallengeApplicator<C: Ciphersuite>: Fn(&[C::F]) -> C::F {}
+  impl<C: Ciphersuite, F: Fn(&[C::F]) -> C::F> ChallengeApplicator<C> for F {}
+}
+use sealed::*;
+
+/// A constraint of the form WL aL + WR aR + WO aO = WV V + c.
 pub struct Constraint<C: Ciphersuite> {
   label: &'static str,
-  // Each weight (C::F) is bound to a specific variable (usize) to allow post-expansion to valid
-  // constraints
+  // Each weight (C::F) is bound to a specific ProductReference (usize) to allow post-expansion to
+  // valid constraints
   WL: Vec<(usize, C::F)>,
   WR: Vec<(usize, C::F)>,
   WO: Vec<(usize, C::F)>,
   WV: Vec<(usize, C::F)>,
+  challenge_weights:
+    HashMap<ProductReference, (ChallengeReference, Box<dyn ChallengeApplicator<C>>)>,
   c: C::F,
+  c_challenge: Option<(ChallengeReference, Box<dyn ChallengeApplicator<C>>)>,
+}
+
+impl<C: Ciphersuite> Clone for Constraint<C> {
+  fn clone(&self) -> Self {
+    assert!(self.challenge_weights.is_empty());
+    assert!(self.c_challenge.is_none());
+    Self {
+      label: self.label,
+      WL: self.WL.clone(),
+      WR: self.WR.clone(),
+      WO: self.WO.clone(),
+      WV: self.WV.clone(),
+      challenge_weights: HashMap::new(),
+      c: self.c,
+      c_challenge: None,
+    }
+  }
+}
+
+impl<C: Ciphersuite> core::fmt::Debug for Constraint<C> {
+  fn fmt(&self, fmt: &mut core::fmt::Formatter<'_>) -> Result<(), core::fmt::Error> {
+    fmt.debug_struct("Constraint").finish_non_exhaustive()
+  }
 }
 
 impl<C: Ciphersuite> Constraint<C> {
+  // Create a new Constraint with the specified label.
   pub fn new(label: &'static str) -> Self {
-    Self { label, WL: vec![], WR: vec![], WO: vec![], WV: vec![], c: C::F::ZERO }
+    Self {
+      label,
+      WL: vec![],
+      WR: vec![],
+      WO: vec![],
+      WV: vec![],
+      challenge_weights: HashMap::new(),
+      c: C::F::ZERO,
+      c_challenge: None,
+    }
   }
 
+  /// Cummulatively weight the specified product by the specified weight.
   pub fn weight(&mut self, product: ProductReference, weight: C::F) -> &mut Self {
+    assert!(
+      !self.challenge_weights.contains_key(&product),
+      "weighted product already has a challenge weight"
+    );
+
     let (weights, id) = match product {
       ProductReference::Left { product: id, variable: _ } => (&mut self.WL, id),
       ProductReference::Right { product: id, variable: _ } => (&mut self.WR, id),
@@ -95,6 +153,33 @@ impl<C: Ciphersuite> Constraint<C> {
     weights.push((id, weight));
     self
   }
+
+  /// Weight a product by a challenge, mapped as the function specifies.
+  ///
+  /// Panics if the product already has a weight specified in this constraint.
+  pub fn weight_with_challenge(
+    &mut self,
+    product: ProductReference,
+    challenge: ChallengeReference,
+    applicator: Box<dyn ChallengeApplicator<C>>,
+  ) -> &mut Self {
+    assert!(self.challenge_weights.insert(product, (challenge, applicator)).is_none());
+
+    let (weights, id) = match product {
+      ProductReference::Left { product: id, variable: _ } => (&self.WL, id),
+      ProductReference::Right { product: id, variable: _ } => (&self.WR, id),
+      ProductReference::Output { product: id, variable: _ } => (&self.WO, id),
+    };
+    for existing in weights {
+      if existing.0 == id {
+        panic!("product weighted by challenge already has a non-challenge weight");
+      }
+    }
+
+    self
+  }
+
+  /// Cummulatively weight the specified commitment by the specified weight.
   pub fn weight_commitment(&mut self, variable: CommitmentReference, weight: C::F) -> &mut Self {
     for existing in &self.WV {
       assert!(existing.0 != variable.0);
@@ -102,9 +187,60 @@ impl<C: Ciphersuite> Constraint<C> {
     self.WV.push((variable.0, weight));
     self
   }
+
+  /// Add a value to the `c` variable on the right-hand side of the constraint statement.
   pub fn rhs_offset(&mut self, offset: C::F) -> &mut Self {
+    assert!(self.c_challenge.is_none());
     self.c += offset;
     self
+  }
+
+  /// Add an applied challenge to the `c` variable on the right-hand side of the constraint
+  /// statement.
+  ///
+  /// Panics if the rhs offset already has a weight specified in this constraint.
+  pub fn rhs_offset_with_challenge(
+    &mut self,
+    challenge: ChallengeReference,
+    applicator: Box<dyn ChallengeApplicator<C>>,
+  ) -> &mut Self {
+    assert!(bool::from(self.c.is_zero()));
+    assert!(self.c_challenge.is_none());
+    self.c_challenge = Some((challenge, applicator));
+    self
+  }
+}
+
+// TODO: Take in a transcript
+fn commitment_challenge<T: Transcript, C: Ciphersuite>(commitment: C::G) -> T::Challenge {
+  let mut transcript = T::new(b"Bulletproofs+ Commitment Challenge");
+  transcript.append_message(b"commitment", commitment.to_bytes());
+  transcript.challenge(b"challenge")
+}
+
+fn embed_challenges<C: Ciphersuite>(
+  WL: &mut Vec<(usize, C::F)>,
+  WR: &mut Vec<(usize, C::F)>,
+  WO: &mut Vec<(usize, C::F)>,
+  challenge_weights: &HashMap<
+    ProductReference,
+    (ChallengeReference, Box<dyn ChallengeApplicator<C>>),
+  >,
+  c: &mut C::F,
+  c_challenge: &Option<(ChallengeReference, Box<dyn ChallengeApplicator<C>>)>,
+  challenges: &[Vec<C::F>],
+) {
+  for (product, (challenge, applicator)) in challenge_weights {
+    let (weights, id) = match product {
+      ProductReference::Left { product: id, variable: _ } => (&mut *WL, id),
+      ProductReference::Right { product: id, variable: _ } => (&mut *WR, id),
+      ProductReference::Output { product: id, variable: _ } => (&mut *WO, id),
+    };
+    weights.push((*id, applicator(&challenges[challenge.0])));
+  }
+
+  if let Some(c_challenge) = c_challenge {
+    *c = c_challenge.1(&challenges[c_challenge.0 .0]);
   }
 }
 
@@ -113,7 +249,7 @@ impl<C: Ciphersuite> Variable<C> {
     match self {
       Variable::Secret(value) => *value,
       // This branch should never be reachable due to usage of CommitmentReference
-      Variable::Committed(_commitment, _) => {
+      Variable::Committed(_commitment) => {
         // commitment.map(|commitment| commitment.value),
         panic!("requested value of commitment");
       }
@@ -139,21 +275,16 @@ pub struct Circuit<'a, T: Transcript, C: Ciphersuite> {
 
   products: Vec<Product>,
   bound_products: Vec<Vec<ProductReference>>,
-  finalized_commitments: HashMap<VectorCommitmentReference, Option<C::F>>,
-  vector_commitments: Option<Vec<C::G>>,
+  finalized_commitments: HashMap<VectorCommitmentReference, Option<(C::F, C::G)>>,
+  challengers: HashMap<ChallengeReference, Box<dyn Challenger<T, C>>>,
 
   constraints: Vec<Constraint<C>>,
   variable_constraints: HashMap<VariableReference, Option<Constraint<C>>>,
+  post_constraints: Vec<(Constraint<C>, Option<C::F>)>,
 }
 
 impl<'a, T: Transcript, C: Ciphersuite> Circuit<'a, T, C> {
-  pub fn new(
-    generators: ProofGenerators<'a, T, C>,
-    prover: bool,
-    vector_commitments: Option<Vec<C::G>>,
-  ) -> Self {
-    assert_eq!(prover, vector_commitments.is_none());
-
+  pub fn new(generators: ProofGenerators<'a, T, C>, prover: bool) -> Self {
     Self {
       generators,
 
@@ -165,10 +296,11 @@ impl<'a, T: Transcript, C: Ciphersuite> Circuit<'a, T, C> {
       products: vec![],
       bound_products: vec![],
       finalized_commitments: HashMap::new(),
-      vector_commitments,
+      challengers: HashMap::new(),
 
       constraints: vec![],
       variable_constraints: HashMap::new(),
+      post_constraints: vec![],
     }
   }
 
@@ -306,22 +438,12 @@ impl<'a, T: Transcript, C: Ciphersuite> Circuit<'a, T, C> {
   }
 
   /// Add an input publicly committed to.
-  pub fn add_committed_input(
-    &mut self,
-    commitment: Option<Commitment<C>>,
-    actual: C::G,
-  ) -> CommitmentReference {
+  pub fn add_committed_input(&mut self, commitment: Option<Commitment<C>>) -> CommitmentReference {
     assert_eq!(self.prover, commitment.is_some());
-    if let Some(commitment) = commitment.clone() {
-      assert_eq!(
-        commitment.calculate(self.generators.g().point(), self.generators.h().point()),
-        actual
-      );
-    }
 
     let res = CommitmentReference(self.commitments);
     self.commitments += 1;
-    self.variables.push(Variable::Committed(commitment, actual));
+    self.variables.push(Variable::Committed(commitment));
     res
   }
 
@@ -350,6 +472,17 @@ impl<'a, T: Transcript, C: Ciphersuite> Circuit<'a, T, C> {
     constraint.weight(a, C::F::ONE);
     constraint.weight(b, -C::F::ONE);
     self.constrain(constraint);
+  }
+
+  pub fn post_constrain_equality(&mut self, a: ProductReference) -> PostValueReference {
+    let res = PostValueReference(self.post_constraints.len());
+    let mut constraint = Constraint::new("post-equality");
+    constraint.weight(a, C::F::ONE);
+    self.post_constraints.push((
+      constraint,
+      if self.prover { Some(self.unchecked_value(self.variable(a))) } else { None },
+    ));
+    res
   }
 
   pub fn equals_constant(&mut self, a: ProductReference, b: C::F) {
@@ -406,71 +539,116 @@ impl<'a, T: Transcript, C: Ciphersuite> Circuit<'a, T, C> {
     &mut self,
     vector_commitment: VectorCommitmentReference,
     blind: Option<C::F>,
-  ) -> C::G {
+  ) -> Option<C::G> {
     if self.prover() {
-      // Calculate and return the vector commitment
-      let products = self.bound_products[vector_commitment.0].clone();
-      let mut terms = Vec::with_capacity(products.len() + 1);
-      terms.push((blind.unwrap(), self.generators.h().point()));
-      for product in products {
-        match product {
-          ProductReference::Left { product, variable } => {
-            terms.push((
-              self.variables[variable].value().unwrap(),
-              self.generators.generator(GeneratorsList::GBold1, product).point(),
-            ));
-          }
-          ProductReference::Right { product, variable } => {
-            terms.push((
-              self.variables[variable].value().unwrap(),
-              self.generators.generator(GeneratorsList::HBold1, product).point(),
-            ));
-          }
-          ProductReference::Output { product, variable } => {
-            terms.push((
-              self.variables[variable].value().unwrap(),
-              self.generators.generator(GeneratorsList::GBold2, product).point(),
-            ));
-          }
-        };
+      if let Some(blind) = blind {
+        // Calculate and return the vector commitment
+        let products = self.bound_products[vector_commitment.0].clone();
+        let mut terms = Vec::with_capacity(products.len() + 1);
+        terms.push((blind, self.generators.h().point()));
+        for product in products {
+          match product {
+            ProductReference::Left { product, variable } => {
+              terms.push((
+                self.variables[variable].value().unwrap(),
+                self.generators.generator(GeneratorsList::GBold1, product).point(),
+              ));
+            }
+            ProductReference::Right { product, variable } => {
+              terms.push((
+                self.variables[variable].value().unwrap(),
+                self.generators.generator(GeneratorsList::HBold1, product).point(),
+              ));
+            }
+            ProductReference::Output { product, variable } => {
+              terms.push((
+                self.variables[variable].value().unwrap(),
+                self.generators.generator(GeneratorsList::GBold2, product).point(),
+              ));
+            }
+          };
+        }
+        let commitment = multiexp(&terms);
+        assert!(self
+          .finalized_commitments
+          .insert(vector_commitment, Some((blind, commitment)))
+          .is_none());
+        terms.zeroize();
+        Some(commitment)
+      } else {
+        assert!(self.finalized_commitments.insert(vector_commitment, None).is_none());
+        None
       }
-      let commitment = multiexp(&terms);
-      terms.zeroize();
-      self.finalized_commitments.insert(vector_commitment, blind);
-      commitment
     } else {
       assert!(blind.is_none());
-      self.finalized_commitments.insert(vector_commitment, None);
-      self.vector_commitments.as_ref().unwrap()[vector_commitment.0]
+      assert!(self.finalized_commitments.insert(vector_commitment, None).is_none());
+      None
+    }
+  }
+
+  /// Obtain a challenge usable mid-circuit via hashing a commitment to some subset of variables.
+  ///
+  /// Takes in a challenger which maps a T::Challenge to a series of C::F challenges.
+  pub fn in_circuit_challenge(
+    &mut self,
+    commitment: VectorCommitmentReference,
+    challenger: Box<dyn Challenger<T, C>>,
+  ) -> (ChallengeReference, Option<Vec<C::F>>) {
+    let challenge_ref = ChallengeReference(commitment.0);
+    assert!(
+      self.challengers.insert(challenge_ref, challenger).is_none(),
+      "challenger already defined for this vector commitment"
+    );
+    if self.prover() {
+      (
+        challenge_ref,
+        Some(challenger(commitment_challenge::<T, C>(
+          self
+            .finalized_commitments
+            .get(&commitment)
+            .expect("vector commitment wasn't finalized")
+            .expect("prover didn't specify vector commitment's blind")
+            .1,
+        ))),
+      )
+    } else {
+      (challenge_ref, None)
     }
   }
 
   // TODO: This can be optimized with post-processing passes
-  // TODO: Don't run this on every single prove/verify. It should only be run once at compile time
   fn compile(
     self,
   ) -> (
-    ArithmeticCircuitStatement<'a, T, C>,
+    ProofGenerators<'a, T, C>,
+    Option<Vec<C::G>>,
+    ScalarMatrix<C>,
+    ScalarMatrix<C>,
+    ScalarMatrix<C>,
+    ScalarMatrix<C>,
+    ScalarVector<C>,
+    HashMap<ChallengeReference, Box<dyn Challenger<T, C>>>,
+    Vec<HashMap<ProductReference, (ChallengeReference, Box<dyn ChallengeApplicator<C>>)>>,
+    Vec<Option<(ChallengeReference, Box<dyn ChallengeApplicator<C>>)>>,
     Vec<Vec<(Option<C::F>, (GeneratorsList, usize))>>,
     Vec<(Option<C::F>, (GeneratorsList, usize))>,
     Option<ArithmeticCircuitWitness<C>>,
   ) {
-    let witness = if self.prover {
+    let (commitments, witness) = if self.prover {
       let mut aL = vec![];
       let mut aR = vec![];
 
+      let mut commitments = vec![];
       let mut v = vec![];
       let mut gamma = vec![];
 
       for variable in &self.variables {
         match variable {
           Variable::Secret(_) => {}
-          Variable::Committed(value, actual) => {
+          Variable::Committed(value) => {
             let value = value.as_ref().unwrap();
-            assert_eq!(
-              value.calculate(self.generators.g().point(), self.generators.h().point()),
-              *actual
-            );
+            commitments
+              .push(value.calculate(self.generators.g().point(), self.generators.h().point()));
             v.push(value.value);
             gamma.push(value.mask);
           }
@@ -482,22 +660,25 @@ impl<'a, T: Transcript, C: Ciphersuite> Circuit<'a, T, C> {
         }
       }
 
-      Some(ArithmeticCircuitWitness::new(
-        ScalarVector(aL),
-        ScalarVector(aR),
-        ScalarVector(v),
-        ScalarVector(gamma),
-      ))
+      (
+        Some(commitments),
+        Some(ArithmeticCircuitWitness::new(
+          ScalarVector(aL),
+          ScalarVector(aR),
+          ScalarVector(v),
+          ScalarVector(gamma),
+        )),
+      )
     } else {
-      None
+      (None, None)
     };
 
-    let mut V = vec![];
+    let mut V_len = 0;
     let mut n = 0;
     for variable in &self.variables {
       match variable {
         Variable::Secret(_) => {}
-        Variable::Committed(_, actual) => V.push(*actual),
+        Variable::Committed(_) => V_len += 1,
         Variable::Product(_, _) => n += 1,
       }
     }
@@ -506,8 +687,10 @@ impl<'a, T: Transcript, C: Ciphersuite> Circuit<'a, T, C> {
     let mut WL = ScalarMatrix::new(n);
     let mut WR = ScalarMatrix::new(n);
     let mut WO = ScalarMatrix::new(n);
-    let mut WV = ScalarMatrix::new(V.len());
-    let mut c = vec![];
+    let mut WV = ScalarMatrix::new(V_len);
+    let mut c = Vec::with_capacity(n);
+    let mut challenge_weights = Vec::with_capacity(n);
+    let mut c_challenges = Vec::with_capacity(n);
 
     for constraint in self.constraints {
       // WL aL WR aR WO aO == WV v + c
@@ -543,7 +726,8 @@ impl<'a, T: Transcript, C: Ciphersuite> Circuit<'a, T, C> {
         this_wv.push(wv);
       }
 
-      if self.prover {
+      if constraint.challenge_weights.is_empty() && constraint.c_challenge.is_none() && self.prover
+      {
         assert_eq!(eval, constraint.c, "faulty constraint: {}", constraint.label);
       }
 
@@ -552,6 +736,21 @@ impl<'a, T: Transcript, C: Ciphersuite> Circuit<'a, T, C> {
       WO.push(this_wo);
       WV.push(this_wv);
       c.push(constraint.c);
+      challenge_weights.push(constraint.challenge_weights);
+      c_challenges.push(constraint.c_challenge);
+    }
+
+    for (constraint, value) in self.post_constraints {
+      WL.push(constraint.WL);
+      WR.push(constraint.WR);
+      WO.push(constraint.WO);
+      assert!(constraint.WV.is_empty());
+      WV.push(vec![]);
+      if self.prover {
+        c.push(value.unwrap());
+      }
+      challenge_weights.push(constraint.challenge_weights);
+      c_challenges.push(constraint.c_challenge);
     }
 
     // The A commitment is g1 aL, g2 aO, h1 aR
@@ -618,15 +817,16 @@ impl<'a, T: Transcript, C: Ciphersuite> Circuit<'a, T, C> {
     );
 
     (
-      ArithmeticCircuitStatement::new(
-        self.generators,
-        PointVector(V),
-        WL,
-        WR,
-        WO,
-        WV,
-        ScalarVector(c),
-      ),
+      self.generators,
+      commitments,
+      WL,
+      WR,
+      WO,
+      WV,
+      ScalarVector(c),
+      self.challengers,
+      challenge_weights,
+      c_challenges,
       vector_commitments,
       others,
       witness,
@@ -637,38 +837,38 @@ impl<'a, T: Transcript, C: Ciphersuite> Circuit<'a, T, C> {
     self,
     rng: &mut R,
     transcript: &mut T,
-  ) -> ArithmeticCircuitProof<C> {
+  ) -> (Vec<C::G>, ArithmeticCircuitProof<C>) {
     assert!(self.prover);
-    let (statement, vector_commitments, _, witness) = self.compile();
+    let (generators, V, WL, WR, WO, WV, c, _, _, _, vector_commitments, _, witness) =
+      self.compile();
+
+    // TODO: Transcript all constraints
+
     assert!(vector_commitments.is_empty());
-    statement.prove(rng, transcript, witness.unwrap())
+    (
+      V.clone().unwrap(),
+      ArithmeticCircuitStatement::new(generators, PointVector(V.unwrap()), WL, WR, WO, WV, c)
+        .prove(rng, transcript, witness.unwrap()),
+    )
   }
 
-  fn vector_commitment_statement<GB: AsRef<[MultiexpPoint<C::G>]>>(
+  fn vector_commitment_statement<GB: Clone + AsRef<[MultiexpPoint<C::G>]>>(
     alt_generators: InnerProductGenerators<'a, T, C, GB>,
     transcript: &mut T,
     commitment: C::G,
   ) -> WipStatement<'a, T, C, GB> {
-    transcript.append_message(b"vector_commitment", commitment.to_bytes());
-
     // TODO: Do we need to transcript more before this? Should we?
     let y = C::hash_to_F(b"vector_commitment_proof", transcript.challenge(b"y").as_ref());
 
     WipStatement::new(alt_generators, commitment, y)
   }
 
-  pub fn verify<R: RngCore + CryptoRng>(
-    self,
-    rng: &mut R,
-    verifier: &mut BatchVerifier<(), C::G>,
-    transcript: &mut T,
-    proof: ArithmeticCircuitProof<C>,
-  ) {
+  pub fn verification_statement(self) -> ArithmeticCircuitWithoutVectorCommitments<'a, T, C> {
     assert!(!self.prover);
-    assert!(self.vector_commitments.as_ref().unwrap().is_empty());
-    let (statement, vector_commitments, _, _) = self.compile();
+    let (proof_generators, _, WL, WR, WO, WV, c, _, _, _, vector_commitments, _, _) =
+      self.compile();
     assert!(vector_commitments.is_empty());
-    statement.verify(rng, verifier, transcript, proof)
+    ArithmeticCircuitWithoutVectorCommitments { proof_generators, WL, WR, WO, WV, c }
   }
 
   // Returns the blinds used, the blinded vector commitments, the proof, and proofs the vector
@@ -678,12 +878,26 @@ impl<'a, T: Transcript, C: Ciphersuite> Circuit<'a, T, C> {
     self,
     rng: &mut R,
     transcript: &mut T,
-  ) -> (Vec<C::F>, Vec<C::G>, ArithmeticCircuitProof<C>, Vec<(WipProof<C>, WipProof<C>)>) {
+  ) -> (Vec<C::G>, Vec<C::F>, Vec<C::G>, ArithmeticCircuitProof<C>, Vec<(WipProof<C>, WipProof<C>)>)
+  {
     assert!(self.prover);
 
     let finalized_commitments = self.finalized_commitments.clone();
-    let proof_generators = self.generators.clone();
-    let (statement, mut vector_commitments, others, witness) = self.compile();
+    let (
+      proof_generators,
+      V,
+      mut WL,
+      mut WR,
+      mut WO,
+      WV,
+      mut c,
+      challengers,
+      challenge_weights,
+      c_challenges,
+      mut vector_commitments,
+      others,
+      witness,
+    ) = self.compile();
     assert!(!vector_commitments.is_empty());
     let witness = witness.unwrap();
 
@@ -724,7 +938,7 @@ impl<'a, T: Transcript, C: Ciphersuite> Circuit<'a, T, C> {
       R: RngCore + CryptoRng,
       C: Ciphersuite,
       T: Transcript,
-      GB: AsRef<[MultiexpPoint<C::G>]>,
+      GB: Clone + AsRef<[MultiexpPoint<C::G>]>,
     >(
       rng: &mut R,
       alt_generators_1: InnerProductGenerators<'a, T, C, GB>,
@@ -749,24 +963,17 @@ impl<'a, T: Transcript, C: Ciphersuite> Circuit<'a, T, C> {
       let b = ScalarVector(vec![C::F::ZERO; scalars.len()]);
       let witness = WipWitness::<C>::new(ScalarVector(scalars), b, blind);
 
+      transcript.append_message(b"vector_commitment", commitment.to_bytes());
       (
         commitment,
         (
           {
-            let statement = Circuit::<T, C>::vector_commitment_statement(
-              alt_generators_1,
-              transcript,
-              commitment,
-            );
-            statement.prove(&mut *rng, transcript, witness.clone())
+            Circuit::<T, C>::vector_commitment_statement(alt_generators_1, transcript, commitment)
+              .prove(&mut *rng, transcript, witness.clone())
           },
           {
-            let statement = Circuit::<T, C>::vector_commitment_statement(
-              alt_generators_2,
-              transcript,
-              commitment,
-            );
-            statement.prove(&mut *rng, transcript, witness)
+            Circuit::<T, C>::vector_commitment_statement(alt_generators_2, transcript, commitment)
+              .prove(&mut *rng, transcript, witness)
           },
         ),
       )
@@ -785,9 +992,8 @@ impl<'a, T: Transcript, C: Ciphersuite> Circuit<'a, T, C> {
       blinds.push(
         finalized_commitments
           .get(&VectorCommitmentReference(vc))
-          .cloned()
-          .unwrap_or(Some(C::F::random(&mut *rng)))
-          .unwrap(),
+          .and_then(|present| present.map(|(blind, _)| blind))
+          .unwrap_or(C::F::random(&mut *rng)),
       );
 
       let vc_generators = proof_generators.vector_commitment_generators(generators);
@@ -803,6 +1009,25 @@ impl<'a, T: Transcript, C: Ciphersuite> Circuit<'a, T, C> {
       proofs.push(proof);
     }
     let vector_commitments = commitments;
+
+    let mut challenges = vec![vec![]; vector_commitments.len()];
+    for (challenge, challenger) in challengers {
+      challenges[challenge.0] =
+        challenger(commitment_challenge::<T, C>(vector_commitments[challenge.0]));
+    }
+    for (i, (challenge_weights, c_challenge)) in
+      challenge_weights.iter().zip(c_challenges.iter()).enumerate()
+    {
+      embed_challenges(
+        &mut WL.data[i],
+        &mut WR.data[i],
+        &mut WO.data[i],
+        challenge_weights,
+        &mut c[i],
+        c_challenge,
+        &challenges,
+      );
+    }
 
     // Push one final WIP proof for all other variables
     let other_commitment;
@@ -827,60 +1052,216 @@ impl<'a, T: Transcript, C: Ciphersuite> Circuit<'a, T, C> {
       proofs.push(proof);
     }
 
-    let proof = statement.prove_with_blind(
-      rng,
-      transcript,
-      witness,
-      blinds.iter().sum::<C::F>() + other_blind,
-    );
+    let proof = ArithmeticCircuitStatement::new(
+      proof_generators,
+      PointVector(V.clone().unwrap()),
+      WL,
+      WR,
+      WO,
+      WV,
+      c,
+    )
+    .prove_with_blind(rng, transcript, witness, blinds.iter().sum::<C::F>() + other_blind);
     debug_assert_eq!(proof.A, vector_commitments.iter().sum::<C::G>() + other_commitment);
 
-    (blinds, vector_commitments, proof, proofs)
+    (V.unwrap(), blinds, vector_commitments, proof, proofs)
   }
 
-  pub fn verify_with_vector_commitments<R: RngCore + CryptoRng>(
+  pub fn verification_statement_with_vector_commitments(
     self,
+  ) -> ArithmeticCircuitWithVectorCommitments<'a, T, C, impl Clone + AsRef<[MultiexpPoint<C::G>]>>
+  {
+    assert!(!self.prover);
+    let (
+      proof_generators,
+      _,
+      WL,
+      WR,
+      WO,
+      WV,
+      c,
+      challengers,
+      challenge_weights,
+      c_challenges,
+      mut vector_commitments_data,
+      mut others,
+      _,
+    ) = self.compile();
+
+    let mut vector_commitment_generators = vec![];
+    for mut data in vector_commitments_data.drain(..) {
+      vector_commitment_generators.push(
+        proof_generators.vector_commitment_generators(data.drain(..).map(|(_, gen)| gen).collect()),
+      );
+    }
+    vector_commitment_generators.push(
+      proof_generators.vector_commitment_generators(others.drain(..).map(|(_, gen)| gen).collect()),
+    );
+
+    ArithmeticCircuitWithVectorCommitments {
+      proof_generators,
+      vector_commitment_generators,
+
+      challengers,
+      WL,
+      WR,
+      WO,
+      WV,
+      c,
+      challenge_weights,
+      c_challenges,
+    }
+  }
+}
+
+pub struct ArithmeticCircuitWithoutVectorCommitments<'a, T: Transcript, C: Ciphersuite> {
+  proof_generators: ProofGenerators<'a, T, C>,
+
+  WL: ScalarMatrix<C>,
+  WR: ScalarMatrix<C>,
+  WO: ScalarMatrix<C>,
+  WV: ScalarMatrix<C>,
+  c: ScalarVector<C>,
+}
+
+impl<'a, T: Transcript, C: Ciphersuite> ArithmeticCircuitWithoutVectorCommitments<'a, T, C> {
+  pub fn verify<R: RngCore + CryptoRng>(
+    &self,
     rng: &mut R,
     verifier: &mut BatchVerifier<(), C::G>,
     transcript: &mut T,
+    commitments: Vec<C::G>,
+    post_values: &[C::F],
+    proof: ArithmeticCircuitProof<C>,
+  ) {
+    let mut c = self.c.clone();
+    assert_eq!(c.len() + post_values.len(), self.WL.length());
+    for post in post_values {
+      c.0.push(*post);
+    }
+
+    ArithmeticCircuitStatement::new(
+      self.proof_generators.clone(),
+      PointVector(commitments),
+      self.WL.clone(),
+      self.WR.clone(),
+      self.WO.clone(),
+      self.WV.clone(),
+      c,
+    )
+    .verify(rng, verifier, transcript, proof)
+  }
+}
+
+pub struct ArithmeticCircuitWithVectorCommitments<
+  'a,
+  T: Transcript,
+  C: Ciphersuite,
+  GB: Clone + AsRef<[MultiexpPoint<C::G>]>,
+> {
+  proof_generators: ProofGenerators<'a, T, C>,
+  vector_commitment_generators:
+    Vec<(InnerProductGenerators<'a, T, C, GB>, InnerProductGenerators<'a, T, C, GB>)>,
+
+  challengers: HashMap<ChallengeReference, Box<dyn Challenger<T, C>>>,
+  WL: ScalarMatrix<C>,
+  WR: ScalarMatrix<C>,
+  WO: ScalarMatrix<C>,
+  WV: ScalarMatrix<C>,
+  c: ScalarVector<C>,
+  challenge_weights:
+    Vec<HashMap<ProductReference, (ChallengeReference, Box<dyn ChallengeApplicator<C>>)>>,
+  c_challenges: Vec<Option<(ChallengeReference, Box<dyn ChallengeApplicator<C>>)>>,
+}
+
+impl<'a, T: Transcript, C: Ciphersuite, GB: Clone + AsRef<[MultiexpPoint<C::G>]>>
+  ArithmeticCircuitWithVectorCommitments<'a, T, C, GB>
+{
+  pub fn verify<R: RngCore + CryptoRng>(
+    &self,
+    rng: &mut R,
+    verifier: &mut BatchVerifier<(), C::G>,
+    transcript: &mut T,
+    commitments: Vec<C::G>,
+    mut vector_commitments: Vec<C::G>,
+    post_values: &[C::F],
     proof: ArithmeticCircuitProof<C>,
     mut vc_proofs: Vec<(WipProof<C>, WipProof<C>)>,
   ) {
-    assert!(!self.prover);
-    let vector_commitments = self.vector_commitments.clone().unwrap();
-    let proof_generators = self.generators.clone();
-    let (statement, mut vector_commitments_data, mut others, _) = self.compile();
-    assert_eq!(vector_commitments.len(), vector_commitments_data.len());
+    let vc_sum = vector_commitments.iter().sum::<C::G>();
+    let mut verify_wip =
+      |wip_generators: &(InnerProductGenerators<_, _, _>, InnerProductGenerators<_, _, _>),
+       commitment: C::G,
+       proofs: (_, _)| {
+        transcript.append_message(b"vector_commitment", commitment.to_bytes());
+        Circuit::vector_commitment_statement(wip_generators.0.clone(), transcript, commitment)
+          .verify(rng, verifier, transcript, proofs.0);
+        Circuit::vector_commitment_statement(wip_generators.1.clone(), transcript, commitment)
+          .verify(rng, verifier, transcript, proofs.1);
+      };
 
-    let mut verify_proofs = |generators: Vec<_>, commitment, proofs: (_, _)| {
-      let vc_generators = proof_generators.vector_commitment_generators(generators);
-      let wip_statement =
-        Self::vector_commitment_statement(vc_generators.0, transcript, commitment);
-      wip_statement.verify(rng, verifier, transcript, proofs.0);
+    // TODO: Make sure this has the expected amount of commitments
 
-      let wip_statement =
-        Self::vector_commitment_statement(vc_generators.1, transcript, commitment);
-      wip_statement.verify(rng, verifier, transcript, proofs.1);
-    };
+    // Make sure this had the expected amount of vector commitments.
+    assert_eq!(vector_commitments.len(), self.vector_commitment_generators.len() - 1);
+    assert_eq!(vc_proofs.len(), self.vector_commitment_generators.len());
 
-    assert_eq!(vector_commitments.len() + 1, vc_proofs.len());
-    for ((commitment, mut data), proofs) in vector_commitments
-      .iter()
-      .zip(vector_commitments_data.drain(..))
-      .zip(vc_proofs.drain(.. (vc_proofs.len() - 1)))
-    {
-      verify_proofs(data.drain(..).map(|(_, gen)| gen).collect(), *commitment, proofs);
+    // Apply the post-values
+    let mut c = self.c.clone();
+    assert_eq!(self.c.len() + post_values.len(), self.WL.length());
+    for post in post_values {
+      c.0.push(*post);
     }
 
+    let mut challenges = vec![vec![]; vector_commitments.len()];
+    for (challenge, challenger) in &self.challengers {
+      challenges[challenge.0] =
+        challenger(commitment_challenge::<T, C>(vector_commitments[challenge.0]));
+    }
+
+    for ((generators, commitment), proofs) in self.vector_commitment_generators
+      [.. self.vector_commitment_generators.len() - 1]
+      .iter()
+      .zip(vector_commitments.drain(..))
+      .zip(vc_proofs.drain(.. (vc_proofs.len() - 1)))
     {
-      assert_eq!(vc_proofs.len(), 1);
-      verify_proofs(
-        others.drain(..).map(|(_, gen)| gen).collect(),
-        proof.A - vector_commitments.iter().sum::<C::G>(),
-        vc_proofs.swap_remove(0),
+      verify_wip(generators, commitment, proofs);
+    }
+    assert_eq!(vc_proofs.len(), 1);
+    verify_wip(
+      self.vector_commitment_generators.last().as_ref().unwrap(),
+      proof.A - vc_sum,
+      vc_proofs.swap_remove(0),
+    );
+
+    let mut WL = self.WL.clone();
+    let mut WR = self.WR.clone();
+    let mut WO = self.WO.clone();
+    let WV = self.WV.clone();
+
+    for (i, (challenge_weights, c_challenge)) in
+      self.challenge_weights.iter().zip(self.c_challenges.iter()).enumerate()
+    {
+      embed_challenges(
+        &mut WL.data[i],
+        &mut WR.data[i],
+        &mut WO.data[i],
+        challenge_weights,
+        &mut c[i],
+        c_challenge,
+        &challenges,
       );
     }
 
-    statement.verify(rng, verifier, transcript, proof);
+    ArithmeticCircuitStatement::new(
+      self.proof_generators.clone(),
+      PointVector(commitments),
+      WL,
+      WR,
+      WO,
+      WV,
+      c,
+    )
+    .verify(rng, verifier, transcript, proof)
   }
 }

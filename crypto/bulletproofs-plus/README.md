@@ -17,8 +17,6 @@ Ed25519, the pasta curves, or tevone.
 Several optimizations are possible, such as:
 
 - Implementation of a proper vector commitment scheme
-- Removal of `Circuit::prove` and `Circuit::verify` for simply `Circuit::compile`
-- Post-processing of gates/constraints in `Circuit::compile`
 - Reduction of the amount of `clone`s
 
 This library uses asserts instead of `Result`. It also has extraneous asserts

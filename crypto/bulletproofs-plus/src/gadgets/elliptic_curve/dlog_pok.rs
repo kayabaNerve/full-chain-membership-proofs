@@ -6,7 +6,7 @@ use transcript::Transcript;
 use ciphersuite::{
   group::{
     ff::{Field, PrimeField},
-    Group, GroupEncoding,
+    Group,
   },
   Ciphersuite,
 };
@@ -64,6 +64,7 @@ use crate::{
   done with just two gates. Arkwork's implementativon uses three gates.
 */
 // TODO: Transcript this
+#[derive(Debug)]
 pub struct DLogTable<C: Ecip>(Vec<C::G>, usize);
 impl<C: Ecip> DLogTable<C> {
   pub fn new(point: C::G) -> DLogTable<C> {
@@ -124,7 +125,7 @@ pub(crate) fn divisor_dlog_pok<
 >(
   rng: &mut R,
   circuit: &mut Circuit<T, C>,
-  G: &DLogTable<C::Embedded>,
+  G: &'static DLogTable<C::Embedded>,
   p: OnCurvePoint,
   dlog: Option<<C::Embedded as Ciphersuite>::F>,
 ) {
@@ -363,67 +364,113 @@ pub(crate) fn divisor_dlog_pok<
   // Create the commitment
   let commitment = circuit.allocate_vector_commitment();
   circuit.bind(commitment, transcript, None);
-  let commitment =
-    circuit.finalize_commitment(commitment, Some(C::F::random(rng)).filter(|_| circuit.prover()));
-
-  let challenge = C::Embedded::hash_to_G("bp+_ecip", commitment.to_bytes().as_ref());
+  circuit.finalize_commitment(commitment, Some(C::F::random(rng)).filter(|_| circuit.prover()));
 
   // Evaluate the divisor over the challenge, and over -challenge
-  let (challenge_x, challenge_y) = C::Embedded::to_xy(challenge);
+  let (challenge, challenge_xy) = circuit.in_circuit_challenge(
+    commitment,
+    Box::new(move |challenge| {
+      let point = C::Embedded::to_xy(C::Embedded::hash_to_G("bp+_ecip", challenge.as_ref()));
 
-  // Create the powers of x
-  // This debug assert makes sure we don't need to use a max statement
-  // While we could remove it for a max statement, this not holding means some significant
-  // structural changes to the polynomial occured, which are assumed abnormal
-  debug_assert!(x_coeffs > yx_coeffs, "yx_coeffs had more terms than x_coeffs");
-  let mut x_pows = vec![challenge_x];
-  while x_pows.len() < x_coeffs {
-    x_pows.push(*x_pows.last().unwrap() * challenge_x);
-  }
+      // Create the powers of x
+
+      // This debug assert makes sure we don't need to use a max statement
+      // While we could remove it for a max statement, this not holding means some significant
+      // structural changes to the polynomial occured, which are assumed abnormal
+      debug_assert!(x_coeffs > yx_coeffs, "yx_coeffs had more terms than x_coeffs");
+
+      let mut res = Vec::with_capacity(x_coeffs + 1);
+      res.push(point.0);
+      while res.len() < x_coeffs {
+        res.push(*res.last().unwrap() * point.0);
+      }
+
+      // Also push the y coordinate
+      res.push(point.1);
+      res
+    }),
+  );
 
   let mut lhs_constraint = Constraint::new("ecip_lhs");
   lhs_constraint.weight(zero_coefficient, C::F::ONE);
+
+  let mut neg_lhs_constraint = lhs_constraint.clone();
 
   // Perform the x_coeffs
   let mut x_res = vec![];
   for i in 0 .. x_coeffs {
     // Because these x coefficients are minus 1, the left hand side will be short 1 x_pows[i]
-    lhs_constraint.weight(x_coefficients_sub_one[i], x_pows[i]);
-    // Adjust the right hand side accordingly
-    lhs_constraint.rhs_offset(-x_pows[i]);
+    lhs_constraint.weight_with_challenge(
+      x_coefficients_sub_one[i],
+      challenge,
+      Box::new(move |x_pows_y| x_pows_y[i]),
+    );
+    neg_lhs_constraint.weight_with_challenge(
+      x_coefficients_sub_one[i],
+      challenge,
+      Box::new(move |x_pows_y| x_pows_y[i]),
+    );
 
     x_res.push(if circuit.prover() {
       Some(
         (circuit.unchecked_value(circuit.variable(x_coefficients_sub_one[i])) + C::F::ONE) *
-          x_pows[i],
+          challenge_xy.as_ref().unwrap()[i],
       )
     } else {
       None
     });
   }
 
+  // Adjust the right hand side accordingly
+  lhs_constraint.rhs_offset_with_challenge(
+    challenge,
+    Box::new(move |x_pows_y: &[C::F]| -(x_pows_y[.. (x_pows_y.len() - 1)].iter().sum::<C::F>())),
+  );
+  neg_lhs_constraint.rhs_offset_with_challenge(
+    challenge,
+    Box::new(move |x_pows_y: &[C::F]| -(x_pows_y[.. (x_pows_y.len() - 1)].iter().sum::<C::F>())),
+  );
+
   // Perform the yx_coeffs
-  let mut neg_lhs_constraint = lhs_constraint.clone();
   let mut yx_res = vec![];
   for i in 0 .. yx_coeffs {
-    let yx = challenge_y * x_pows[i];
-    lhs_constraint.weight(yx_coefficients[i], yx);
-    neg_lhs_constraint.weight(yx_coefficients[i], -yx);
+    lhs_constraint.weight_with_challenge(
+      yx_coefficients[i],
+      challenge,
+      Box::new(move |x_pows_y| x_pows_y[i] * x_pows_y.last().unwrap()),
+    );
+    neg_lhs_constraint.weight_with_challenge(
+      yx_coefficients[i],
+      challenge,
+      Box::new(move |x_pows_y: &[C::F]| -(x_pows_y[i] * x_pows_y.last().unwrap())),
+    );
     yx_res.push(if circuit.prover() {
-      Some(yx * circuit.unchecked_value(circuit.variable(yx_coefficients[i])))
+      Some(
+        (*challenge_xy.as_ref().unwrap().last().unwrap() * challenge_xy.as_ref().unwrap()[i]) *
+          circuit.unchecked_value(circuit.variable(yx_coefficients[i])),
+      )
     } else {
       None
     });
   }
 
-  lhs_constraint.weight(y_coefficient, challenge_y);
-  neg_lhs_constraint.weight(y_coefficient, -challenge_y);
+  lhs_constraint.weight_with_challenge(
+    y_coefficient,
+    challenge,
+    Box::new(move |x_pows_y| *x_pows_y.last().unwrap()),
+  );
+  neg_lhs_constraint.weight_with_challenge(
+    y_coefficient,
+    challenge,
+    Box::new(move |x_pows_y: &[C::F]| -*x_pows_y.last().unwrap()),
+  );
 
   let (lhs, neg_lhs) = if circuit.prover() {
     let common = circuit.unchecked_value(circuit.variable(zero_coefficient)) +
       x_res.drain(..).map(Option::unwrap).sum::<C::F>();
     let yx = yx_res.drain(..).map(Option::unwrap).sum::<C::F>();
-    let y = circuit.unchecked_value(circuit.variable(y_coefficient)) * challenge_y;
+    let y = circuit.unchecked_value(circuit.variable(y_coefficient)) *
+      challenge_xy.as_ref().unwrap().last().unwrap();
     (Some(common + yx + y), Some(common - yx - y))
   } else {
     (None, None)
@@ -448,7 +495,35 @@ pub(crate) fn divisor_dlog_pok<
   // GC: 1 per point
   let mut accum = None;
   for (bit, G) in dlog.iter().zip(G.0.iter()).take(points - 1) {
-    let this_rhs = bit.select_constant(circuit, C::F::ONE, challenge_x - C::Embedded::to_xy(*G).0);
+    // let this_rhs =
+    //   bit.select_constant(circuit, C::F::ONE, challenge_x - C::Embedded::to_xy(*G).0);
+    // Inlined due to the usage of a challenge
+    let this_rhs = {
+      let if_false = C::F::ONE;
+
+      let chosen = Some(()).filter(|_| circuit.prover()).map(|_| {
+        C::F::conditional_select(
+          &if_false,
+          &(challenge_xy.as_ref().unwrap()[0] - C::Embedded::to_xy(*G).0),
+          bit.value.unwrap(),
+        )
+      });
+
+      let chosen = circuit.add_secret_input(chosen);
+
+      // Constrain chosen = (if_true * bit) + (-if_false * minus_one)
+      let mut chosen_constraint = Constraint::new("chosen");
+      chosen_constraint.weight_with_challenge(
+        circuit.variable_to_product(bit.variable).unwrap(),
+        challenge,
+        Box::new(move |x_pows_y| x_pows_y[0] - C::Embedded::to_xy(*G).0),
+      );
+      chosen_constraint.weight(circuit.variable_to_product(bit.minus_one).unwrap(), -if_false);
+      circuit.set_variable_constraint(chosen, chosen_constraint);
+
+      chosen
+    };
+
     if let Some(accum_var) = accum {
       accum = Some(circuit.product(accum_var, this_rhs).1);
     } else {
@@ -458,7 +533,7 @@ pub(crate) fn divisor_dlog_pok<
 
   // Include the point the prover is claiming to know the DLog for
   let challenge_x_sub_x = circuit.add_secret_input(if circuit.prover() {
-    Some(challenge_x - circuit.unchecked_value(p.x))
+    Some(challenge_xy.as_ref().unwrap()[0] - circuit.unchecked_value(p.x))
   } else {
     None
   });
@@ -470,7 +545,7 @@ pub(crate) fn divisor_dlog_pok<
     C::F::ONE,
   );
   constraint.weight(challenge_x_sub_x, C::F::ONE);
-  constraint.rhs_offset(challenge_x);
+  constraint.rhs_offset_with_challenge(challenge, Box::new(move |x_pows_y| x_pows_y[0]));
   circuit.constrain(constraint);
 
   circuit.constrain_equality(lhs, rhs);

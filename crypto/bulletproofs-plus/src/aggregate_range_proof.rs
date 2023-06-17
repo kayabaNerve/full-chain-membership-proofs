@@ -97,7 +97,7 @@ impl<'a, T: Transcript, C: Ciphersuite> AggregateRangeStatement<'a, T, C> {
     ScalarVector(d_j)
   }
 
-  fn compute_A_hat<GB: AsRef<[MultiexpPoint<C::G>]>>(
+  fn compute_A_hat<GB: Clone + AsRef<[MultiexpPoint<C::G>]>>(
     V: &PointVector<C>,
     generators: &InnerProductGenerators<'a, T, C, GB>,
     transcript: &mut T,

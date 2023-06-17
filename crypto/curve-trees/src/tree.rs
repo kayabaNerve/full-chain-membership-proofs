@@ -11,7 +11,7 @@ use ciphersuite::{
 };
 
 use ecip::Ecip;
-use bulletproofs_plus::{VectorCommitmentGenerators, Generators};
+use bulletproofs_plus::{VectorCommitmentGenerators, Generators, gadgets::elliptic_curve::DLogTable};
 
 use crate::{CurveCycle, permissible::Permissible};
 
@@ -44,6 +44,9 @@ pub struct Tree<T: Transcript, C: CurveCycle>
 where
   T::Challenge: Debug,
 {
+  pub(crate) dlog_table1: &'static DLogTable<C::C1>,
+  pub(crate) dlog_table2: &'static DLogTable<C::C2>,
+
   permissible_c1: Permissible<C::C1>,
   permissible_c2: Permissible<C::C2>,
   leaf_randomness: <C::C1 as Ciphersuite>::G,
@@ -113,8 +116,10 @@ where
     transcript.domain_separate(b"parameters");
     transcript.append_message(b"permissible_c1_alpha", permissible_c1.alpha.to_repr());
     transcript.append_message(b"permissible_c1_beta", permissible_c1.beta.to_repr());
+    transcript.append_message(b"permissible_c1_h", permissible_c1.h.to_bytes());
     transcript.append_message(b"permissible_c2_alpha", permissible_c2.alpha.to_repr());
     transcript.append_message(b"permissible_c2_beta", permissible_c2.beta.to_repr());
+    transcript.append_message(b"permissible_c2_h", permissible_c2.h.to_bytes());
     transcript.append_message(b"leaf_randomness", leaf_randomness.to_bytes());
     transcript.append_message(b"width", width_u64.to_le_bytes());
 
@@ -154,6 +159,9 @@ where
     }
 
     Tree {
+      dlog_table1: Box::leak(Box::new(DLogTable::new(permissible_c1.h))),
+      dlog_table2: Box::leak(Box::new(DLogTable::new(permissible_c2.h))),
+
       permissible_c1,
       permissible_c2,
       leaf_randomness,

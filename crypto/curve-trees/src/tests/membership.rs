@@ -4,7 +4,7 @@ use transcript::{Transcript, RecommendedTranscript};
 
 use multiexp::BatchVerifier;
 use ciphersuite::{
-  group::{ff::Field, Group},
+  group::{ff::Field, Group, GroupEncoding},
   Ciphersuite, Pallas, Vesta,
 };
 
@@ -15,7 +15,11 @@ use bulletproofs_plus::{
 };
 
 use crate::{
-  CurveCycle, permissible::Permissible, tree::Tree, tests::Pasta, new_blind, membership_gadget,
+  CurveCycle,
+  permissible::Permissible,
+  tree::{Hash, Tree},
+  tests::Pasta,
+  new_blind, membership_gadget,
 };
 
 #[test]
@@ -81,7 +85,7 @@ fn test_membership() {
         circuit_c1,
         circuit_c2,
         &tree,
-        blinded_point,
+        Some(blinded_point).filter(|_| circuit_c1.prover()),
         Some(blind_c1).filter(|_| circuit_c1.prover()),
       );
     };
@@ -90,31 +94,88 @@ fn test_membership() {
 
     // Prove
     let mut prove_transcript = transcript.clone();
-    let mut circuit_c1 = Circuit::new(pallas_generators.per_proof(), true, None);
-    let mut circuit_c2 = Circuit::new(vesta_generators.per_proof(), true, None);
+    let mut circuit_c1 = Circuit::new(pallas_generators.per_proof(), true);
+    let mut circuit_c2 = Circuit::new(vesta_generators.per_proof(), true);
     gadget(&mut prove_transcript, &mut circuit_c1, &mut circuit_c2);
-    let (_, pallas_commitments, pallas_proof, pallas_proofs) =
+
+    // Opportunity to transcript anything else relevant
+    prove_transcript.append_message(b"blinded_point", blinded_point.to_bytes());
+    prove_transcript.append_message(
+      b"tree_root",
+      match tree.root() {
+        Hash::Even(even) => even.to_bytes(),
+        Hash::Odd(odd) => odd.to_bytes(),
+      },
+    );
+
+    let (pallas_commitments, _, pallas_vector_commitments, pallas_proof, pallas_proofs) =
       circuit_c1.prove_with_vector_commitments(&mut OsRng, &mut prove_transcript);
-    let (_, vesta_commitments, vesta_proof, vesta_proofs) =
+    let (vesta_commitments, _, vesta_vector_commitments, vesta_proof, vesta_proofs) =
       circuit_c2.prove_with_vector_commitments(&mut OsRng, &mut prove_transcript);
 
     // Verify
-    let mut circuit_c1 =
-      Circuit::new(pallas_generators.per_proof(), false, Some(pallas_commitments));
-    let mut circuit_c2 = Circuit::new(vesta_generators.per_proof(), false, Some(vesta_commitments));
+    let mut circuit_c1 = Circuit::new(pallas_generators.per_proof(), false);
+    let mut circuit_c2 = Circuit::new(vesta_generators.per_proof(), false);
     gadget(&mut transcript, &mut circuit_c1, &mut circuit_c2);
 
-    circuit_c1.verify_with_vector_commitments(
+    transcript.append_message(b"blinded_point", blinded_point.to_bytes());
+    transcript.append_message(
+      b"tree_root",
+      match tree.root() {
+        Hash::Even(even) => even.to_bytes(),
+        Hash::Odd(odd) => odd.to_bytes(),
+      },
+    );
+
+    // We need to arrange the points as post-vars
+    let mut c1_additional = vec![];
+    for (i, commitment) in vesta_vector_commitments.iter().enumerate() {
+      if (i % 2) != 1 {
+        continue;
+      }
+      let coords = Pasta::c2_coords(*commitment);
+      c1_additional.push(coords.0);
+      c1_additional.push(coords.1);
+    }
+    let blinded_point_coords = Pasta::c1_coords(blinded_point);
+    let mut c2_additional = vec![blinded_point_coords.0, blinded_point_coords.1];
+    for (i, commitment) in pallas_vector_commitments.iter().enumerate() {
+      if (i % 2) != 1 {
+        continue;
+      }
+      let coords = Pasta::c1_coords(*commitment);
+      c2_additional.push(coords.0);
+      c2_additional.push(coords.1);
+    }
+
+    // The caller must check the tree root aligns
+    if (tree.depth() % 2) == 1 {
+      assert_eq!(Hash::Odd(*vesta_vector_commitments.last().unwrap()), tree.root());
+      c1_additional.pop();
+      c1_additional.pop();
+    } else {
+      assert_eq!(Hash::Even(*pallas_vector_commitments.last().unwrap()), tree.root());
+      c2_additional.pop();
+      c2_additional.pop();
+    }
+
+    circuit_c1.verification_statement_with_vector_commitments().verify(
       &mut OsRng,
       &mut verifier_c1,
       &mut transcript,
+      pallas_commitments,
+      pallas_vector_commitments,
+      &c1_additional,
       pallas_proof,
       pallas_proofs,
     );
-    circuit_c2.verify_with_vector_commitments(
+    circuit_c2.verification_statement_with_vector_commitments().verify(
       &mut OsRng,
       &mut verifier_c2,
       &mut transcript,
+      vesta_commitments,
+      vesta_vector_commitments,
+      &c2_additional,
       vesta_proof,
       vesta_proofs,
     );

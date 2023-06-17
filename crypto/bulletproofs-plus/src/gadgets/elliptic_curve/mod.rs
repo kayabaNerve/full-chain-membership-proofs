@@ -252,7 +252,7 @@ pub trait EmbeddedCurveOperations: Ciphersuite {
   fn dlog_pok<R: RngCore + CryptoRng, T: Transcript>(
     rng: &mut R,
     circuit: &mut Circuit<T, Self>,
-    G: &DLogTable<Self::Embedded>,
+    G: &'static DLogTable<Self::Embedded>,
     p: OnCurvePoint,
     dlog: Option<<Self::Embedded as Ciphersuite>::F>,
   ) {

@@ -141,7 +141,7 @@ pub struct InnerProductGenerators<
   'a,
   T: Transcript,
   C: Ciphersuite,
-  GB: AsRef<[MultiexpPoint<C::G>]>,
+  GB: Clone + AsRef<[MultiexpPoint<C::G>]>,
 > {
   g: &'a MultiexpPoint<C::G>,
   h: &'a MultiexpPoint<C::G>,
@@ -464,7 +464,7 @@ impl<'a, T: Transcript, C: Ciphersuite> ProofGenerators<'a, T, C> {
   }
 }
 
-impl<'a, T: Transcript, C: Ciphersuite, GB: AsRef<[MultiexpPoint<C::G>]>>
+impl<'a, T: Transcript, C: Ciphersuite, GB: Clone + AsRef<[MultiexpPoint<C::G>]>>
   InnerProductGenerators<'a, T, C, GB>
 {
   pub(crate) fn len(&self) -> usize {

@@ -24,14 +24,15 @@ enum P<C: Ciphersuite> {
 
 // Figure 1
 #[derive(Clone, Debug)]
-pub struct WipStatement<'a, T: Transcript, C: Ciphersuite, GB: AsRef<[MultiexpPoint<C::G>]>> {
+pub struct WipStatement<'a, T: Transcript, C: Ciphersuite, GB: Clone + AsRef<[MultiexpPoint<C::G>]>>
+{
   generators: InnerProductGenerators<'a, T, C, GB>,
   P: P<C>,
   y: ScalarVector<C>,
   inv_y: Option<Vec<C::F>>,
 }
 
-impl<'a, T: Transcript, C: Ciphersuite, GB: AsRef<[MultiexpPoint<C::G>]>> Zeroize
+impl<'a, T: Transcript, C: Ciphersuite, GB: Clone + AsRef<[MultiexpPoint<C::G>]>> Zeroize
   for WipStatement<'a, T, C, GB>
 {
   fn zeroize(&mut self) {
@@ -73,7 +74,7 @@ pub struct WipProof<C: Ciphersuite> {
   delta_answer: C::F,
 }
 
-impl<'a, T: Transcript, C: Ciphersuite, GB: AsRef<[MultiexpPoint<C::G>]>>
+impl<'a, T: Transcript, C: Ciphersuite, GB: Clone + AsRef<[MultiexpPoint<C::G>]>>
   WipStatement<'a, T, C, GB>
 {
   pub fn new(generators: InnerProductGenerators<'a, T, C, GB>, P: C::G, y: C::F) -> Self {

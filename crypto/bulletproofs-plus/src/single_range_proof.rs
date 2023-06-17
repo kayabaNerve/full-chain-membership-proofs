@@ -74,7 +74,7 @@ impl<'a, T: Transcript, C: Ciphersuite> SingleRangeStatement<'a, T, C> {
     (y, z)
   }
 
-  fn A_hat<GB: AsRef<[MultiexpPoint<C::G>]>>(
+  fn A_hat<GB: Clone + AsRef<[MultiexpPoint<C::G>]>>(
     transcript: &mut T,
     generators: &InnerProductGenerators<'a, T, C, GB>,
     V: C::G,
