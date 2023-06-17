@@ -11,7 +11,7 @@ use ciphersuite::{
 };
 
 use crate::{
-  ScalarVector, ScalarMatrix, PointVector, GeneratorsList, ProofGenerators,
+  ScalarVector, ScalarMatrix, PointVector, GeneratorsList, ProofGenerators, padded_pow_of_2,
   weighted_inner_product::{WipStatement, WipWitness, WipProof},
   weighted_inner_product,
 };
@@ -50,13 +50,19 @@ pub struct ArithmeticCircuitWitness<C: Ciphersuite> {
 
 impl<C: Ciphersuite> ArithmeticCircuitWitness<C> {
   pub fn new(
-    aL: ScalarVector<C>,
-    aR: ScalarVector<C>,
+    mut aL: ScalarVector<C>,
+    mut aR: ScalarVector<C>,
     v: ScalarVector<C>,
     gamma: ScalarVector<C>,
   ) -> Self {
     assert_eq!(aL.len(), aR.len());
     assert_eq!(v.len(), gamma.len());
+
+    let pow_2 = padded_pow_of_2(aL.len());
+    while aL.len() < pow_2 {
+      aL.0.push(C::F::ZERO);
+      aR.0.push(C::F::ZERO);
+    }
 
     let aO = aL.mul_vec(&aR);
     ArithmeticCircuitWitness { aL, aR, aO, v, gamma }
@@ -196,13 +202,7 @@ impl<'a, T: Transcript, C: Ciphersuite> ArithmeticCircuitStatement<'a, T, C> {
       self.generators.g().clone(),
     ));
 
-    // We need (n_hat * 2) inv_y_ns, where n_hat = n ceildiv 2
-    let mut inv_y_n = inv_y_n.0;
-    if (inv_y_n.len() % 2) == 1 {
-      inv_y_n.push(inv_y_n[0] * inv_y_n.last().unwrap());
-    }
-
-    (y_n, inv_y_n, z_q_WV, WL_y_z, WR_y_z, WO_y_z, A_terms)
+    (y_n, inv_y_n.0, z_q_WV, WL_y_z, WR_y_z, WO_y_z, A_terms)
   }
 
   pub fn prove_with_blind<R: RngCore + CryptoRng>(

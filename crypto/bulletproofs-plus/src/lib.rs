@@ -33,6 +33,14 @@ pub mod tests;
 
 pub const RANGE_PROOF_BITS: usize = 64;
 
+pub fn padded_pow_of_2(i: usize) -> usize {
+  let mut next_pow_of_2 = 1;
+  while next_pow_of_2 < i {
+    next_pow_of_2 <<= 1;
+  }
+  next_pow_of_2
+}
+
 // TODO: Table these
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct VectorCommitmentGenerators<T: Transcript, C: Ciphersuite> {
@@ -169,6 +177,8 @@ impl<T: Transcript, C: Ciphersuite> Generators<T, C> {
     assert_eq!(h_bold1.len(), h_bold2.len());
     assert_eq!(g_bold1.len(), h_bold1.len());
 
+    assert_eq!(padded_pow_of_2(g_bold1.len()), g_bold1.len(), "generators must be a pow of 2");
+
     let mut transcript = T::new(b"Bulletproofs+ Generators");
 
     transcript.domain_separate(b"generators");
@@ -229,6 +239,8 @@ impl<T: Transcript, C: Ciphersuite> Generators<T, C> {
     mut h_bold1: (Vec<C::G>, Vec<C::G>),
   ) {
     assert!(self.proving_gs.is_none());
+
+    assert_eq!(h_bold1.0.len(), h_bold1.1.len());
 
     self.transcript.domain_separate(b"vector_commitment_proving_generators");
 
@@ -385,12 +397,22 @@ impl<'a, T: Transcript, C: Ciphersuite> ProofGenerators<'a, T, C> {
         .append_message(b"vector_commitment_generator", u32::try_from(i).unwrap().to_le_bytes());
     }
 
+    let pow_2 = padded_pow_of_2(g_bold1.len());
+    let needed_for_pow_2 = pow_2 - g_bold1.len();
+    assert!(h_bold0.len() >= (pow_2 + needed_for_pow_2));
+    let mut g_bold1_0 = g_bold1.clone();
+    let mut g_bold1_1 = g_bold1;
+    for i in 0 .. needed_for_pow_2 {
+      g_bold1_0.push(h_bold0[i].clone());
+      g_bold1_1.push(h_bold1[i].clone());
+    }
+
     let mut generators_0 = InnerProductGenerators {
       g: &gs.0,
       h: self.h,
 
-      g_bold1: g_bold1.clone(),
-      h_bold1: &h_bold0[.. g_bold1.len()],
+      g_bold1: g_bold1_0,
+      h_bold1: &h_bold0[needed_for_pow_2 .. (pow_2 + needed_for_pow_2)],
       g_bold2: &[],
       h_bold2: &[],
       replaced: HashMap::new(),
@@ -399,13 +421,12 @@ impl<'a, T: Transcript, C: Ciphersuite> ProofGenerators<'a, T, C> {
     };
     generators_0.transcript.append_message(b"generators", "0");
 
-    let g_bold1_len = g_bold1.len();
     let mut generators_1 = InnerProductGenerators {
       g: &gs.1,
       h: self.h,
 
-      g_bold1,
-      h_bold1: &h_bold1[.. g_bold1_len],
+      g_bold1: g_bold1_1,
+      h_bold1: &h_bold1[needed_for_pow_2 .. (pow_2 + needed_for_pow_2)],
       g_bold2: &[],
       h_bold2: &[],
       replaced: HashMap::new(),
@@ -422,6 +443,10 @@ impl<'a, T: Transcript, C: Ciphersuite> ProofGenerators<'a, T, C> {
     generators: usize,
     with_secondaries: bool,
   ) -> InnerProductGenerators<'a, T, C, &'a [MultiexpPoint<C::G>]> {
+    // Round to the nearest power of 2
+    let generators = padded_pow_of_2(generators);
+    assert!(generators <= self.g_bold1.len());
+
     self.g_bold1 = &self.g_bold1[.. generators];
     self.g_bold2 = &self.g_bold2[.. generators];
     self.h_bold1 = &self.h_bold1[.. generators];

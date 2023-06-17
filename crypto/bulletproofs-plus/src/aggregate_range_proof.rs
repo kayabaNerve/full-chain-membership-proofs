@@ -107,7 +107,6 @@ impl<'a, T: Transcript, C: Ciphersuite> AggregateRangeStatement<'a, T, C> {
     let (y, z) = Self::transcript_A(transcript, A);
 
     let mn = V.len() * N;
-    assert_eq!(generators.len(), mn);
 
     let mut z_pow = Vec::with_capacity(V.len());
 

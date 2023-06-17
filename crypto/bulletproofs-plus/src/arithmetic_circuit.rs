@@ -14,6 +14,7 @@ use ciphersuite::{
 use crate::{
   ScalarVector, ScalarMatrix, PointVector, VectorCommitmentGenerators, GeneratorsList,
   ProofGenerators, InnerProductGenerators, weighted_inner_product::*, arithmetic_circuit_proof,
+  padded_pow_of_2,
 };
 pub use arithmetic_circuit_proof::*;
 
@@ -595,11 +596,7 @@ impl<'a, T: Transcript, C: Ciphersuite> Circuit<'a, T, C> {
     challenger: Box<dyn Challenger<T, C>>,
   ) -> (ChallengeReference, Option<Vec<C::F>>) {
     let challenge_ref = ChallengeReference(commitment.0);
-    assert!(
-      self.challengers.insert(challenge_ref, challenger).is_none(),
-      "challenger already defined for this vector commitment"
-    );
-    if self.prover() {
+    let res = if self.prover() {
       (
         challenge_ref,
         Some(challenger(commitment_challenge::<T, C>(
@@ -613,7 +610,12 @@ impl<'a, T: Transcript, C: Ciphersuite> Circuit<'a, T, C> {
       )
     } else {
       (challenge_ref, None)
-    }
+    };
+    assert!(
+      self.challengers.insert(challenge_ref, challenger).is_none(),
+      "challenger already defined for this vector commitment"
+    );
+    res
   }
 
   // TODO: This can be optimized with post-processing passes
@@ -682,6 +684,10 @@ impl<'a, T: Transcript, C: Ciphersuite> Circuit<'a, T, C> {
         Variable::Product(_, _) => n += 1,
       }
     }
+
+    // Since the WIP requires a power of 2 length list, the gates will be padded to a power of 2
+    // Acknowledge this before we proceed to build matrixes
+    let n = padded_pow_of_2(n);
 
     // WL, WR, WO, WV, c
     let mut WL = ScalarMatrix::new(n);
@@ -947,8 +953,6 @@ impl<'a, T: Transcript, C: Ciphersuite> Circuit<'a, T, C> {
       scalars: Vec<C::F>,
       blind: C::F,
     ) -> (C::G, (WipProof<C>, WipProof<C>)) {
-      assert_eq!(alt_generators_1.len(), scalars.len());
-
       let commitment = {
         let mut terms = Vec::with_capacity(1 + scalars.len());
         terms.push((blind, alt_generators_1.h().point()));
@@ -1262,6 +1266,6 @@ impl<'a, T: Transcript, C: Ciphersuite, GB: Clone + AsRef<[MultiexpPoint<C::G>]>
       WV,
       c,
     )
-    .verify(rng, verifier, transcript, proof)
+    .verify(rng, verifier, transcript, proof);
   }
 }

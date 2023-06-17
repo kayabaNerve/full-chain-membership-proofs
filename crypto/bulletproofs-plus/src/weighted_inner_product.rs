@@ -13,8 +13,10 @@ use ciphersuite::{
   Ciphersuite,
 };
 
-#[rustfmt::skip]
-use crate::{ScalarVector, PointVector, GeneratorsList, InnerProductGenerators, weighted_inner_product};
+use crate::{
+  ScalarVector, PointVector, GeneratorsList, InnerProductGenerators, padded_pow_of_2,
+  weighted_inner_product,
+};
 
 #[derive(Clone, PartialEq, Eq, Debug, Zeroize)]
 enum P<C: Ciphersuite> {
@@ -50,9 +52,19 @@ pub struct WipWitness<C: Ciphersuite> {
 }
 
 impl<C: Ciphersuite> WipWitness<C> {
-  pub fn new(a: ScalarVector<C>, b: ScalarVector<C>, alpha: C::F) -> Self {
+  pub fn new(mut a: ScalarVector<C>, mut b: ScalarVector<C>, alpha: C::F) -> Self {
     assert!(!a.0.is_empty());
     assert_eq!(a.len(), b.len());
+
+    // Pad to the nearest power of 2
+    let missing = padded_pow_of_2(a.len()) - a.len();
+    a.0.reserve(missing);
+    b.0.reserve(missing);
+    for _ in 0 .. missing {
+      a.0.push(C::F::ZERO);
+      b.0.push(C::F::ZERO);
+    }
+
     Self { a, b, alpha }
   }
 }
@@ -78,6 +90,8 @@ impl<'a, T: Transcript, C: Ciphersuite, GB: Clone + AsRef<[MultiexpPoint<C::G>]>
   WipStatement<'a, T, C, GB>
 {
   pub fn new(generators: InnerProductGenerators<'a, T, C, GB>, P: C::G, y: C::F) -> Self {
+    debug_assert_eq!(generators.len(), padded_pow_of_2(generators.len()));
+
     // y ** n
     let mut y_vec = ScalarVector::new(generators.len());
     y_vec[0] = y;
@@ -91,9 +105,29 @@ impl<'a, T: Transcript, C: Ciphersuite, GB: Clone + AsRef<[MultiexpPoint<C::G>]>
   pub(crate) fn new_without_P_transcript(
     generators: InnerProductGenerators<'a, T, C, GB>,
     P: Vec<(C::F, MultiexpPoint<C::G>)>,
-    y_n: ScalarVector<C>,
-    inv_y_n: Vec<C::F>,
+    mut y_n: ScalarVector<C>,
+    mut inv_y_n: Vec<C::F>,
   ) -> Self {
+    debug_assert_eq!(generators.len(), padded_pow_of_2(generators.len()));
+
+    y_n.0.reserve(generators.len() - y_n.len());
+    inv_y_n.reserve(generators.len() - inv_y_n.len());
+    while y_n.len() < generators.len() {
+      y_n.0.push(y_n[0] * y_n.0.last().unwrap());
+      inv_y_n.push(inv_y_n[0] * inv_y_n.last().unwrap());
+    }
+
+    debug_assert_eq!(
+      Self::new(
+        generators.clone(),
+        multiexp(&P.iter().map(|P| (P.0, P.1.point())).collect::<Vec<_>>()),
+        y_n[0]
+      )
+      .y,
+      y_n
+    );
+    debug_assert_eq!(y_n.0.last().unwrap().invert().unwrap(), *inv_y_n.last().unwrap());
+
     Self { generators, P: P::Terms(P), y: y_n, inv_y: Some(inv_y_n) }
   }
 
@@ -180,12 +214,6 @@ impl<'a, T: Transcript, C: Ciphersuite, GB: Clone + AsRef<[MultiexpPoint<C::G>]>
     y_inv_n_hat: C::F,
   ) {
     assert_eq!(g_bold.positions.len(), h_bold.positions.len());
-    if (g_bold.positions.len() % 2) == 1 {
-      g_bold.positions.push(vec![]);
-    }
-    if (h_bold.positions.len() % 2) == 1 {
-      h_bold.positions.push(vec![]);
-    }
 
     let e = Self::transcript_L_R(transcript, L, R);
     // TODO: Create all e challenges, then use a batch inversion
@@ -393,7 +421,7 @@ impl<'a, T: Transcript, C: Ciphersuite, GB: Clone + AsRef<[MultiexpPoint<C::G>]>
     let (g, h) = (generators.g().clone(), generators.h().clone());
 
     let mut tracked_g_bold = TrackedScalarVector::<C> {
-      raw: vec![C::F::ONE; generators.len() + (generators.len() % 2)],
+      raw: vec![C::F::ONE; generators.len()],
       positions: (0 .. generators.len()).map(|i| vec![i]).collect(),
     };
     let mut tracked_h_bold = tracked_g_bold.clone();
@@ -406,6 +434,7 @@ impl<'a, T: Transcript, C: Ciphersuite, GB: Clone + AsRef<[MultiexpPoint<C::G>]>
       }
       assert_eq!(proof.L.len(), lr_len);
       assert_eq!(proof.R.len(), lr_len);
+      assert_eq!(generators.len(), 1 << lr_len);
     }
 
     let mut P_terms = match P {
@@ -414,7 +443,7 @@ impl<'a, T: Transcript, C: Ciphersuite, GB: Clone + AsRef<[MultiexpPoint<C::G>]>
     };
     P_terms.reserve(6 + (2 * generators.len()) + proof.L.len());
     for (L, R) in proof.L.iter().zip(proof.R.iter()) {
-      let n_hat = (tracked_g_bold.positions.len() + (tracked_g_bold.positions.len() % 2)) / 2;
+      let n_hat = tracked_g_bold.positions.len() / 2;
       let y_n_hat = y[n_hat - 1];
       let y_inv_n_hat =
         inv_y.as_ref().map(|inv_y| inv_y[n_hat - 1]).unwrap_or_else(|| y_n_hat.invert().unwrap());

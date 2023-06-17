@@ -80,8 +80,6 @@ impl<'a, T: Transcript, C: Ciphersuite> SingleRangeStatement<'a, T, C> {
     V: C::G,
     A: C::G,
   ) -> (C::F, ScalarVector<C>, C::F, C::F, C::G) {
-    assert_eq!(generators.len(), RANGE_PROOF_BITS);
-
     // TODO: First perform the WIP transcript before acquiring challenges
     let (y, z) = Self::transcript_A(transcript, A);
 
