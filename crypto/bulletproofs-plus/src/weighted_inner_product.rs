@@ -437,6 +437,16 @@ impl<'a, T: Transcript, C: Ciphersuite, GB: Clone + AsRef<[MultiexpPoint<C::G>]>
       assert_eq!(generators.len(), 1 << lr_len);
     }
 
+    let inv_y = inv_y.unwrap_or_else(|| {
+      let inv_y = y[0].invert().unwrap();
+      let mut res = Vec::with_capacity(y.len());
+      res.push(inv_y);
+      while res.len() < y.len() {
+        res.push(inv_y * res.last().unwrap());
+      }
+      res
+    });
+
     let mut P_terms = match P {
       P::Point(point) => vec![(C::F::ONE, MultiexpPoint::Variable(point))],
       P::Terms(terms) => terms,
@@ -445,8 +455,7 @@ impl<'a, T: Transcript, C: Ciphersuite, GB: Clone + AsRef<[MultiexpPoint<C::G>]>
     for (L, R) in proof.L.iter().zip(proof.R.iter()) {
       let n_hat = tracked_g_bold.positions.len() / 2;
       let y_n_hat = y[n_hat - 1];
-      let y_inv_n_hat =
-        inv_y.as_ref().map(|inv_y| inv_y[n_hat - 1]).unwrap_or_else(|| y_n_hat.invert().unwrap());
+      let y_inv_n_hat = inv_y[n_hat - 1];
       debug_assert_eq!(y_inv_n_hat, y_n_hat.invert().unwrap());
 
       Self::next_G_H_P_without_permutation(
