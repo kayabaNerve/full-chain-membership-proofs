@@ -2,7 +2,41 @@ use ciphersuite::group::{ff::Field, Group};
 
 use crate::*;
 
-pub(crate) fn dlog<C: Ecip>(poly: &Poly<C::FieldElement>) -> Divisor<C> {
+/*
+pub fn get_polys<F: Field>(poly: &Poly<F>) -> (Poly<F>, Poly<F>) {
+  let decomposition = Poly {
+    y_coefficients,
+    yx_coefficients,
+    x_coefficients,
+    zero_coefficient
+  } = poly;
+
+  // True if reduced by the curve equation
+  assert!(yx_coefficients.len() <= 1);
+  assert!(y_coefficients.len() <= 1);
+
+  (
+    // Poly(y = 0)
+    Poly {
+      y_coefficients: vec![],
+      yx_coefficients: vec![],
+      x_coefficients,
+      zero_coefficient
+    },
+    // The second poly is poly(y = 1) - poly(y = 0)
+    // This equates to the yx_coefficients as the x_coefficients, with the y_coefficient as the
+    // zero_coefficient
+    Poly {
+      y_coefficients: vec![],
+      yx_coefficients: vec![],
+      x_coefficients: yx_coefficients.get(0).unwrap_or(vec![]),
+      zero_coefficient: y_coefficients.get(0).unwrap_or(F::ZERO),
+    }
+  )
+}
+*/
+
+pub fn dlog<C: Ecip>(poly: &Poly<C::FieldElement>) -> Divisor<C> {
   let (dx, dy) = poly.differentiate();
 
   // Dz = Dx + Dy * ((3*x^2 + A) / (2*y))
@@ -27,9 +61,6 @@ pub(crate) fn dlog<C: Ecip>(poly: &Poly<C::FieldElement>) -> Divisor<C> {
   // Dz / D
   let denominator = denominator.inner_mul(poly);
 
-  // TODO: We have two polys. Can we shrink their combined side by dividing the numerator by the
-  // denominator's x terms, instead of by the y terms?
-
   let modulus = Poly {
     y_coefficients: vec![C::FieldElement::ZERO, C::FieldElement::ONE],
     yx_coefficients: vec![],
@@ -41,15 +72,26 @@ pub(crate) fn dlog<C: Ecip>(poly: &Poly<C::FieldElement>) -> Divisor<C> {
     zero_coefficient: -C::FieldElement::from(C::B),
   };
 
-  Divisor { numerator: numerator.rem(&modulus), denominator: denominator.rem(&modulus) }
+  let numerator = numerator.rem(&modulus);
+  let denominator = denominator.rem(&modulus);
+
+  assert_eq!(numerator.y_coefficients.len(), 1);
+  assert_eq!(denominator.y_coefficients.len(), 1);
+
+  Divisor { numerator, denominator }
 }
 
-pub(crate) fn eval_challenge<C: Ecip>(
-  challenge: C::G,
-  divisor: &Poly<C::FieldElement>,
-) -> C::FieldElement {
-  let dlog = dlog::<C>(divisor);
+/// Normalize the y coefficient to one.
+// The discrete logarithm of a divisor always has a y coefficient in the numerator and divisor, yet
+// it doesn't always have x coefficients. Their zero coefficient will also be zero, when we need it
+// to be one.
+pub fn normalize_y_coefficient<C: Ecip>(divisor: &mut Divisor<C>) {
+  let scalar = divisor.numerator.y_coefficients[0].invert().unwrap();
+  divisor.numerator = divisor.numerator.clone().scale(scalar);
+  divisor.denominator = divisor.denominator.clone().scale(scalar);
+}
 
+pub(crate) fn eval_challenge<C: Ecip>(challenge: C::G, dlog: Divisor<C>) -> C::FieldElement {
   let neg_dbl = -challenge.double();
   let (slope, _) = slope_intercept::<C>(challenge, neg_dbl);
 

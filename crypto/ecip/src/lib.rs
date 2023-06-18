@@ -210,40 +210,6 @@ impl<C: Ecip> Divisor<C> {
   */
 }
 
-/*
-pub fn get_polys<F: Field>(poly: &Poly<F>) -> (Poly<F>, Poly<F>) {
-  let decomposition = Poly {
-    y_coefficients,
-    yx_coefficients,
-    x_coefficients,
-    zero_coefficient
-  } = poly;
-
-  // True if reduced by the curve equation
-  assert!(yx_coefficients.len() <= 1);
-  assert!(y_coefficients.len() <= 1);
-
-  (
-    // Poly(y = 0)
-    Poly {
-      y_coefficients: vec![],
-      yx_coefficients: vec![],
-      x_coefficients,
-      zero_coefficient
-    },
-    // The second poly is poly(y = 1) - poly(y = 0)
-    // This equates to the yx_coefficients as the x_coefficients, with the y_coefficient as the
-    // zero_coefficient
-    Poly {
-      y_coefficients: vec![],
-      yx_coefficients: vec![],
-      x_coefficients: yx_coefficients.get(0).unwrap_or(vec![]),
-      zero_coefficient: y_coefficients.get(0).unwrap_or(F::ZERO),
-    }
-  )
-}
-*/
-
 #[cfg(any(test, feature = "pasta"))]
 mod pasta {
   use pasta_curves::arithmetic::{Coordinates, CurveAffine, CurveExt};

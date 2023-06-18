@@ -33,10 +33,27 @@ fn test_experimental_eval() {
 
     let challenge = <Pallas as Ciphersuite>::G::random(&mut OsRng);
 
-    let mut rhs = <Pallas as Ecip>::FieldElement::ZERO;
-    for point in points {
-      rhs += eval_challenge_against_point::<Pallas>(challenge, point);
+    let mut dlog = dlog::<Pallas>(&divisor);
+    assert_eq!(dlog.numerator.y_coefficients.len(), 1);
+
+    {
+      let mut rhs = <Pallas as Ecip>::FieldElement::ZERO;
+      for point in &points {
+        rhs += eval_challenge_against_point::<Pallas>(challenge, *point);
+      }
+      assert_eq!(eval_challenge::<Pallas>(challenge, dlog.clone()), rhs);
     }
-    assert_eq!(eval_challenge::<Pallas>(challenge, &divisor), rhs);
+
+    // Normalize so the y coefficient is 1
+    // This allows checking the divisor isn't 0
+    normalize_y_coefficient(&mut dlog);
+    assert_eq!(dlog.numerator.y_coefficients, vec![<Pallas as Ecip>::FieldElement::ONE]);
+    {
+      let mut rhs = <Pallas as Ecip>::FieldElement::ZERO;
+      for point in points {
+        rhs += eval_challenge_against_point::<Pallas>(challenge, point);
+      }
+      assert_eq!(eval_challenge::<Pallas>(challenge, dlog), rhs);
+    }
   }
 }
