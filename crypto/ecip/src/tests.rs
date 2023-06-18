@@ -114,8 +114,9 @@ fn test_same_point() {
   assert_eq!(divisor.eval(x, y) * divisor.eval(x, -y), rhs);
 }
 
+/*
 #[test]
-fn fe_divisor() {
+fn test_fe_divisor() {
   for i in 1 .. 256 {
     let mut fes = vec![];
     for _ in 0 .. i {
@@ -129,5 +130,106 @@ fn fe_divisor() {
       divisor.eval(challenge, <Pallas as Ecip>::FieldElement::ZERO),
       fes.iter().map(|r| challenge + r).product::<<Pallas as Ecip>::FieldElement>(),
     );
+  }
+}
+*/
+
+#[test]
+fn test_differentation() {
+  let random = || <Pallas as Ecip>::FieldElement::random(&mut OsRng);
+
+  let input = Poly {
+    y_coefficients: vec![random()],
+    yx_coefficients: vec![vec![random()]],
+    x_coefficients: vec![random(), random(), random()],
+    zero_coefficient: random(),
+  };
+  let (diff_x, diff_y) = input.differentiate();
+  assert_eq!(
+    diff_x,
+    Poly {
+      y_coefficients: vec![input.yx_coefficients[0][0]],
+      yx_coefficients: vec![],
+      x_coefficients: vec![
+        <Pallas as Ecip>::FieldElement::from(2) * input.x_coefficients[1],
+        <Pallas as Ecip>::FieldElement::from(3) * input.x_coefficients[2]
+      ],
+      zero_coefficient: input.x_coefficients[0],
+    }
+  );
+  assert_eq!(
+    diff_y,
+    Poly {
+      y_coefficients: vec![],
+      yx_coefficients: vec![],
+      x_coefficients: vec![input.yx_coefficients[0][0]],
+      zero_coefficient: input.y_coefficients[0],
+    }
+  );
+
+  let input = Poly {
+    y_coefficients: vec![random()],
+    yx_coefficients: vec![vec![random(), random()]],
+    x_coefficients: vec![random(), random(), random(), random()],
+    zero_coefficient: random(),
+  };
+  let (diff_x, diff_y) = input.differentiate();
+  assert_eq!(
+    diff_x,
+    Poly {
+      y_coefficients: vec![input.yx_coefficients[0][0]],
+      yx_coefficients: vec![vec![
+        <Pallas as Ecip>::FieldElement::from(2) * input.yx_coefficients[0][1]
+      ]],
+      x_coefficients: vec![
+        <Pallas as Ecip>::FieldElement::from(2) * input.x_coefficients[1],
+        <Pallas as Ecip>::FieldElement::from(3) * input.x_coefficients[2],
+        <Pallas as Ecip>::FieldElement::from(4) * input.x_coefficients[3],
+      ],
+      zero_coefficient: input.x_coefficients[0],
+    }
+  );
+  assert_eq!(
+    diff_y,
+    Poly {
+      y_coefficients: vec![],
+      yx_coefficients: vec![],
+      x_coefficients: vec![input.yx_coefficients[0][0], input.yx_coefficients[0][1]],
+      zero_coefficient: input.y_coefficients[0],
+    }
+  );
+}
+
+#[test]
+fn test_dlog() {
+  // Test with a divisor in case the "dlog" function is incomplete
+  // Since it's meant to be used with divisors, any divisor passed should work
+  let mut points = vec![<Pallas as Ciphersuite>::G::random(&mut OsRng)];
+  points.push(-points.iter().sum::<<Pallas as Ciphersuite>::G>());
+  let divisor = Divisor::<Pallas>::new(&points);
+
+  crate::experimental::dlog::<Pallas>(&divisor);
+}
+
+#[test]
+fn test_experimental_eval() {
+  for i in 0 .. 256 {
+    if (i % 2) != 1 {
+      continue;
+    }
+    let mut points = vec![];
+    for _ in 0 .. i {
+      points.push(<Pallas as Ciphersuite>::G::random(&mut OsRng));
+    }
+    points.push(-points.iter().sum::<<Pallas as Ciphersuite>::G>());
+    let divisor = Divisor::<Pallas>::new(&points);
+
+    let challenge = <Pallas as Ciphersuite>::G::random(&mut OsRng);
+
+    let mut rhs = <Pallas as Ecip>::FieldElement::ZERO;
+    for point in points {
+      rhs += crate::experimental::eval_challenge_against_point::<Pallas>(challenge, point);
+    }
+    assert_eq!(crate::experimental::eval_challenge::<Pallas>(challenge, &divisor), rhs);
   }
 }

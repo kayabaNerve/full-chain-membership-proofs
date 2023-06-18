@@ -26,8 +26,20 @@ pub trait Ecip: Ciphersuite {
   fn hash_to_G(domain: &'static str, data: &[u8]) -> Self::G;
 }
 
+fn slope_intercept<C: Ecip>(a: C::G, b: C::G) -> (C::FieldElement, C::FieldElement) {
+  let (ax, ay) = C::to_xy(a);
+  let (bx, by) = C::to_xy(b);
+  let slope = (by - ay) *
+    Option::<C::FieldElement>::from((bx - ax).invert())
+      .expect("trying to get slope/intercept of points sharing an x coordinate");
+  let intercept = by - (slope * bx);
+  debug_assert!(bool::from((ay - (slope * ax) - intercept).is_zero()));
+  debug_assert!(bool::from((by - (slope * bx) - intercept).is_zero()));
+  (slope, intercept)
+}
+
 #[derive(Clone, PartialEq, Eq, Debug)]
-pub struct Poly<F: Field> {
+pub struct Poly<F: Field + From<u64>> {
   // y ** (i + 1)
   pub y_coefficients: Vec<F>,
   // y ** (i + 1) x ** (j + 1)
@@ -40,8 +52,9 @@ pub struct Poly<F: Field> {
 
 // TODO: This isn't constant time.
 // The divisor calculation should be constant time w.r.t. the amount of points it's calculated
-// for.
-impl<F: Field> Poly<F> {
+// for
+impl<F: Field + From<u64>> Poly<F> {
+  // A zero/empty polynomial.
   fn zero() -> Self {
     Poly {
       y_coefficients: vec![],
@@ -51,6 +64,16 @@ impl<F: Field> Poly<F> {
     }
   }
 
+  /// Get the amount of non-zero terms in a polynomial.
+  #[allow(clippy::len_without_is_empty)]
+  pub fn len(&self) -> usize {
+    self.y_coefficients.len() +
+      self.yx_coefficients.iter().map(Vec::len).sum::<usize>() +
+      self.x_coefficients.len() +
+      usize::from(u8::from(self.zero_coefficient != F::ZERO))
+  }
+
+  // Remove high-order zero terms, allowing the length of vectors to equal the amount of terms.
   fn tidy(&mut self) {
     let tidy = |vec: &mut Vec<F>| {
       while vec.last() == Some(&F::ZERO) {
@@ -68,6 +91,7 @@ impl<F: Field> Poly<F> {
     tidy(&mut self.x_coefficients);
   }
 
+  // Add two polynomials together
   fn add(mut self, other: &Self) -> Self {
     self.tidy();
 
@@ -87,7 +111,7 @@ impl<F: Field> Poly<F> {
       self.x_coefficients.push(F::ZERO);
     }
 
-    // Perform the subtraction
+    // Perform the addition
     for (i, coeff) in other.y_coefficients.iter().enumerate() {
       self.y_coefficients[i] += coeff;
     }
@@ -105,6 +129,7 @@ impl<F: Field> Poly<F> {
     self
   }
 
+  // Scale a polynomial by some scalar
   fn scale(mut self, scalar: F) -> Self {
     for y_coeff in self.y_coefficients.iter_mut() {
       *y_coeff *= scalar;
@@ -121,10 +146,12 @@ impl<F: Field> Poly<F> {
     self
   }
 
+  // Subtract a polynomial from this one
   fn sub(self, other: Self) -> Self {
     self.add(&other.scale(-F::ONE))
   }
 
+  // Perform a mul without performing a reduction
   fn inner_mul(self, other: &Self) -> Self {
     let mut res =
       self.clone().scale(other.zero_coefficient).add(&other.clone().scale(self.zero_coefficient));
@@ -154,7 +181,12 @@ impl<F: Field> Poly<F> {
     }
 
     // Scale by y coefficients
-    fn mul_by_y<F: Field>(first: bool, y_coefficients: &[F], other: &Poly<F>, res: &mut Poly<F>) {
+    fn mul_by_y<F: Field + From<u64>>(
+      first: bool,
+      y_coefficients: &[F],
+      other: &Poly<F>,
+      res: &mut Poly<F>,
+    ) {
       // y y
       if first {
         same_scale(y_coefficients, &other.y_coefficients, &mut res.y_coefficients);
@@ -184,7 +216,12 @@ impl<F: Field> Poly<F> {
     mul_by_y(false, &other.y_coefficients, &self, &mut res);
 
     // Scale by x coefficients
-    fn mul_by_x<F: Field>(first: bool, x_coefficients: &[F], other: &Poly<F>, res: &mut Poly<F>) {
+    fn mul_by_x<F: Field + From<u64>>(
+      first: bool,
+      x_coefficients: &[F],
+      other: &Poly<F>,
+      res: &mut Poly<F>,
+    ) {
       // x x
       if first {
         same_scale(x_coefficients, &other.x_coefficients, &mut res.x_coefficients);
@@ -227,6 +264,11 @@ impl<F: Field> Poly<F> {
     res
   }
 
+  // Perform division, returning the result and remainder
+  // This is incomplete, apparently in undocumented ways
+  // It should be incomplete for any denominator with just a zero coefficient, and otherwise
+  // complete
+  // TODO: Confirm and document exactly how this is complete/incomplete
   fn div_rem(self, denominator: &Self) -> (Self, Self) {
     let leading_y = |poly: &Self| -> (_, _) {
       if poly.y_coefficients.len() > poly.yx_coefficients.len() {
@@ -322,10 +364,12 @@ impl<F: Field> Poly<F> {
     self.div_rem(modulus).1
   }
 
+  // Perform multiplication mod modulus
   fn mul(self, other: &Self, modulus: &Self) -> Self {
     self.inner_mul(other).rem(modulus)
   }
 
+  /// Evaluate this polynomial with the specified x/y values.
   pub fn eval(&self, x: F, y: F) -> F {
     let mut res = self.zero_coefficient;
     for (pow, coeff) in
@@ -350,8 +394,59 @@ impl<F: Field> Poly<F> {
     }
     res
   }
+
+  /// Differentiate a polynomial, reduced y**2, by x and y.
+  pub fn differentiate(&self) -> (Poly<F>, Poly<F>) {
+    assert!(self.yx_coefficients.len() <= 1);
+    assert!(self.y_coefficients.len() <= 1);
+
+    // Differentation by x practically involves:
+    // - Dropping everything without an x component
+    // - Shifting everything down a power of x
+    // - If the x power is greater than 2, multiplying the new term's coefficient by the x power in
+    //   question
+    let mut diff_x = Poly {
+      y_coefficients: vec![],
+      yx_coefficients: vec![],
+      x_coefficients: vec![],
+      zero_coefficient: F::ZERO,
+    };
+    diff_x.zero_coefficient = self.x_coefficients.get(0).cloned().unwrap_or(F::ZERO);
+    for i in 1 .. self.x_coefficients.len() {
+      let power = i + 1;
+      diff_x.x_coefficients.push(self.x_coefficients[i] * F::from(u64::try_from(power).unwrap()));
+    }
+
+    for (i, yx_coeff) in
+      self.yx_coefficients.get(0).cloned().unwrap_or(vec![]).into_iter().enumerate()
+    {
+      // Keep the y power, reduce an x power
+      let power = i + 1;
+      if i == 0 {
+        diff_x.y_coefficients.push(yx_coeff);
+      } else {
+        if diff_x.yx_coefficients.is_empty() {
+          diff_x.yx_coefficients.push(vec![]);
+        }
+        diff_x.yx_coefficients[0].push(yx_coeff * F::from(u64::try_from(power).unwrap()));
+      }
+    }
+
+    // Differentation by y is trivial
+    // It's the y coefficient as the zero coefficient, and the yx coefficients as the x coefficient
+    // This is thanks to any y term over y^2 being reduced out
+    let diff_y = Poly {
+      y_coefficients: vec![],
+      yx_coefficients: vec![],
+      x_coefficients: self.yx_coefficients.get(0).cloned().unwrap_or(vec![]),
+      zero_coefficient: self.y_coefficients.get(0).cloned().unwrap_or(F::ZERO),
+    };
+
+    (diff_x, diff_y)
+  }
 }
 
+/// Constructor of a divisor (represented via a Poly) for a set of elliptic curve point.
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct Divisor<C: Ecip> {
   numerator: Poly<C::FieldElement>,
@@ -359,34 +454,40 @@ pub struct Divisor<C: Ecip> {
 }
 
 impl<C: Ecip> Divisor<C> {
-  fn initial(a: C::G, mut b: C::G) -> Self {
-    if a == b {
-      b = -a.double();
-    }
+  // TODO: Is this complete? Or will it return garbage in some cases?
+  fn line(a: C::G, mut b: C::G) -> Self {
+    let (ax, _) = C::to_xy(a);
 
-    let (ax, ay) = C::to_xy(a);
-    let (bx, by) = C::to_xy(b);
-
-    Divisor {
-      numerator: if (a + b) == C::G::identity() {
-        // x (variable) - x (value)
-        Poly {
+    if (a + b) == C::G::identity() {
+      return Divisor {
+        numerator: Poly {
           y_coefficients: vec![],
           yx_coefficients: vec![],
           x_coefficients: vec![C::FieldElement::ONE],
           zero_coefficient: -ax,
-        }
-      } else {
-        let slope = (by - ay) * (bx - ax).invert().unwrap();
-        let intercept = by - (slope * bx);
-
-        // y - (slope * x) - intercept
-        Poly {
-          y_coefficients: vec![C::FieldElement::ONE],
+        },
+        denominator: Poly {
+          y_coefficients: vec![],
           yx_coefficients: vec![],
-          x_coefficients: vec![-slope],
-          zero_coefficient: -intercept,
-        }
+          x_coefficients: vec![],
+          zero_coefficient: C::FieldElement::ONE,
+        },
+      };
+    }
+
+    if a == b {
+      b = -a.double();
+    }
+
+    let (slope, intercept) = slope_intercept::<C>(a, b);
+
+    // y - (slope * x) - intercept
+    Divisor {
+      numerator: Poly {
+        y_coefficients: vec![C::FieldElement::ONE],
+        yx_coefficients: vec![],
+        x_coefficients: vec![-slope],
+        zero_coefficient: -intercept,
       },
       denominator: Poly {
         y_coefficients: vec![],
@@ -413,6 +514,7 @@ impl<C: Ecip> Divisor<C> {
     }
   }
 
+  /// Create a divisor interpolating the following points.
   #[allow(clippy::new_ret_no_self)]
   pub fn new(points: &[C::G]) -> Poly<C::FieldElement> {
     assert!(points.len() > 1);
@@ -429,7 +531,7 @@ impl<C: Ecip> Divisor<C> {
         assert!(b != C::G::identity());
       }
 
-      divs.push((a + b.unwrap_or(C::G::identity()), Self::initial(a, b.unwrap_or(-a))));
+      divs.push((a + b.unwrap_or(C::G::identity()), Self::line(a, b.unwrap_or(-a))));
     }
 
     // y^2 - x^3 - Ax - B
@@ -457,9 +559,8 @@ impl<C: Ecip> Divisor<C> {
           a + b,
           a_div
             .mul(&b_div, &modulus)
-            .mul(&Self::initial(a, b), &modulus)
-            .div(&Self::initial(a, -a), &modulus)
-            .div(&Self::initial(b, -b), &modulus),
+            .mul(&Self::line(a, b), &modulus)
+            .div(&Self::line(a, -a).mul(&Self::line(b, -b), &modulus), &modulus),
         ));
       }
 
@@ -476,6 +577,7 @@ impl<C: Ecip> Divisor<C> {
     res
   }
 
+  /*
   // FieldElement divisor.
   // Rearranges Product(xi) to a polynomial F(x), where F(x) = Product(x + xi).
   // This is notable as the polynomial evaluation can happen via constraints, without adding gates.
@@ -507,6 +609,132 @@ impl<C: Ecip> Divisor<C> {
       );
     }
     res
+  }
+  */
+}
+
+/*
+pub fn get_polys<F: Field>(poly: &Poly<F>) -> (Poly<F>, Poly<F>) {
+  let decomposition = Poly {
+    y_coefficients,
+    yx_coefficients,
+    x_coefficients,
+    zero_coefficient
+  } = poly;
+
+  // True if reduced by the curve equation
+  assert!(yx_coefficients.len() <= 1);
+  assert!(y_coefficients.len() <= 1);
+
+  (
+    // Poly(y = 0)
+    Poly {
+      y_coefficients: vec![],
+      yx_coefficients: vec![],
+      x_coefficients,
+      zero_coefficient
+    },
+    // The second poly is poly(y = 1) - poly(y = 0)
+    // This equates to the yx_coefficients as the x_coefficients, with the y_coefficient as the
+    // zero_coefficient
+    Poly {
+      y_coefficients: vec![],
+      yx_coefficients: vec![],
+      x_coefficients: yx_coefficients.get(0).unwrap_or(vec![]),
+      zero_coefficient: y_coefficients.get(0).unwrap_or(F::ZERO),
+    }
+  )
+}
+*/
+
+pub(crate) mod experimental {
+  use super::*;
+
+  pub(crate) fn dlog<C: Ecip>(poly: &Poly<C::FieldElement>) -> Divisor<C> {
+    let (dx, dy) = poly.differentiate();
+
+    // Dz = Dx + Dy * ((3*x^2 + A) / (2*y))
+
+    let dy_numerator = dy.inner_mul(&Poly {
+      y_coefficients: vec![],
+      yx_coefficients: vec![],
+      x_coefficients: vec![C::FieldElement::ZERO, C::FieldElement::from(3)],
+      zero_coefficient: C::FieldElement::from(C::A),
+    });
+
+    let denominator = Poly {
+      y_coefficients: vec![C::FieldElement::from(2)],
+      yx_coefficients: vec![],
+      x_coefficients: vec![],
+      zero_coefficient: C::FieldElement::ZERO,
+    };
+
+    let numerator = dx.inner_mul(&denominator).add(&dy_numerator);
+
+    // Dz is numerator / denominator
+    // Dz / D
+    let denominator = denominator.inner_mul(poly);
+
+    // TODO: We have two polys. Can we shrink their combined side by dividing the numerator by the
+    // denominator's x terms, instead of by the y terms?
+
+    let modulus = Poly {
+      y_coefficients: vec![C::FieldElement::ZERO, C::FieldElement::ONE],
+      yx_coefficients: vec![],
+      x_coefficients: vec![
+        -C::FieldElement::from(C::A),
+        C::FieldElement::ZERO,
+        -C::FieldElement::ONE,
+      ],
+      zero_coefficient: -C::FieldElement::from(C::B),
+    };
+
+    Divisor { numerator: numerator.rem(&modulus), denominator: denominator.rem(&modulus) }
+  }
+
+  pub(crate) fn eval_challenge<C: Ecip>(
+    challenge: C::G,
+    divisor: &Poly<C::FieldElement>,
+  ) -> C::FieldElement {
+    let dlog = dlog::<C>(divisor);
+
+    let neg_dbl = -challenge.double();
+    let (slope, _) = slope_intercept::<C>(challenge, neg_dbl);
+
+    let (cx, cy) = C::to_xy(challenge);
+    let (dx, dy) = C::to_xy(neg_dbl);
+
+    let coeff2 = dy.double() *
+      (cx - dx) *
+      ((C::FieldElement::from(3) * dx.square()) + C::FieldElement::from(C::A) -
+        (slope.double() * dy))
+        .invert()
+        .unwrap();
+    let coeff0 = coeff2 + slope.double();
+
+    let mut dlog_left = dlog.clone();
+    dlog_left.numerator = dlog_left.numerator.scale(coeff0);
+    let left =
+      dlog_left.numerator.eval(cx, cy) * dlog_left.denominator.eval(cx, cy).invert().unwrap();
+
+    let mut dlog_right = dlog;
+    dlog_right.numerator = dlog_right.numerator.scale(coeff2);
+    let right =
+      dlog_right.numerator.eval(dx, dy) * dlog_right.denominator.eval(dx, dy).invert().unwrap();
+
+    left - right
+  }
+
+  pub(crate) fn eval_challenge_against_point<C: Ecip>(
+    challenge: C::G,
+    point: C::G,
+  ) -> C::FieldElement {
+    let (slope, intercept) = slope_intercept::<C>(challenge, -challenge.double());
+
+    let cx = C::to_xy(challenge).0;
+    let (px, py) = C::to_xy(point);
+
+    (cx - px) * (py - (slope * px) - intercept).invert().unwrap()
   }
 }
 
