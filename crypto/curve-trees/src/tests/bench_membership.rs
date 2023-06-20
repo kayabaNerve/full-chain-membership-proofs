@@ -25,11 +25,20 @@ use crate::{
 #[ignore]
 #[test]
 fn bench_membership() {
+  // At a depth of 4, this would be 777,766,321 elements
+  // This is exactly tuned to get to the next power of 2, and optimally performant
+  let width = 167u64;
+  dbg!(width);
+  // This should us a depth of 4, yet that'd take ~128 GB and hours to run
+  // TODO
+  let depth = 2u32;
+  dbg!(depth);
+
   let generators = std::time::Instant::now();
-  let mut pallas_generators = generators_fn::<Pallas>(512 * 4);
+  let mut pallas_generators = generators_fn::<Pallas>(512 * usize::try_from(depth).unwrap());
   let pallas_h = pallas_generators.h().point();
 
-  let mut vesta_generators = generators_fn::<Vesta>(512 * 4);
+  let mut vesta_generators = generators_fn::<Vesta>(512 * usize::try_from(depth).unwrap());
   let vesta_h = vesta_generators.h().point();
 
   let permissible_c1 = Permissible::<<Pasta as CurveCycle>::C1> {
@@ -44,10 +53,6 @@ fn bench_membership() {
   };
   let leaf_randomness = <<Pasta as CurveCycle>::C1 as Ciphersuite>::G::random(&mut OsRng);
 
-  let width = 2u64.pow(4u32);
-  dbg!(width);
-  let depth = 4u32;
-  dbg!(depth);
   let max = width.pow(depth);
   let mut tree = Tree::<RecommendedTranscript, Pasta>::new(
     permissible_c1,
@@ -59,14 +64,18 @@ fn bench_membership() {
   tree.whitelist_vector_commitments(&mut pallas_generators, &mut vesta_generators);
   dbg!(std::time::Instant::now() - generators);
 
-  // Create a full tree
+  // Create a tree with the desired depth
   let tree_time = std::time::Instant::now();
-  let max = usize::try_from(max).unwrap();
   let mut leaves = vec![];
-  for _ in 0 .. max {
-    leaves.push(<<Pasta as CurveCycle>::C1 as Ciphersuite>::G::random(&mut OsRng));
+  let mut start = <<Pasta as CurveCycle>::C1 as Ciphersuite>::G::random(&mut OsRng);
+  // Doesn't create the last log n elements in the name of performance
+  for _ in 0 .. (width.pow(depth - 1) + 1) {
+    leaves.push(start);
+    // Use addition instead of random, as it's faster to add than to perform decompression
+    start += <<Pasta as CurveCycle>::C1 as Ciphersuite>::G::generator();
   }
   tree.add_leaves(&leaves);
+  assert_eq!(tree.depth(), usize::try_from(depth).unwrap());
 
   for leaf in leaves.iter_mut() {
     while !permissible_c1.point(*leaf) {

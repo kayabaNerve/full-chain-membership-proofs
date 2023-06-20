@@ -10,6 +10,7 @@ use crate::{
 };
 
 /// A constraint of the form WL aL + WR aR + WO aO = WV V + c.
+#[must_use]
 pub struct Constraint<C: Ciphersuite> {
   pub(crate) label: &'static str,
   // Each weight (C::F) is bound to a specific ProductReference (usize) to allow post-expansion to

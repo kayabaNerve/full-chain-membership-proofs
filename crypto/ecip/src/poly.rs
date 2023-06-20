@@ -397,7 +397,8 @@ impl<F: Field + From<u64>> Poly<F> {
     }
 
     // Differentation by y is trivial
-    // It's the y coefficient as the zero coefficient, and the yx coefficients as the x coefficient
+    // It's the y coefficient as the zero coefficient, and the yx coefficients as the x
+    // coefficients
     // This is thanks to any y term over y^2 being reduced out
     assert!(self.y_coefficients.len() <= 1);
     assert!(self.yx_coefficients.len() <= 1);

@@ -44,8 +44,8 @@ fn slope_intercept<C: Ecip>(a: C::G, b: C::G) -> (C::FieldElement, C::FieldEleme
 /// Constructor of a divisor (represented via a Poly) for a set of elliptic curve point.
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct Divisor<C: Ecip> {
-  numerator: Poly<C::FieldElement>,
-  denominator: Poly<C::FieldElement>,
+  pub numerator: Poly<C::FieldElement>,
+  pub denominator: Poly<C::FieldElement>,
 }
 
 impl<C: Ecip> Divisor<C> {
