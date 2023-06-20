@@ -1,5 +1,7 @@
 use ciphersuite::group::ff::Field;
 
+use crate::{Ecip, Divisor};
+
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct Poly<F: Field + From<u64>> {
   // y ** (i + 1)
@@ -397,6 +399,8 @@ impl<F: Field + From<u64>> Poly<F> {
     // Differentation by y is trivial
     // It's the y coefficient as the zero coefficient, and the yx coefficients as the x coefficient
     // This is thanks to any y term over y^2 being reduced out
+    assert!(self.y_coefficients.len() <= 1);
+    assert!(self.yx_coefficients.len() <= 1);
     let diff_y = Poly {
       y_coefficients: vec![],
       yx_coefficients: vec![],
@@ -405,5 +409,53 @@ impl<F: Field + From<u64>> Poly<F> {
     };
 
     (diff_x, diff_y)
+  }
+
+  /// Normalize the x coefficient to 1.
+  pub fn normalize_x_coefficient(self) -> Self {
+    let scalar = self.x_coefficients[0].invert().unwrap();
+    self.scale(scalar)
+  }
+
+  // Calculate the logarithmic derivative of a polynomial.
+  pub fn logarithmic_derivative<C: Ecip<FieldElement = F>>(&self) -> Divisor<C> {
+    let (dx, dy) = self.differentiate();
+
+    // Dz = Dx + (Dy * ((3*x^2 + A) / (2*y)))
+
+    let dy_numerator = dy.inner_mul(&Poly {
+      y_coefficients: vec![],
+      yx_coefficients: vec![],
+      x_coefficients: vec![F::ZERO, F::from(3)],
+      zero_coefficient: F::from(C::A),
+    });
+
+    let denominator = Poly {
+      y_coefficients: vec![F::from(2)],
+      yx_coefficients: vec![],
+      x_coefficients: vec![],
+      zero_coefficient: F::ZERO,
+    };
+
+    let numerator = dx.inner_mul(&denominator).add(&dy_numerator);
+
+    // Dz is numerator / denominator
+    // Dz / D
+    let denominator = denominator.inner_mul(self);
+
+    let modulus = Poly {
+      y_coefficients: vec![F::ZERO, F::ONE],
+      yx_coefficients: vec![],
+      x_coefficients: vec![-F::from(C::A), F::ZERO, -F::ONE],
+      zero_coefficient: -F::from(C::B),
+    };
+
+    let numerator = numerator.rem(&modulus);
+    let denominator = denominator.rem(&modulus);
+
+    assert_eq!(numerator.y_coefficients.len(), 1);
+    assert_eq!(denominator.y_coefficients.len(), 1);
+
+    Divisor { numerator, denominator }
   }
 }

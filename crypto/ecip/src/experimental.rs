@@ -36,63 +36,21 @@ pub fn get_polys<F: Field>(poly: &Poly<F>) -> (Poly<F>, Poly<F>) {
 }
 */
 
-/// Logarithmic derivative.
-pub fn log_deriv<C: Ecip>(poly: &Poly<C::FieldElement>) -> Divisor<C> {
-  let (dx, dy) = poly.differentiate();
-
-  // Dz = Dx + Dy * ((3*x^2 + A) / (2*y))
-
-  let dy_numerator = dy.inner_mul(&Poly {
-    y_coefficients: vec![],
-    yx_coefficients: vec![],
-    x_coefficients: vec![C::FieldElement::ZERO, C::FieldElement::from(3)],
-    zero_coefficient: C::FieldElement::from(C::A),
-  });
-
-  let denominator = Poly {
-    y_coefficients: vec![C::FieldElement::from(2)],
-    yx_coefficients: vec![],
-    x_coefficients: vec![],
-    zero_coefficient: C::FieldElement::ZERO,
-  };
-
-  let numerator = dx.inner_mul(&denominator).add(&dy_numerator);
-
-  // Dz is numerator / denominator
-  // Dz / D
-  let denominator = denominator.inner_mul(poly);
-
-  let modulus = Poly {
-    y_coefficients: vec![C::FieldElement::ZERO, C::FieldElement::ONE],
-    yx_coefficients: vec![],
-    x_coefficients: vec![
-      -C::FieldElement::from(C::A),
-      C::FieldElement::ZERO,
-      -C::FieldElement::ONE,
-    ],
-    zero_coefficient: -C::FieldElement::from(C::B),
-  };
-
-  let numerator = numerator.rem(&modulus);
-  let denominator = denominator.rem(&modulus);
-
-  assert_eq!(numerator.y_coefficients.len(), 1);
-  assert_eq!(denominator.y_coefficients.len(), 1);
-
-  Divisor { numerator, denominator }
-}
-
 /// Normalize the y coefficient to one.
-// The discrete logarithm of a divisor always has a y coefficient in the numerator and divisor, yet
-// it doesn't always have x coefficients. Their zero coefficient will also be zero, when we need it
-// to be one.
+// The logarithmic derivative of a divisor always has a y coefficient in the numerator and divisor,
+// yet it doesn't always have x coefficients. Their zero coefficient will also be zero, when we
+// need it to be one.
 pub fn normalize_y_coefficient<C: Ecip>(divisor: &mut Divisor<C>) {
   let scalar = divisor.numerator.y_coefficients[0].invert().unwrap();
   divisor.numerator = divisor.numerator.clone().scale(scalar);
   divisor.denominator = divisor.denominator.clone().scale(scalar);
 }
 
-pub(crate) fn eval_challenge<C: Ecip>(challenge: C::G, log_deriv: Divisor<C>) -> C::FieldElement {
+// Supposedly the bottom line of 3.2, yet this doesn't exactly line up
+pub(crate) fn eval_challenge_three_two<C: Ecip>(
+  challenge: C::G,
+  log_deriv: Divisor<C>,
+) -> C::FieldElement {
   let neg_dbl = -challenge.double();
   let (slope, _) = slope_intercept::<C>(challenge, neg_dbl);
 
@@ -120,7 +78,8 @@ pub(crate) fn eval_challenge<C: Ecip>(challenge: C::G, log_deriv: Divisor<C>) ->
   left - right
 }
 
-pub(crate) fn eval_challenge_against_point<C: Ecip>(
+// Supposedly the bottom line of 3.2, yet this doesn't exactly line up
+pub(crate) fn eval_challenge_against_point_three_two<C: Ecip>(
   challenge: C::G,
   point: C::G,
 ) -> C::FieldElement {
