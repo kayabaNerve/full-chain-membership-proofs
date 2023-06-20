@@ -1,3 +1,5 @@
+use std::collections::VecDeque;
+
 use rand_core::{RngCore, CryptoRng};
 
 use subtle::{Choice, ConstantTimeEq, ConditionallySelectable};
@@ -14,8 +16,8 @@ use ciphersuite::{
 use ecip::{Ecip, Poly, Divisor};
 
 use crate::{
-  arithmetic_circuit::{Constraint, Circuit},
-  gadgets::{Bit, set_membership::set_with_constant, elliptic_curve::*},
+  arithmetic_circuit::{ProductReference, ChallengeReference, Constraint, Circuit},
+  gadgets::{Bit, elliptic_curve::*},
 };
 
 /// A table for efficient proofs of knowledge of discrete logarithms over a specified generator.
@@ -105,21 +107,214 @@ impl<C: Ecip> DLogTable<C> {
   }
 }
 
-// This uses a divisor to prove knowledge of a DLog with just 1.75 gates per point, plus a
-// constant 2 gates
+// y, yx, x, zero coeffs
+type DivisorCoeffs = (usize, usize, usize, usize);
+fn divisor_coeffs(points: usize) -> DivisorCoeffs {
+  let y_coeffs = if points > 2 { 1 } else { 0 }; // TODO: Is this line correct?
+  let yx_coeffs = (points / 2).saturating_sub(2);
+  let x_coeffs = points / 2;
+  let zero_coeffs = 1;
+  (y_coeffs, yx_coeffs, x_coeffs, zero_coeffs)
+}
+
+#[derive(Clone, Debug)]
+struct EmbeddedDivisor {
+  y_coeff: Option<ProductReference>,
+  yx_coeffs: Vec<ProductReference>,
+  x_coeffs: Vec<ProductReference>,
+  zero_coeff: ProductReference,
+  differentiated: bool,
+}
+
+impl EmbeddedDivisor {
+  #[allow(clippy::new_ret_no_self)]
+  fn new<T: 'static + Transcript, C: EmbeddedCurveOperations>(
+    circuit: &mut Circuit<T, C>,
+    points: usize,
+    divisor: &Option<Poly<<C::Embedded as Ecip>::FieldElement>>,
+  ) -> EmbeddedDivisor {
+    assert_eq!(circuit.prover(), divisor.is_some());
+    assert_eq!(points % 2, 0, "odd amounts of points aren't currently supported"); // TODO
+
+    let coeffs = divisor_coeffs(points);
+    if let Some(divisor) = divisor.as_ref() {
+      assert!(coeffs.0 <= 1);
+      assert!(coeffs.0 >= divisor.y_coefficients.len());
+      assert!(coeffs.1 >= divisor.yx_coefficients.get(0).unwrap_or(&vec![]).len());
+      assert!(coeffs.2 >= divisor.x_coefficients.len());
+      assert_eq!(coeffs.3, 1);
+    }
+
+    // Create a serial representation
+    let serial = if let Some(divisor) = divisor.as_ref() {
+      let mut serial = vec![];
+      for y_coeff in &divisor.y_coefficients {
+        serial.push(Some(*y_coeff));
+      }
+      for _ in divisor.y_coefficients.len() .. coeffs.0 {
+        serial.push(Some(<C::Embedded as Ecip>::FieldElement::ZERO));
+      }
+
+      for yx_coeff in divisor.yx_coefficients.get(0).unwrap_or(&vec![]) {
+        serial.push(Some(*yx_coeff));
+      }
+      for _ in divisor.yx_coefficients.get(0).unwrap_or(&vec![]).len() .. coeffs.1 {
+        serial.push(Some(<C::Embedded as Ecip>::FieldElement::ZERO));
+      }
+
+      // TODO: Don't transcript the first x coeff, use 1 directly
+      for x_coeff in &divisor.x_coefficients {
+        serial.push(Some(*x_coeff));
+      }
+      for _ in divisor.x_coefficients.len() .. coeffs.2 {
+        serial.push(Some(<C::Embedded as Ecip>::FieldElement::ZERO));
+      }
+
+      serial.push(Some(divisor.zero_coefficient));
+      serial
+    } else {
+      vec![None; coeffs.0 + coeffs.1 + coeffs.2 + coeffs.3]
+    };
+
+    // Commit in pairs
+    let mut iter = serial.into_iter();
+    let mut serial = VecDeque::new();
+    while let Some(a) = iter.next() {
+      let b = iter.next().unwrap_or(a);
+      let a = circuit.add_secret_input(a);
+      let b = circuit.add_secret_input(b);
+      // GC: 0.5 per point
+      let ((l, r, _), _) = circuit.product(a, b);
+      serial.push_back(l);
+      serial.push_back(r);
+    }
+
+    // Decompose back
+    let y_coeff = if coeffs.0 == 1 { Some(serial.pop_front().unwrap()) } else { None };
+    let mut yx_coeffs = vec![];
+    for _ in 0 .. coeffs.1 {
+      yx_coeffs.push(serial.pop_front().unwrap());
+    }
+    let mut x_coeffs = vec![];
+    for _ in 0 .. coeffs.2 {
+      x_coeffs.push(serial.pop_front().unwrap());
+    }
+    let zero_coeff = serial.pop_front().unwrap();
+    assert_eq!(serial.len(), (coeffs.0 + coeffs.1 + coeffs.2 + coeffs.3) % 2);
+
+    debug_assert_eq!(
+      coeffs,
+      (usize::from(u8::from(y_coeff.is_some())), yx_coeffs.len(), x_coeffs.len(), 1)
+    );
+
+    EmbeddedDivisor { y_coeff, yx_coeffs, x_coeffs, zero_coeff, differentiated: false }
+  }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+struct DivisorChallenge<'a, C: Ecip>(&'a [C::FieldElement]);
+impl<C: Ecip> DivisorChallenge<'_, C> {
+  fn new<T: Transcript>(points: usize, challenge: T::Challenge) -> Vec<C::FieldElement> {
+    let point = C::to_xy(C::hash_to_G("bp+_ecip", challenge.as_ref()));
+    let (_y_coeff, yx_coeffs, x_coeffs, _zero_coeff) = divisor_coeffs(points);
+
+    // This debug assert makes sure we don't need to use a max statement
+    // While we could remove it for a max statement, this not holding means some significant
+    // structural changes to the polynomial occured, which are assumed abnormal
+    debug_assert!(x_coeffs > yx_coeffs, "yx_coeffs had more terms than x_coeffs");
+
+    let mut res = Vec::with_capacity(x_coeffs + 1);
+    res.push(point.1);
+
+    // Create the powers of x
+    res.push(point.0);
+    while res.len() < (1 + x_coeffs) {
+      res.push(*res.last().unwrap() * point.0);
+    }
+
+    res
+  }
+
+  fn y_coeff(&self, negative: bool) -> C::FieldElement {
+    if negative {
+      -self.0[0]
+    } else {
+      self.0[0]
+    }
+  }
+
+  fn x_coeffs(&self) -> &[C::FieldElement] {
+    &self.0[1 ..]
+  }
+}
+
+impl EmbeddedDivisor {
+  fn eval<C: EmbeddedCurveOperations>(
+    &self,
+    challenge: ChallengeReference,
+    neg_y: bool,
+  ) -> Constraint<C> {
+    let mut constraint = Constraint::new("divisor_eval");
+
+    if let Some(y_coeff) = self.y_coeff {
+      constraint.weight_with_challenge(
+        y_coeff,
+        challenge,
+        Box::new(move |challenge| DivisorChallenge::<C::Embedded>(challenge).y_coeff(neg_y)),
+      );
+    }
+
+    let differentiated = self.differentiated;
+    for (i, yx_coeff) in self.yx_coeffs.iter().enumerate() {
+      constraint.weight_with_challenge(
+        *yx_coeff,
+        challenge,
+        Box::new(move |challenge| {
+          let challenge = DivisorChallenge::<C::Embedded>(challenge);
+          (if differentiated {
+            challenge.x_coeffs()[i] *
+              <C::Embedded as Ecip>::FieldElement::from(u64::try_from(i + 2).unwrap())
+          } else {
+            challenge.x_coeffs()[i]
+          }) * challenge.y_coeff(neg_y)
+        }),
+      );
+    }
+
+    for (i, x_coeff) in self.x_coeffs.iter().enumerate() {
+      constraint.weight_with_challenge(
+        *x_coeff,
+        challenge,
+        Box::new(move |challenge| {
+          let challenge = DivisorChallenge::<C::Embedded>(challenge);
+          if differentiated {
+            challenge.x_coeffs()[i] *
+              <C::Embedded as Ecip>::FieldElement::from(u64::try_from(i + 2).unwrap())
+          } else {
+            challenge.x_coeffs()[i]
+          }
+        }),
+      );
+    }
+
+    constraint.weight(self.zero_coeff, <C::Embedded as Ecip>::FieldElement::ONE);
+
+    constraint
+  }
+}
+
+// This uses a divisor to prove knowledge of a DLog with just 1.5 gates per point, plus a
+// constant 8 gates
 // This is more than twice as performant as incomplete addition and is closer to being complete
 // (only identity is unsupported)
 //
-// Ideally, it's 1.5 gates per point, plus a constant 3 (if an O(1) divisor-non-zero check is
-// implemented)
-//
-// TODO: The currently implemented vector commitment scheme, if used, multiplies the gate count
-// by 7 due to adding 2 gates per item (with 3 items per gate (left, right, output))
-// That means this uses 12.25 gates per point
-// If a zero-cost vector commitment scheme isn't implemented, this isn't worth it for proofs
-// which don't already incur the vector commitment scheme's overhead
-//
 // Gate count is notated GC
+
+// TODO: Each arithmetic circuit gate is two IP rows. The currently implemented vector commitment
+// scheme adds 2 rows per item, with 3 items in each gate (left, right, output)
+// This means the cost goes from 1.5 gates per point to 6, making it less efficient than incomplete
+// addition for proofs not already incurring the vector commitment scheme's overhead
+// We *need* a zero-overhead vector commitment scheme
 
 // TODO: Can we impl a batch DLog PoK?
 pub(crate) fn divisor_dlog_pok<
@@ -176,19 +371,16 @@ pub(crate) fn divisor_dlog_pok<
     (vec![None; G.2], None)
   };
 
+  // GC: 1 per point
   let mut dlog = Vec::with_capacity(bits.len());
   for bit in bits {
     dlog.push(Bit::new_from_choice(circuit, bit));
   }
 
-  // These yx len checks should be the correct formulas...
-  let yx_coeffs = |points| if points <= 4 { None } else { Some((points / 2) - 2) };
-  let x_coeffs = |points| points / 2;
-
   let points = G.2 + 1;
 
   // Create the divisor
-  let (y_coefficient, yx_coefficients, x_coefficients, zero_coefficient) = if circuit.prover() {
+  let divisor = if circuit.prover() {
     let mut Gs = Gs.expect("prover didn't populate Gs");
     Gs.push(-C::Embedded::from_xy(circuit.unchecked_value(p.x), circuit.unchecked_value(p.y)));
     debug_assert_eq!(Gs.len(), points);
@@ -204,353 +396,347 @@ pub(crate) fn divisor_dlog_pok<
       "1 (a non-identity x == identity, which is false)",
     );
 
-    // TODO: Can we achieve a more efficient divisor representation via derivatives?
-    let divisor = Divisor::<C::Embedded>::new(&without_identity);
-    let Poly { y_coefficients, yx_coefficients, x_coefficients, zero_coefficient } = divisor;
-    debug_assert!(
-      y_coefficients.len() <= 1,
-      "multiple y coefficients were present despite reduction by a modulus with a y**2 term"
-    );
-    debug_assert_eq!(
-      yx_coeffs(without_identity.len()),
-      yx_coefficients.get(0).map(|vec| vec.len()),
-      "yx_coeffs formula is wrong"
-    );
-    debug_assert_eq!(
-      x_coeffs(without_identity.len()),
-      x_coefficients.len(),
-      "x_coeffs formula is wrong"
-    );
-    debug_assert_eq!(
-      x_coefficients.last().expect("prover's polynomial was empty despite having points"),
-      &C::F::ONE,
-      "polynomial didn't have its leading x coefficient normalized to 1"
-    );
-
-    (
-      Some(y_coefficients.get(0).copied().unwrap_or(C::F::ZERO)),
-      Some(yx_coefficients),
-      Some(x_coefficients),
-      Some(zero_coefficient),
-    )
+    Some(Divisor::<C::Embedded>::new(&without_identity).normalize_x_coefficient())
   } else {
-    (None, None, None, None)
+    None
   };
+  let embedded = EmbeddedDivisor::new(circuit, points, &divisor);
 
-  let x_coeffs = x_coeffs(points);
-  // There will be a non-zero amount of yx_coeffs so long as at least 4 points were used
-  // This is calling yx_coeffs with points, the theoretical amount allowed, not Gs.len(), the
-  // amount used
-  // Panic on the trivial case of a <= 3**4 order
-  let yx_coeffs = yx_coeffs(points).expect("only 3**4 points were allowed");
-
-  // Make sure one of the x coefficients is 1, and therefore that this divisor isn't equal to 0
-  //
-  // This is a O(n) algorithm since the polynomial is of variable length, and the highest-order
-  // term is the one with a coefficient of 1
-  //
-  // We can normalize so the lowest-order term has a coefficient of 1, yet it'd make some
-  // divisors unrepresentable. Doing so would be worth it if said divisors are negligible
-  // (divisors for when only two bits in the scalar were set)
-  //
-  // Alternatively, a distinct method for proving the divisor isn't identical to zero may be
-  // viable
-  //
-  // TODO
-
-  // GC: 0.5 per point
-  let x_coefficients = if let Some(mut x_coefficients) = x_coefficients {
-    let mut res = x_coefficients.drain(..).map(Some).collect::<Vec<_>>();
-    while res.len() < x_coeffs {
-      res.push(Some(C::F::ZERO));
-    }
-    res
-  } else {
-    vec![None; x_coeffs]
-  };
-  debug_assert_eq!(x_coefficients.len(), x_coeffs, "x_coefficients lost consistency with x_coeffs");
-  let x_coefficients_sub_one = set_with_constant(circuit, C::F::ONE, &x_coefficients);
-  drop(x_coefficients);
+  // Make sure the divisor isn't zero
+  // TODO: Don't add it in-circuit in the first place
+  circuit.equals_constant(embedded.x_coeffs[0], C::F::ONE);
 
   // We need to select a challenge point for the divisor
   // This requires committing to the divisor, a ZK variable
   // We do this by creating a vector commitment for the divisor's variables
   // This commitment is then what's hashed for challenges
-  // Creating the commitment, along with evaluating the divisor, requires its presence in gates
-
-  // The x coefficients were already used in gates thanks to checking one of them was 1
-  // Technically, the coefficients - 1 were, yet that's irrelevant to the commitment
-
-  let mut transcript = x_coefficients_sub_one.clone();
-
-  // Add the rest of the divisor into the circuit
-  // GC: 0.25 per point
-  let (y_coefficient, yx_coefficients, zero_coefficient) = {
-    // First, create a serial representation of the divisor
-    let mut serial_divisor = {
-      let mut serial_divisor = vec![];
-
-      for i in 0 .. yx_coeffs {
-        // Add Some(yx_coeff) if prover has a yx_coeff
-        // Add Some(0) if prover doesn't have a yx_coeff
-        // Add None if verifier
-        serial_divisor.push(if circuit.prover() {
-          Some(
-            yx_coefficients
-              .as_ref()
-              .expect("prover didn't set yx_coefficients")
-              .get(0)
-              .cloned()
-              .unwrap_or(vec![])
-              .get(i)
-              .cloned()
-              .unwrap_or(C::F::ZERO),
-          )
-        } else {
-          None
-        });
-      }
-
-      serial_divisor.push(y_coefficient);
-      serial_divisor.push(zero_coefficient);
-      serial_divisor
-    };
-
-    // Next, add all of the vars in circuit
-    let serial_divisor =
-      serial_divisor.drain(..).map(|e| circuit.add_secret_input(e)).collect::<Vec<_>>();
-
-    // Use each variable in a product to enable their usage in constraints
-    let mut serial_divisor = {
-      let mut i = 0;
-      let mut products = vec![];
-      while i < serial_divisor.len() {
-        let l = serial_divisor[i];
-        let r = serial_divisor.get(i + 1).copied();
-
-        // TODO: Merge the tail case with something else
-        let (l, r_prod, _) = circuit.product(l, r.unwrap_or(l)).0;
-        products.push(l);
-        if r.is_some() {
-          products.push(r_prod);
-        }
-
-        i += 2;
-      }
-
-      products
-    };
-
-    // Decompose the serial divisor back to its components
-    let zero_coefficient = serial_divisor.pop().unwrap();
-    let y_coefficient = serial_divisor.pop().unwrap();
-    let yx_coefficients = serial_divisor;
-
-    transcript.extend(&yx_coefficients);
-    transcript.push(y_coefficient);
-    transcript.push(zero_coefficient);
-
-    (y_coefficient, yx_coefficients, zero_coefficient)
-  };
-
-  // Also transcript the DLog
-  for bit in &dlog {
-    // Note: We can only bind a single element, the re-composition of the DLog, if desirable
-    // It'd be a single sharable gate and one constraint
-    transcript
-      .push(circuit.variable_to_product(bit.variable).expect("bit was created without a gate"));
-  }
-
-  // And finally the point itself
-  transcript.push(circuit.variable_to_product(p.x).expect("on-curve check didn't use x in a gate"));
-  transcript.push(circuit.variable_to_product(p.y).expect("on-curve check didn't use y in a gate"));
-
-  // Create the commitment
-  let commitment = circuit.allocate_vector_commitment();
-  circuit.bind(commitment, transcript, None);
-  circuit.finalize_commitment(commitment, Some(C::F::random(rng)).filter(|_| circuit.prover()));
-
-  // Evaluate the divisor over the challenge, and over -challenge
-  let (challenge, challenge_xy) = circuit.in_circuit_challenge(
-    commitment,
-    Box::new(move |challenge| {
-      let point = C::Embedded::to_xy(C::Embedded::hash_to_G("bp+_ecip", challenge.as_ref()));
-
-      // Create the powers of x
-
-      // This debug assert makes sure we don't need to use a max statement
-      // While we could remove it for a max statement, this not holding means some significant
-      // structural changes to the polynomial occured, which are assumed abnormal
-      debug_assert!(x_coeffs > yx_coeffs, "yx_coeffs had more terms than x_coeffs");
-
-      let mut res = Vec::with_capacity(x_coeffs + 1);
-      res.push(point.0);
-      while res.len() < x_coeffs {
-        res.push(*res.last().unwrap() * point.0);
-      }
-
-      // Also push the y coordinate
-      res.push(point.1);
-      res
-    }),
-  );
-
-  let mut lhs_constraint = Constraint::new("ecip_lhs");
-  lhs_constraint.weight(zero_coefficient, C::F::ONE);
-
-  let mut neg_lhs_constraint = lhs_constraint.clone();
-
-  // Perform the x_coeffs
-  let mut x_res = vec![];
-  for i in 0 .. x_coeffs {
-    // Because these x coefficients are minus 1, the left hand side will be short 1 x_pows[i]
-    lhs_constraint.weight_with_challenge(
-      x_coefficients_sub_one[i],
-      challenge,
-      Box::new(move |x_pows_y| x_pows_y[i]),
-    );
-    neg_lhs_constraint.weight_with_challenge(
-      x_coefficients_sub_one[i],
-      challenge,
-      Box::new(move |x_pows_y| x_pows_y[i]),
-    );
-
-    x_res.push(if circuit.prover() {
-      Some(
-        (circuit.unchecked_value(x_coefficients_sub_one[i].variable()) + C::F::ONE) *
-          challenge_xy.as_ref().unwrap()[i],
-      )
-    } else {
-      None
-    });
-  }
-
-  // Adjust the right hand side accordingly
-  lhs_constraint.rhs_offset_with_challenge(
-    challenge,
-    Box::new(move |x_pows_y: &[C::F]| -(x_pows_y[.. (x_pows_y.len() - 1)].iter().sum::<C::F>())),
-  );
-  neg_lhs_constraint.rhs_offset_with_challenge(
-    challenge,
-    Box::new(move |x_pows_y: &[C::F]| -(x_pows_y[.. (x_pows_y.len() - 1)].iter().sum::<C::F>())),
-  );
-
-  // Perform the yx_coeffs
-  let mut yx_res = vec![];
-  for i in 0 .. yx_coeffs {
-    lhs_constraint.weight_with_challenge(
-      yx_coefficients[i],
-      challenge,
-      Box::new(move |x_pows_y| x_pows_y[i] * x_pows_y.last().unwrap()),
-    );
-    neg_lhs_constraint.weight_with_challenge(
-      yx_coefficients[i],
-      challenge,
-      Box::new(move |x_pows_y: &[C::F]| -(x_pows_y[i] * x_pows_y.last().unwrap())),
-    );
-    yx_res.push(if circuit.prover() {
-      Some(
-        (*challenge_xy.as_ref().unwrap().last().unwrap() * challenge_xy.as_ref().unwrap()[i]) *
-          circuit.unchecked_value(yx_coefficients[i].variable()),
-      )
-    } else {
-      None
-    });
-  }
-
-  lhs_constraint.weight_with_challenge(
-    y_coefficient,
-    challenge,
-    Box::new(move |x_pows_y| *x_pows_y.last().unwrap()),
-  );
-  neg_lhs_constraint.weight_with_challenge(
-    y_coefficient,
-    challenge,
-    Box::new(move |x_pows_y: &[C::F]| -*x_pows_y.last().unwrap()),
-  );
-
-  let (lhs, neg_lhs) = if circuit.prover() {
-    let common = circuit.unchecked_value(zero_coefficient.variable()) +
-      x_res.drain(..).map(Option::unwrap).sum::<C::F>();
-    let yx = yx_res.drain(..).map(Option::unwrap).sum::<C::F>();
-    let y = circuit.unchecked_value(y_coefficient.variable()) *
-      challenge_xy.as_ref().unwrap().last().unwrap();
-    (Some(common + yx + y), Some(common - yx - y))
-  } else {
-    (None, None)
-  };
-  drop(x_res);
-  drop(yx_res);
-
-  let lhs = circuit.add_secret_input(lhs);
-  let neg_lhs = circuit.add_secret_input(neg_lhs);
-  // GC: 1
-  let ((lhs_to_constrain, neg_lhs_to_constrain, lhs), _) = circuit.product(lhs, neg_lhs);
-  lhs_constraint.weight(lhs_to_constrain, -C::F::ONE);
-  circuit.constrain(lhs_constraint);
-  neg_lhs_constraint.weight(neg_lhs_to_constrain, -C::F::ONE);
-  circuit.constrain(neg_lhs_constraint);
-
-  // Perform the right hand side evaluation
-
-  // Iterate over the generators' forms, either including them or using the multiplicative
-  // identity if that bit wasn't set
-
-  // GC: 1 per point
-  let mut accum = None;
-  for (bit, G) in dlog.iter().zip(G.1.iter()).take(points - 1) {
-    // let this_rhs =
-    //   bit.select_constant(circuit, C::F::ONE, challenge_x - C::Embedded::to_xy(*G).0);
-    // Inlined due to the usage of a challenge
-    let this_rhs = {
-      let if_false = C::F::ONE;
-
-      let chosen = Some(()).filter(|_| circuit.prover()).map(|_| {
-        C::F::conditional_select(
-          &if_false,
-          &(challenge_xy.as_ref().unwrap()[0] - G),
-          bit.value.unwrap(),
-        )
-      });
-
-      let chosen = circuit.add_secret_input(chosen);
-
-      // Constrain chosen = (if_true * bit) + (-if_false * minus_one)
-      let mut chosen_constraint = Constraint::new("chosen");
-      chosen_constraint.weight_with_challenge(
-        circuit.variable_to_product(bit.variable).unwrap(),
-        challenge,
-        Box::new(move |x_pows_y| x_pows_y[0] - G),
-      );
-      chosen_constraint.weight(circuit.variable_to_product(bit.minus_one).unwrap(), -if_false);
-      circuit.set_variable_constraint(chosen, chosen_constraint);
-
-      chosen
-    };
-
-    if let Some(accum_var) = accum {
-      accum = Some(circuit.product(accum_var, this_rhs).1);
-    } else {
-      accum = Some(this_rhs);
+  let commitment = {
+    let mut transcript = embedded.x_coeffs.clone();
+    transcript.extend(&embedded.yx_coeffs);
+    transcript.push(embedded.zero_coeff);
+    if let Some(y_coeff) = embedded.y_coeff {
+      transcript.push(y_coeff);
     }
-  }
 
-  // Include the point the prover is claiming to know the DLog for
-  let challenge_x_sub_x = circuit.add_secret_input(if circuit.prover() {
-    Some(challenge_xy.as_ref().unwrap()[0] - circuit.unchecked_value(p.x))
+    // Also transcript the DLog
+    for bit in &dlog {
+      // Note: We can only bind a single element, the re-composition of the DLog, if desirable
+      // It'd be a single sharable gate and one constraint
+      transcript
+        .push(circuit.variable_to_product(bit.variable).expect("bit was created without a gate"));
+    }
+
+    // And finally the point itself
+    transcript
+      .push(circuit.variable_to_product(p.x).expect("on-curve check didn't use x in a gate"));
+    transcript
+      .push(circuit.variable_to_product(p.y).expect("on-curve check didn't use y in a gate"));
+
+    // Create the commitment
+    let commitment = circuit.allocate_vector_commitment();
+    circuit.bind(commitment, transcript, None);
+    circuit.finalize_commitment(commitment, Some(C::F::random(rng)).filter(|_| circuit.prover()));
+    commitment
+  };
+
+  let (challenge, challenge_actual) = circuit.in_circuit_challenge(
+    commitment,
+    Box::new(move |challenge| DivisorChallenge::<C::Embedded>::new::<T>(points, challenge)),
+  );
+
+  // Differentiate the divisor
+  let differentiated = divisor.as_ref().map(Poly::differentiate);
+
+  // The following comments are taken from the EC IP library
+  /*
+    Differentation by x practically involves:
+    - Dropping everything without an x component
+    - Shifting everything down a power of x
+    - If the x power is greater than 2, multiplying the new term's coefficient by the x power in
+      question
+  */
+  let dx = {
+    // The following can panic for elliptic curves with a capacity in trits < 4
+    // These are considered too trivial to be worth writing code for
+    let mut yx_coeffs = embedded.yx_coeffs.clone();
+    let y_coeff = yx_coeffs.remove(0);
+    let mut x_coeffs = embedded.x_coeffs.clone();
+    let zero_coeff = x_coeffs.remove(0);
+    // Each yx/x coefficient needs weighting by `i + 2`, where i is its zero-indexed position
+    EmbeddedDivisor {
+      y_coeff: Some(y_coeff),
+      yx_coeffs,
+      x_coeffs,
+      zero_coeff,
+      differentiated: true,
+    }
+  };
+
+  /*
+    Differentation by y is trivial
+    It's the y coefficient as the zero coefficient, and the yx coefficients as the x
+    coefficients
+    This is thanks to any y term over y^2 being reduced out
+  */
+  let dy = EmbeddedDivisor {
+    y_coeff: None,
+    yx_coeffs: vec![],
+    x_coeffs: embedded.yx_coeffs.clone(),
+    zero_coeff: embedded.y_coeff.expect("divisor didn't have a y coefficient?"),
+    // Sets differentiated = false since despite being differentiated, it doesn't require weighting
+    // This is because all of the powers differentiated were 1, so the only weight needed is 1
+    differentiated: false,
+  };
+
+  // Evaluate the logarithmic derivative for challenge, -challenge
+
+  // The logarithmic derivative is (dx(x, y) + (dy(x, y) * div_formula)) / D, whre div_formula is:
+  //   (3*x^2 + A) / (2*y)
+
+  let div_formula = |x: <C::Embedded as Ecip>::FieldElement,
+                     y: <C::Embedded as Ecip>::FieldElement| {
+    let xsq = x.square();
+    ((xsq.double() + xsq) + <C::Embedded as Ecip>::FieldElement::from(<C::Embedded as Ecip>::A)) *
+      Option::<<C::Embedded as Ecip>::FieldElement>::from(y.double().invert())
+        .expect("challenge y was zero")
+  };
+
+  // Eval dx(x, y)
+  let dx_eval_constraint = dx.eval(challenge, false);
+  let dx_eval = circuit.add_secret_input(
+    challenge_actual
+      .as_ref()
+      .map(|challenge| differentiated.as_ref().unwrap().0.eval(challenge[1], challenge[0])),
+  );
+  circuit.set_variable_constraint(dx_eval, dx_eval_constraint);
+
+  // Eval dx(x, -y)
+  let neg_dx_eval_constraint: Constraint<C> = dx.eval(challenge, true);
+  let neg_dx_eval = circuit.add_secret_input(
+    challenge_actual
+      .as_ref()
+      .map(|challenge| differentiated.as_ref().unwrap().0.eval(challenge[1], -challenge[0])),
+  );
+  circuit.set_variable_constraint(neg_dx_eval, neg_dx_eval_constraint);
+
+  // dy(y) * div_formula
+  let dy_div_formula = {
+    let dy_eval_constraint: Constraint<C> = dy.eval(challenge, false);
+    let dy_eval = circuit.add_secret_input(
+      challenge_actual
+        .as_ref()
+        .map(|challenge| differentiated.as_ref().unwrap().1.eval(challenge[1], challenge[0])),
+    );
+    circuit.set_variable_constraint(dy_eval, dy_eval_constraint);
+
+    let div_formula_eval = circuit.add_secret_input(
+      challenge_actual.as_ref().map(|challenge| div_formula(challenge[1], challenge[0])),
+    );
+    {
+      let mut constraint: Constraint<C> = Constraint::new("div_formula");
+      constraint.rhs_offset_with_challenge(
+        challenge,
+        Box::new(move |challenge| {
+          // - since the variable is subtracted from the lhs
+          -div_formula(challenge[1], challenge[0])
+        }),
+      );
+      circuit.set_variable_constraint(div_formula_eval, constraint);
+    }
+
+    // GC: 1
+    circuit.product(dy_eval, div_formula_eval).0 .2
+  };
+
+  // Eval dy(-y) * div_formula
+  let neg_dy_div_formula = {
+    let neg_dy_eval_constraint: Constraint<C> = dy.eval(challenge, true);
+    let neg_dy_eval = circuit.add_secret_input(
+      challenge_actual
+        .as_ref()
+        .map(|challenge| differentiated.as_ref().unwrap().1.eval(challenge[1], -challenge[0])),
+    );
+    circuit.set_variable_constraint(neg_dy_eval, neg_dy_eval_constraint);
+
+    // TODO: We should be able to cache and negate the first div_formula call
+    let neg_div_formula = circuit.add_secret_input(
+      challenge_actual.as_ref().map(|challenge| div_formula(challenge[1], -challenge[0])),
+    );
+    {
+      let mut constraint: Constraint<C> = Constraint::new("neg_div_formula");
+      constraint.rhs_offset_with_challenge(
+        challenge,
+        Box::new(move |challenge| {
+          // - since the variable is subtracted from the lhs
+          -div_formula(challenge[1], -challenge[0])
+        }),
+      );
+      circuit.set_variable_constraint(neg_div_formula, constraint);
+    }
+
+    // GC: 1
+    circuit.product(neg_dy_eval, neg_div_formula).0 .2
+  };
+
+  // We still have to do (dx + dy_div_formula) / D
+  // That requires the dx evaluations being committed to
+  // GC: 1
+  let ((dx_eval, neg_dx_eval, _), _) = circuit.product(dx_eval, neg_dx_eval);
+
+  // TODO: Write a single function to eval dx, dy, then delete the duplicated -y code
+
+  // Eval D
+  let d_eval_constraint: Constraint<C> = embedded.eval(challenge, false);
+  let d_eval_raw = challenge_actual
+    .as_ref()
+    .map(|challenge| divisor.as_ref().unwrap().eval(challenge[1], challenge[0]));
+  let d_eval = circuit.add_secret_input(d_eval_raw);
+  circuit.set_variable_constraint(d_eval, d_eval_constraint);
+
+  // Eval D for -y
+  let neg_d_eval_constraint: Constraint<C> = embedded.eval(challenge, true);
+  let neg_d_eval_raw = challenge_actual
+    .as_ref()
+    .map(|challenge| divisor.as_ref().unwrap().eval(challenge[1], -challenge[0]));
+  let neg_d_eval = circuit.add_secret_input(neg_d_eval_raw);
+  circuit.set_variable_constraint(neg_d_eval, neg_d_eval_constraint);
+
+  // We now need the inverse of d_eval and neg_d_eval
+  let d_inv = circuit.add_secret_input(d_eval_raw.map(|d| {
+    Option::<<C::Embedded as Ecip>::FieldElement>::from(d.invert())
+      .expect("divisor evaluated to zero")
+  }));
+  // GC: 1
+  // TODO: Gadget out inversions
+  let ((_, d_inv, one), _) = circuit.product(d_eval, d_inv);
+  circuit.equals_constant(one, C::F::ONE);
+
+  let neg_d_inv = circuit.add_secret_input(neg_d_eval_raw.map(|d| {
+    Option::<<C::Embedded as Ecip>::FieldElement>::from(d.invert())
+      .expect("divisor evaluated to zero")
+  }));
+  // GC: 1
+  let ((_, neg_d_inv, one), _) = circuit.product(neg_d_eval, neg_d_inv);
+  circuit.equals_constant(one, C::F::ONE);
+
+  // Eval (dx + dy_div_formula) / D
+  let dx_dy_div_formula = circuit.add_secret_input(if circuit.prover() {
+    Some(
+      circuit.unchecked_value(dx_eval.variable()) +
+        circuit.unchecked_value(dy_div_formula.variable()),
+    )
   } else {
     None
   });
+  {
+    let mut constraint: Constraint<C> = Constraint::new("dx_dy_div_formula");
+    constraint.weight(dx_eval, C::F::ONE);
+    constraint.weight(dy_div_formula, C::F::ONE);
+    circuit.set_variable_constraint(dx_dy_div_formula, constraint);
+  }
   // GC: 1
-  let ((_, challenge_x_sub_x, rhs), _) = circuit.product(accum.unwrap(), challenge_x_sub_x);
-  let mut constraint = Constraint::new("challenge_x_sub_x");
-  constraint.weight(
-    circuit.variable_to_product(p.x).expect("point used in DLog PoK wasn't checked to be on curve"),
-    C::F::ONE,
-  );
-  constraint.weight(challenge_x_sub_x, C::F::ONE);
-  constraint.rhs_offset_with_challenge(challenge, Box::new(move |x_pows_y| x_pows_y[0]));
-  circuit.constrain(constraint);
+  let y_res = circuit.product(dx_dy_div_formula, d_inv.variable()).0 .2;
 
-  circuit.constrain_equality(lhs, rhs);
+  // Eval (neg_dx + neg_dy_div_formula) / D
+  let neg_dx_dy_div_formula = circuit.add_secret_input(if circuit.prover() {
+    Some(
+      circuit.unchecked_value(neg_dx_eval.variable()) +
+        circuit.unchecked_value(neg_dy_div_formula.variable()),
+    )
+  } else {
+    None
+  });
+  {
+    let mut constraint: Constraint<C> = Constraint::new("neg_dx_dy_div_formula");
+    constraint.weight(neg_dx_eval, C::F::ONE);
+    constraint.weight(neg_dy_div_formula, C::F::ONE);
+    circuit.set_variable_constraint(neg_dx_dy_div_formula, constraint);
+  }
+  // GC: 1
+  let neg_y_res = circuit.product(neg_dx_dy_div_formula, neg_d_inv.variable()).0 .2;
+
+  if circuit.prover() {
+    let log_deriv = divisor.as_ref().unwrap().logarithmic_derivative::<C::Embedded>();
+    let y = challenge_actual.as_ref().unwrap()[0];
+    let x = challenge_actual.as_ref().unwrap()[1];
+
+    assert_eq!(
+      circuit.unchecked_value(y_res.variable()),
+      (log_deriv.numerator.eval(x, y) *
+        Option::<<C::Embedded as Ecip>::FieldElement>::from(
+          log_deriv.denominator.eval(x, y).invert(),
+        )
+        .expect("denominator eval'd to 0"))
+    );
+    assert_eq!(
+      circuit.unchecked_value(neg_y_res.variable()),
+      (log_deriv.numerator.eval(x, -y) *
+        Option::<<C::Embedded as Ecip>::FieldElement>::from(
+          log_deriv.denominator.eval(x, -y).invert()
+        )
+        .expect("denominator eval'd to 0"))
+    );
+  }
+
+  // y_res + neg_y_res should equal Sum(bit * (1 / (c.x - Gi.x))) + (1 / (c.x - P.x))
+  let mut interpolates: Constraint<C> = Constraint::new("dlog_pok_final");
+  // Add the rhs to the constraint's lhs
+  for (x, bit) in G.1.iter().zip(dlog.iter()) {
+    interpolates.weight_with_challenge(
+      circuit.variable_to_product(bit.variable).unwrap(),
+      challenge,
+      Box::new(move |challenge: &[<C::Embedded as Ecip>::FieldElement]| {
+        Option::<<C::Embedded as Ecip>::FieldElement>::from((challenge[1] - x).invert())
+          .expect("challenge point was one of the tabled points")
+      }),
+    );
+  }
+
+  // Invert c.x - P.x
+  let c_x_minus_point_x = circuit.add_secret_input(if circuit.prover() {
+    Some(challenge_actual.as_ref().unwrap()[1] - circuit.unchecked_value(p.x))
+  } else {
+    None
+  });
+
+  let c_x_minus_point_x_inv = circuit.add_secret_input(if circuit.prover() {
+    Some(
+      Option::<<C::Embedded as Ecip>::FieldElement>::from(
+        circuit.unchecked_value(c_x_minus_point_x).invert(),
+      )
+      .expect("challenge x was equivalent to point's"),
+    )
+  } else {
+    None
+  });
+
+  // GC: 1
+  let ((c_x_minus_point_x, c_x_minus_point_x_inv, one), _) =
+    circuit.product(c_x_minus_point_x, c_x_minus_point_x_inv);
+  {
+    let mut c_x_minus_point_x_constraint: Constraint<C> = Constraint::new("c_x_minus_point_x");
+    // 0 = -c.x
+    c_x_minus_point_x_constraint.rhs_offset_with_challenge(
+      challenge,
+      Box::new(|challenge: &[<C::Embedded as Ecip>::FieldElement]| -challenge[1]),
+    );
+    // -P.x = -c.x
+    c_x_minus_point_x_constraint.weight(
+      circuit
+        .variable_to_product(p.x)
+        .expect("p.x didn't have a ProductReference, which it would if on-curve checked"),
+      -C::F::ONE,
+    );
+    // -P.x - (c.x - P.x) = -c.x
+    // -P.x - c.x + P.x = -c.x
+    // -c.x = -c.x
+    c_x_minus_point_x_constraint.weight(c_x_minus_point_x, -C::F::ONE);
+    circuit.constrain(c_x_minus_point_x_constraint);
+    circuit.equals_constant(one, C::F::ONE);
+  }
+  interpolates.weight(c_x_minus_point_x_inv, C::F::ONE);
+
+  interpolates.weight(y_res, -C::F::ONE);
+  interpolates.weight(neg_y_res, -C::F::ONE);
+  circuit.constrain(interpolates);
 }
