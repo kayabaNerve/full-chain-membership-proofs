@@ -8,14 +8,14 @@ use ciphersuite::{
 use crate::{Ecip, Divisor, experimental::*};
 
 #[test]
-fn test_dlog() {
-  // Test with a divisor in case the "dlog" function is incomplete
+fn test_log_deriv() {
+  // Test with a divisor in case the Logarithmic derivative function is incomplete
   // Since it's meant to be used with divisors, any divisor passed should work
   let mut points = vec![<Pallas as Ciphersuite>::G::random(&mut OsRng)];
   points.push(-points.iter().sum::<<Pallas as Ciphersuite>::G>());
   let divisor = Divisor::<Pallas>::new(&points);
 
-  dlog::<Pallas>(&divisor);
+  log_deriv::<Pallas>(&divisor);
 }
 
 #[test]
@@ -33,27 +33,27 @@ fn test_experimental_eval() {
 
     let challenge = <Pallas as Ciphersuite>::G::random(&mut OsRng);
 
-    let mut dlog = dlog::<Pallas>(&divisor);
-    assert_eq!(dlog.numerator.y_coefficients.len(), 1);
+    let mut log_deriv = log_deriv::<Pallas>(&divisor);
+    assert_eq!(log_deriv.numerator.y_coefficients.len(), 1);
 
     {
       let mut rhs = <Pallas as Ecip>::FieldElement::ZERO;
       for point in &points {
         rhs += eval_challenge_against_point::<Pallas>(challenge, *point);
       }
-      assert_eq!(eval_challenge::<Pallas>(challenge, dlog.clone()), rhs);
+      assert_eq!(eval_challenge::<Pallas>(challenge, log_deriv.clone()), rhs);
     }
 
     // Normalize so the y coefficient is 1
     // This allows checking the divisor isn't 0
-    normalize_y_coefficient(&mut dlog);
-    assert_eq!(dlog.numerator.y_coefficients, vec![<Pallas as Ecip>::FieldElement::ONE]);
+    normalize_y_coefficient(&mut log_deriv);
+    assert_eq!(log_deriv.numerator.y_coefficients, vec![<Pallas as Ecip>::FieldElement::ONE]);
     {
       let mut rhs = <Pallas as Ecip>::FieldElement::ZERO;
       for point in points {
         rhs += eval_challenge_against_point::<Pallas>(challenge, point);
       }
-      assert_eq!(eval_challenge::<Pallas>(challenge, dlog), rhs);
+      assert_eq!(eval_challenge::<Pallas>(challenge, log_deriv), rhs);
     }
   }
 }

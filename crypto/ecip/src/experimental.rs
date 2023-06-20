@@ -36,7 +36,8 @@ pub fn get_polys<F: Field>(poly: &Poly<F>) -> (Poly<F>, Poly<F>) {
 }
 */
 
-pub fn dlog<C: Ecip>(poly: &Poly<C::FieldElement>) -> Divisor<C> {
+/// Logarithmic derivative.
+pub fn log_deriv<C: Ecip>(poly: &Poly<C::FieldElement>) -> Divisor<C> {
   let (dx, dy) = poly.differentiate();
 
   // Dz = Dx + Dy * ((3*x^2 + A) / (2*y))
@@ -91,7 +92,7 @@ pub fn normalize_y_coefficient<C: Ecip>(divisor: &mut Divisor<C>) {
   divisor.denominator = divisor.denominator.clone().scale(scalar);
 }
 
-pub(crate) fn eval_challenge<C: Ecip>(challenge: C::G, dlog: Divisor<C>) -> C::FieldElement {
+pub(crate) fn eval_challenge<C: Ecip>(challenge: C::G, log_deriv: Divisor<C>) -> C::FieldElement {
   let neg_dbl = -challenge.double();
   let (slope, _) = slope_intercept::<C>(challenge, neg_dbl);
 
@@ -106,15 +107,15 @@ pub(crate) fn eval_challenge<C: Ecip>(challenge: C::G, dlog: Divisor<C>) -> C::F
       .unwrap();
   let coeff0 = coeff2 + slope.double();
 
-  let mut dlog_left = dlog.clone();
-  dlog_left.numerator = dlog_left.numerator.scale(coeff0);
-  let left =
-    dlog_left.numerator.eval(cx, cy) * dlog_left.denominator.eval(cx, cy).invert().unwrap();
+  let mut log_deriv_left = log_deriv.clone();
+  log_deriv_left.numerator = log_deriv_left.numerator.scale(coeff0);
+  let left = log_deriv_left.numerator.eval(cx, cy) *
+    log_deriv_left.denominator.eval(cx, cy).invert().unwrap();
 
-  let mut dlog_right = dlog;
-  dlog_right.numerator = dlog_right.numerator.scale(coeff2);
-  let right =
-    dlog_right.numerator.eval(dx, dy) * dlog_right.denominator.eval(dx, dy).invert().unwrap();
+  let mut log_deriv_right = log_deriv;
+  log_deriv_right.numerator = log_deriv_right.numerator.scale(coeff2);
+  let right = log_deriv_right.numerator.eval(dx, dy) *
+    log_deriv_right.denominator.eval(dx, dy).invert().unwrap();
 
   left - right
 }
