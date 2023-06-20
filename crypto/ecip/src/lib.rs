@@ -11,8 +11,6 @@ use ciphersuite::{
 mod poly;
 pub use poly::*;
 
-pub(crate) mod experimental;
-
 #[cfg(test)]
 pub(crate) mod tests;
 
@@ -173,41 +171,6 @@ impl<C: Ecip> Divisor<C> {
 
     res
   }
-
-  /*
-  // FieldElement divisor.
-  // Rearranges Product(xi) to a polynomial F(x), where F(x) = Product(x + xi).
-  // This is notable as the polynomial evaluation can happen via constraints, without adding gates.
-  #[allow(clippy::new_ret_no_self)]
-  pub fn new_fe(fes: &[C::FieldElement]) -> Poly<C::FieldElement> {
-    assert!(!fes.is_empty());
-
-    let mut res = Poly {
-      y_coefficients: vec![],
-      yx_coefficients: vec![],
-      x_coefficients: vec![],
-      zero_coefficient: C::FieldElement::ONE,
-    };
-    for fe in fes {
-      res = res.mul(
-        &Poly {
-          y_coefficients: vec![],
-          yx_coefficients: vec![],
-          x_coefficients: vec![C::FieldElement::ONE],
-          zero_coefficient: *fe,
-        },
-        // Use a modulus with a y coefficient so no reduction occurs
-        &Poly {
-          y_coefficients: vec![C::FieldElement::ONE],
-          yx_coefficients: vec![],
-          x_coefficients: vec![],
-          zero_coefficient: C::FieldElement::ZERO,
-        },
-      );
-    }
-    res
-  }
-  */
 }
 
 #[cfg(any(test, feature = "pasta"))]

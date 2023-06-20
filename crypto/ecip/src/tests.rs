@@ -7,8 +7,6 @@ use ciphersuite::{
 
 use crate::{Ecip, Poly, Divisor};
 
-mod experimental;
-
 #[test]
 fn test_poly() {
   type F = <Vesta as Ciphersuite>::F;
@@ -115,26 +113,6 @@ fn test_same_point() {
   }
   assert_eq!(divisor.eval(x, y) * divisor.eval(x, -y), rhs);
 }
-
-/*
-#[test]
-fn test_fe_divisor() {
-  for i in 1 .. 256 {
-    let mut fes = vec![];
-    for _ in 0 .. i {
-      fes.push(<Pallas as Ecip>::FieldElement::random(&mut OsRng));
-    }
-    let divisor = Divisor::<Pallas>::new_fe(&fes);
-
-    let challenge = <Pallas as Ecip>::FieldElement::random(&mut rand_core::OsRng);
-    assert_eq!(divisor.x_coefficients.len(), i);
-    assert_eq!(
-      divisor.eval(challenge, <Pallas as Ecip>::FieldElement::ZERO),
-      fes.iter().map(|r| challenge + r).product::<<Pallas as Ecip>::FieldElement>(),
-    );
-  }
-}
-*/
 
 #[test]
 fn test_differentation() {
