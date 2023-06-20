@@ -201,3 +201,52 @@ fn test_differentation() {
     }
   );
 }
+
+#[test]
+fn test_log_deriv_eval() {
+  for i in 0 .. 256 {
+    if (i % 2) != 1 {
+      continue;
+    }
+    let mut points = vec![];
+    for _ in 0 .. i {
+      points.push(<Pallas as Ciphersuite>::G::random(&mut OsRng));
+    }
+    points.push(-points.iter().sum::<<Pallas as Ciphersuite>::G>());
+    let divisor = Divisor::<Pallas>::new(&points);
+
+    let challenge = <Pallas as Ciphersuite>::G::random(&mut OsRng);
+
+    // Classic check
+    {
+      let (x, y) = <Pallas as Ecip>::to_xy(challenge);
+      let lhs = divisor.eval(x, y) * divisor.eval(x, -y);
+      let mut rhs = <Pallas as Ecip>::FieldElement::ONE;
+      for point in &points {
+        rhs *= x - <Pallas as Ecip>::to_xy(*point).0;
+      }
+      assert_eq!(lhs, rhs);
+    }
+
+    let test = |divisor: Poly<_>| {
+      let (x, y) = <Pallas as Ecip>::to_xy(challenge);
+
+      // (dx(x, y) / D(x, y)) + (dy(x, y) * ((3x**2 + A) / 2y) / D(x, y)) =
+      // eval of logarithmic derivative
+
+      let log_deriv = divisor.logarithmic_derivative::<Pallas>();
+      let lhs = (log_deriv.numerator.eval(x, y) *
+        log_deriv.denominator.eval(x, y).invert().unwrap()) +
+        (log_deriv.numerator.eval(x, -y) * log_deriv.denominator.eval(x, -y).invert().unwrap());
+
+      let mut rhs = <Pallas as Ecip>::FieldElement::ZERO;
+      for point in &points {
+        rhs += (x - <Pallas as Ecip>::to_xy(*point).0).invert().unwrap();
+      }
+
+      assert_eq!(lhs, rhs);
+    };
+    test(divisor.clone());
+    test(divisor.normalize_x_coefficient());
+  }
+}
