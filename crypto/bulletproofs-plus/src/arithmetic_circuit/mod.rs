@@ -459,7 +459,6 @@ impl<'a, T: 'static + Transcript, C: Ciphersuite> Circuit<'a, T, C> {
     res
   }
 
-  // TODO: This can be optimized with post-processing passes
   fn compile(
     self,
   ) -> (
