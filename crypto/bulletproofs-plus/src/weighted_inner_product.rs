@@ -258,6 +258,7 @@ impl<'a, T: 'static + Transcript, C: Ciphersuite, GB: 'a + Clone + AsRef<[Multie
 
     // Does 12, a static const, instead of challenges.len(), a dynamic value
     // Does limit amount of rows to 2**12
+    // TODO: Remove this limitation, dynamically sizing to the proof size
     assert!(challenges.len() <= 12);
     let mut product_tree: Vec<DynArray<DynArray<C::F, { 1 << 12 }>, 12>> = Vec::with_capacity(12);
     product_tree.push(DynArray {
