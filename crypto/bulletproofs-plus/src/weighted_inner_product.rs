@@ -222,31 +222,31 @@ impl<'a, T: 'static + Transcript, C: Ciphersuite, GB: 'a + Clone + AsRef<[Multie
   fn challenge_products(challenges: &[(C::F, C::F)]) -> Vec<C::F> {
     // This code halved scalar multiplications yet was significantly slower than its predecessor
     // This was due to its fragmentation of memory
-    // Use a single array to allow Rust to pack it
-    // TODO: Pack this. Most of the sub-arrays are not nearly this big
+
+    // Fixed size array with dynamically tracked length
     #[derive(Clone, Copy)]
     struct DynArray<T, const N: usize> {
       arr: [T; N],
       // Length in use
       len: usize,
     }
-
     impl<T, const N: usize> Index<usize> for DynArray<T, N> {
       type Output = T;
       fn index(&self, index: usize) -> &T {
-        assert!(index <= self.len);
+        debug_assert!(index <= self.len);
         &self.arr[index]
       }
     }
-
     impl<T, const N: usize> IndexMut<usize> for DynArray<T, N> {
       fn index_mut(&mut self, index: usize) -> &mut T {
-        assert!(index <= self.len);
+        debug_assert!(index <= self.len);
         &mut self.arr[index]
       }
     }
-
     impl<T, const N: usize> DynArray<T, N> {
+      fn new() -> Self {
+        Self { arr: unsafe { std::mem::MaybeUninit::uninit().assume_init() }, len: 0 }
+      }
       fn push(&mut self, item: T) {
         self.arr[self.len] = item;
         self.len += 1;
@@ -256,15 +256,27 @@ impl<'a, T: 'static + Transcript, C: Ciphersuite, GB: 'a + Clone + AsRef<[Multie
       }
     }
 
+    // Singly allocated scratch space
+    let mut scratch_vec =
+      vec![C::F::ONE; ((1 << challenges.len()) * 2).max(1)];
+    let scratch = scratch_vec.as_mut_ptr();
+    let mut free_ptr = 0usize;
+
+    let mut alloc = |amount| {
+      debug_assert!((free_ptr + amount) <= scratch_vec.len());
+      let res =
+        unsafe { std::slice::from_raw_parts_mut(scratch.add(free_ptr), amount) };
+      free_ptr += amount;
+      res
+    };
+
     // Does 12, a static const, instead of challenges.len(), a dynamic value
     // Does limit amount of rows to 2**12
     // TODO: Remove this limitation, dynamically sizing to the proof size
-    assert!(challenges.len() <= 12);
-    let mut product_tree: Vec<DynArray<DynArray<C::F, { 1 << 12 }>, 12>> = Vec::with_capacity(12);
-    product_tree.push(DynArray {
-      arr: [DynArray { arr: [C::F::ONE; 1 << 12], len: 1 << challenges.len() }; 12],
-      len: 1,
-    });
+    debug_assert!(challenges.len() <= 12);
+    let mut product_tree: DynArray<DynArray<&mut [C::F], 12>, 12> = DynArray::new();
+    product_tree.push(DynArray::new());
+    product_tree[0].push(alloc(1 << challenges.len()));
 
     if !challenges.is_empty() {
       let log2_floor = |n: usize| {
@@ -297,27 +309,20 @@ impl<'a, T: 'static + Transcript, C: Ciphersuite, GB: 'a + Clone + AsRef<[Multie
 
           if i == 0 {
             // Add the next layer to the tree
-            product_tree.push(DynArray {
-              arr: [DynArray { arr: [C::F::ZERO; 1 << 12], len: 0 }; 12],
-              len: 0,
-            });
+            product_tree.push(DynArray::new());
           }
 
           debug_assert_eq!(left_child, log2_floor(1 << left_child));
-          product_tree[tree_depth + 1]
-            .push(DynArray { arr: [C::F::ONE; 1 << 12], len: 1 << left_child });
+          product_tree[tree_depth + 1].push(alloc(1 << left_child));
           if right_child > 0 {
             debug_assert_eq!(right_child, log2_floor(1 << right_child));
-            product_tree[tree_depth + 1]
-              .push(DynArray { arr: [C::F::ONE; 1 << 12], len: 1 << right_child });
+            product_tree[tree_depth + 1].push(alloc(1 << right_child));
           }
         }
 
         tree_depth += 1;
         log_n >>= 1;
       }
-
-      debug_assert_eq!(product_tree.len(), challenges.len());
 
       // Multiply the leaves together
       let leaf_depth = product_tree.len() - 1;
@@ -387,9 +392,8 @@ impl<'a, T: 'static + Transcript, C: Ciphersuite, GB: 'a + Clone + AsRef<[Multie
       }
     }
 
-    let mut res = product_tree[0][0].arr.to_vec();
-    res.truncate(product_tree[0][0].len);
-    res
+    // TODO: Remove this alloc
+    product_tree[0][0].to_vec()
   }
 
   pub fn prove<R: RngCore + CryptoRng>(
