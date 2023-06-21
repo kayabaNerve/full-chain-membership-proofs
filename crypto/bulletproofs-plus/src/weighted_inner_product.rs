@@ -227,7 +227,7 @@ impl<'a, T: 'static + Transcript, C: Ciphersuite, GB: 'a + Clone + AsRef<[Multie
       // Set up the product tree
       let mut tree_depth = 0;
       let mut log_n = challenges.len() - 1;
-      while log_n > 0 {
+      while log_n > 1 {
         let n_parents = product_tree[tree_depth].len();
         for i in 0 .. n_parents {
           let n_parent_challenge_columns = challenge_tree[tree_depth][i];
