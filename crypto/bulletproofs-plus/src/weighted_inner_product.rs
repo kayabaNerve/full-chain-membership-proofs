@@ -222,7 +222,15 @@ impl<'a, T: 'static + Transcript, C: Ciphersuite, GB: 'a + Clone + AsRef<[Multie
     let mut product_tree = vec![vec![vec![C::F::ONE; 1 << challenges.len()]]];
 
     if !challenges.is_empty() {
-      let mut challenge_tree = vec![vec![challenges.len(); 1]];
+      let log2_floor = |n: usize| {
+        let mut res = 0;
+        let mut log_n = n;
+        while log_n > 1 {
+          res += 1;
+          log_n >>= 1;
+        }
+        res
+      };
 
       // Set up the product tree
       let mut tree_depth = 0;
@@ -230,7 +238,7 @@ impl<'a, T: 'static + Transcript, C: Ciphersuite, GB: 'a + Clone + AsRef<[Multie
       while log_n > 1 {
         let n_parents = product_tree[tree_depth].len();
         for i in 0 .. n_parents {
-          let n_parent_challenge_columns = challenge_tree[tree_depth][i];
+          let n_parent_challenge_columns = log2_floor(product_tree[tree_depth][i].len());
           let get_children_sizes = |parent_size: usize| {
             if parent_size > 2 {
               let right_child_size = parent_size >> 1;
@@ -244,14 +252,13 @@ impl<'a, T: 'static + Transcript, C: Ciphersuite, GB: 'a + Clone + AsRef<[Multie
 
           if i == 0 {
             // Add the next layer to the tree
-            challenge_tree.push(vec![]);
             product_tree.push(vec![]);
           }
 
-          challenge_tree[tree_depth + 1].push(left_child);
+          debug_assert_eq!(left_child, log2_floor(1 << left_child));
           product_tree[tree_depth + 1].push(vec![C::F::ONE; 1 << left_child]);
           if right_child > 0 {
-            challenge_tree[tree_depth + 1].push(right_child);
+            debug_assert_eq!(right_child, log2_floor(1 << right_child));
             product_tree[tree_depth + 1].push(vec![C::F::ONE; 1 << right_child]);
           }
         }
@@ -298,15 +305,15 @@ impl<'a, T: 'static + Transcript, C: Ciphersuite, GB: 'a + Clone + AsRef<[Multie
           let n_parent_products = product_tree[parent_depth][i].len();
           let n_left_child_products = product_tree[child_depth][child_idx].len();
 
-          let parent_eq_child = n_parent_products == n_left_child_products;
+          let parent_eq_child = log2_floor(n_parent_products) == log2_floor(n_left_child_products);
           if !parent_eq_child {
             debug_assert_eq!(
-              n_parent_products,
-              n_left_child_products + product_tree[child_depth][child_idx + 1].len()
+              log2_floor(n_parent_products),
+              log2_floor(n_left_child_products) +
+                log2_floor(product_tree[child_depth][child_idx + 1].len())
             );
           }
 
-          debug_assert_eq!(product_tree[parent_depth][i].len(), n_parent_products);
           for j in 0 .. n_parent_products {
             let left_idx = j * product_tree[child_depth][child_idx].len() / n_parent_products;
             let left_child = product_tree[child_depth][child_idx][left_idx];
