@@ -1,4 +1,3 @@
-use core::ops::{Index, IndexMut};
 use std::sync::RwLock;
 
 use rand_core::{RngCore, CryptoRng};
@@ -225,42 +224,6 @@ impl<'a, T: 'static + Transcript, C: Ciphersuite, GB: 'a + Clone + AsRef<[Multie
 
   */
   fn challenge_products(scratch_slice: &mut [C::F], challenges: &[(C::F, C::F)]) -> &'a mut [C::F] {
-    // This code halved scalar multiplications yet was significantly slower than its predecessor
-    // This was due to its fragmentation of memory
-
-    // Fixed size array with dynamically tracked length
-    #[derive(Clone, Copy)]
-    struct DynArray<T, const N: usize> {
-      arr: [T; N],
-      // Length in use
-      len: usize,
-    }
-    impl<T, const N: usize> Index<usize> for DynArray<T, N> {
-      type Output = T;
-      fn index(&self, index: usize) -> &T {
-        debug_assert!(index <= self.len);
-        &self.arr[index]
-      }
-    }
-    impl<T, const N: usize> IndexMut<usize> for DynArray<T, N> {
-      fn index_mut(&mut self, index: usize) -> &mut T {
-        debug_assert!(index <= self.len);
-        &mut self.arr[index]
-      }
-    }
-    impl<T, const N: usize> DynArray<T, N> {
-      fn new() -> Self {
-        Self { arr: unsafe { std::mem::MaybeUninit::uninit().assume_init() }, len: 0 }
-      }
-      fn push(&mut self, item: T) {
-        self.arr[self.len] = item;
-        self.len += 1;
-      }
-      fn len(&self) -> usize {
-        self.len
-      }
-    }
-
     let scratch = scratch_slice.as_mut_ptr();
     let mut free_ptr = 0usize;
 
@@ -281,9 +244,7 @@ impl<'a, T: 'static + Transcript, C: Ciphersuite, GB: 'a + Clone + AsRef<[Multie
     // Does limit amount of rows to 2**12
     // TODO: Remove this limitation, dynamically sizing to the proof size
     debug_assert!(challenges.len() <= 12);
-    let mut product_tree: DynArray<DynArray<&mut [C::F], 12>, 12> = DynArray::new();
-    product_tree.push(DynArray::new());
-    product_tree[0].push(alloc(1 << challenges.len()));
+    let mut product_tree = vec![vec![alloc(1 << challenges.len())]];
 
     if !challenges.is_empty() {
       let log2_floor = |n: usize| {
@@ -316,7 +277,7 @@ impl<'a, T: 'static + Transcript, C: Ciphersuite, GB: 'a + Clone + AsRef<[Multie
 
           if i == 0 {
             // Add the next layer to the tree
-            product_tree.push(DynArray::new());
+            product_tree.push(vec![]);
           }
 
           debug_assert_eq!(left_child, log2_floor(1 << left_child));
