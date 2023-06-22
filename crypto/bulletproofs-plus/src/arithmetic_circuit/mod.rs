@@ -459,7 +459,6 @@ impl<'a, T: 'static + Transcript, C: Ciphersuite> Circuit<'a, T, C> {
     res
   }
 
-  // TODO: This can be optimized with post-processing passes
   fn compile(
     self,
   ) -> (
@@ -472,6 +471,10 @@ impl<'a, T: 'static + Transcript, C: Ciphersuite> Circuit<'a, T, C> {
     Vec<(Option<C::F>, (GeneratorsList, usize))>,
     Option<ArithmeticCircuitWitness<C>>,
   ) {
+    for variable_constraint in self.variable_constraints.values() {
+      assert!(variable_constraint.is_none());
+    }
+
     let (commitments, witness) = if self.prover {
       let mut aL = vec![];
       let mut aR = vec![];

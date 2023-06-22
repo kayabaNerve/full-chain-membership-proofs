@@ -14,17 +14,15 @@ Ed25519, the pasta curves, or tevone.
 
 ## Status
 
-Several optimizations are possible, such as:
+Optimizations are possible, such as:
 
 - Implementation of a proper vector commitment scheme
-- Reduction of the amount of `clone`s
+- A more efficient g_bold/h_bold dlog calculation for the verifier
+- Optiming the neglected prover
 
 This library uses asserts instead of `Result`. It also has extraneous asserts
-which should be moved to debug.
-
-The included vector commitment scheme code was largely tacked on and is
-accordingly much uglier than the rest of the code in this library. It could use
-a lot of love.
+which should be moved to debug, and some debug asserts which may preferable as
+regular asserts.
 
 The transcript policies of this library need to be reviewed.
 
