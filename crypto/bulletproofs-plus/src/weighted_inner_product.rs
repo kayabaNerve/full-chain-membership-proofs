@@ -1,4 +1,5 @@
 use core::ops::{Index, IndexMut};
+use std::sync::RwLock;
 
 use rand_core::{RngCore, CryptoRng};
 
@@ -14,6 +15,10 @@ use ciphersuite::{
   },
   Ciphersuite,
 };
+
+lazy_static::lazy_static! {
+  static ref WIP_SCRATCH: RwLock<Vec<[u8; 32]>> = RwLock::new(vec![[0; 32]; 2 << 17]);
+}
 
 use crate::{
   ScalarVector, PointVector, GeneratorsList, InnerProductGenerators, padded_pow_of_2,
@@ -219,7 +224,7 @@ impl<'a, T: 'static + Transcript, C: Ciphersuite, GB: 'a + Clone + AsRef<[Multie
       Final multiplication:           [c0 * c1 * c2] * [c3 * c4]
 
   */
-  fn challenge_products(challenges: &[(C::F, C::F)]) -> Vec<C::F> {
+  fn challenge_products(scratch_slice: &mut [C::F], challenges: &[(C::F, C::F)]) -> &'a mut [C::F] {
     // This code halved scalar multiplications yet was significantly slower than its predecessor
     // This was due to its fragmentation of memory
 
@@ -256,17 +261,19 @@ impl<'a, T: 'static + Transcript, C: Ciphersuite, GB: 'a + Clone + AsRef<[Multie
       }
     }
 
-    // Singly allocated scratch space
-    let mut scratch_vec =
-      vec![C::F::ONE; ((1 << challenges.len()) * 2).max(1)];
-    let scratch = scratch_vec.as_mut_ptr();
+    let scratch = scratch_slice.as_mut_ptr();
     let mut free_ptr = 0usize;
 
     let mut alloc = |amount| {
-      debug_assert!((free_ptr + amount) <= scratch_vec.len());
+      debug_assert!((free_ptr + amount) <= scratch_slice.len());
+
       let res =
         unsafe { std::slice::from_raw_parts_mut(scratch.add(free_ptr), amount) };
       free_ptr += amount;
+
+      for item in res.iter_mut() {
+        *item = C::F::ONE;
+      }
       res
     };
 
@@ -392,8 +399,9 @@ impl<'a, T: 'static + Transcript, C: Ciphersuite, GB: 'a + Clone + AsRef<[Multie
       }
     }
 
-    // TODO: Remove this alloc
-    product_tree[0][0].to_vec()
+    let res = &mut product_tree[0][0];
+    // Recreate the slice so it has the expected lifetime
+    unsafe { std::slice::from_raw_parts_mut(res.as_mut_ptr(), res.len()) }
   }
 
   pub fn prove<R: RngCore + CryptoRng>(
@@ -587,6 +595,7 @@ impl<'a, T: 'static + Transcript, C: Ciphersuite, GB: 'a + Clone + AsRef<[Multie
     P_terms.reserve(6 + (2 * generators.len()) + proof.L.len());
 
     let mut challenges = Vec::with_capacity(proof.L.len());
+    let mut wip_scratch = (*WIP_SCRATCH).write().unwrap();
     let product_cache = {
       let mut es = Vec::with_capacity(proof.L.len());
       for (L, R) in proof.L.iter().zip(proof.R.iter()) {
@@ -617,7 +626,8 @@ impl<'a, T: 'static + Transcript, C: Ciphersuite, GB: 'a + Clone + AsRef<[Multie
         P_terms.push((inv_e_square, MultiexpPoint::Variable(*R)));
       }
 
-      Self::challenge_products(&challenges)
+      assert!(std::mem::size_of::<C::F>() <= 32);
+      Self::challenge_products(unsafe { std::slice::from_raw_parts_mut(wip_scratch.as_mut_ptr() as *mut C::F, wip_scratch.len()) }, &challenges)
     };
 
     let e = Self::transcript_A_B(transcript, proof.A, proof.B);
