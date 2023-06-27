@@ -17,8 +17,7 @@ Ed25519, the pasta curves, or tevone.
 Optimizations are possible, such as:
 
 - Implementation of a proper vector commitment scheme
-- A more efficient g_bold/h_bold dlog calculation for the verifier
-- Optiming the neglected prover
+- Optimizing the neglected prover
 
 This library uses asserts instead of `Result`. It also has extraneous asserts
 which should be moved to debug, and some debug asserts which may preferable as
