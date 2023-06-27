@@ -17,18 +17,8 @@ rustdoc-args = ["--cfg", "docsrs"]
 flexible-transcript = { path = "../../crypto/transcript", features = ["recommended", "merlin"] }
 
 dalek-ff-group = { path = "../../crypto/dalek-ff-group" }
-minimal-ed448 = { path = "../../crypto/ed448" }
 tevone = { path = "../../crypto/tevone" }
 
-ciphersuite = { path = "../../crypto/ciphersuite", default-features = false, features = ["alloc", "secp256k1", "p256", "ed25519", "ristretto", "ed448"] }
+ciphersuite = { path = "../../crypto/ciphersuite", default-features = false, features = ["alloc", "ed25519", "ristretto"] }
 
 multiexp = { path = "../../crypto/multiexp", default-features = false, features = ["batch"] }
-
-# dleq = { path = "../../crypto/dleq" }
-schnorr-signatures = { path = "../../crypto/schnorr", default-features = false }
-
-# dkg = { path = "../../crypto/dkg" }
-# modular-frost = { path = "../../crypto/frost" }
-# frost-schnorrkel = { path = "../../crypto/schnorrkel" }
-
-monero-generators = { path = "../../coins/monero/generators", default-features = false, features = ["alloc"] }

@@ -7,23 +7,15 @@ members = [
 
   "crypto/ff-group-tests",
   "crypto/dalek-ff-group",
-  "crypto/ed448",
   "crypto/ciphersuite",
 
   "crypto/multiexp",
-
-  "crypto/schnorr",
-  "crypto/dleq",
-  "crypto/dkg",
-  "crypto/frost",
 
   "crypto/tevone",
   "crypto/copz-dleq",
   "crypto/ecip",
   "crypto/bulletproofs-plus",
   "crypto/curve-trees",
-
-  "coins/monero",
 
   "tests/no-std",
 ]
@@ -42,8 +34,6 @@ crypto-bigint = { opt-level = 3 }
 dalek-ff-group = { opt-level = 3 }
 
 multiexp = { opt-level = 3 }
-
-monero-serai = { opt-level = 3 }
 
 [profile.release]
 panic = "unwind"

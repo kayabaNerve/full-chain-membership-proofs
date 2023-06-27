@@ -23,7 +23,6 @@ subtle = { version = "^2.4", default-features = false }
 digest = { version = "0.10", default-features = false }
 transcript = { package = "flexible-transcript", path = "../transcript", version = "0.3" }
 sha2 = { version = "0.10", default-features = false, optional = true }
-sha3 = { version = "0.10", default-features = false, optional = true }
 blake2 = { version = "0.10", default-features = false, optional = true }
 
 ff = { version = "0.13", default-features = false, features = ["bits"] }
@@ -32,12 +31,6 @@ group = { version = "0.13", default-features = false }
 crypto-bigint = { version = "0.5", default-features = false }
 
 dalek-ff-group = { path = "../dalek-ff-group", version = "0.3", optional = true }
-
-elliptic-curve = { version = "0.13", default-features = false, features = ["hash2curve"], optional = true }
-p256 = { version = "^0.13.1", default-features = false, features = ["arithmetic", "bits", "hash2curve"], optional = true }
-k256 = { version = "^0.13.1", default-features = false, features = ["arithmetic", "bits", "hash2curve"], optional = true }
-
-minimal-ed448 = { path = "../ed448", version = "0.3", optional = true }
 
 pasta_curves = { version = "0.5", default-features = false, features = ["bits"], optional = true, git = "https://github.com/kayabaNerve/pasta_curves.git" }
 
@@ -55,12 +48,6 @@ std = ["std-shims/std"]
 dalek = ["sha2", "dalek-ff-group"]
 ed25519 = ["dalek"]
 ristretto = ["dalek"]
-
-kp256 = ["sha2", "elliptic-curve"]
-p256 = ["kp256", "dep:p256"]
-secp256k1 = ["kp256", "k256"]
-
-ed448 = ["sha3", "minimal-ed448"]
 
 pasta = ["blake2", "pasta_curves"]
 

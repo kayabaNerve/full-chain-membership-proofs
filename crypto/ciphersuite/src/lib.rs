@@ -30,18 +30,6 @@ pub use dalek::Ristretto;
 #[cfg(feature = "ed25519")]
 pub use dalek::Ed25519;
 
-#[cfg(feature = "kp256")]
-mod kp256;
-#[cfg(feature = "secp256k1")]
-pub use kp256::Secp256k1;
-#[cfg(feature = "p256")]
-pub use kp256::P256;
-
-#[cfg(feature = "ed448")]
-mod ed448;
-#[cfg(feature = "ed448")]
-pub use ed448::*;
-
 #[cfg(feature = "pasta")]
 mod pasta;
 #[cfg(feature = "pasta")]
