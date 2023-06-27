@@ -1,3 +1,5 @@
+use std::sync::RwLock;
+
 use rand_core::{RngCore, CryptoRng};
 
 use zeroize::{Zeroize, ZeroizeOnDrop};
@@ -12,6 +14,10 @@ use ciphersuite::{
   },
   Ciphersuite,
 };
+
+lazy_static::lazy_static! {
+  static ref WIP_SCRATCH: RwLock<Vec<[u8; 32]>> = RwLock::new(vec![[0; 32]; 2 << 17]);
+}
 
 use crate::{
   ScalarVector, PointVector, GeneratorsList, InnerProductGenerators, padded_pow_of_2,
@@ -204,49 +210,159 @@ impl<'a, T: 'static + Transcript, C: Ciphersuite, GB: 'a + Clone + AsRef<[Multie
 
   /*
 
-  This has room for optimization worth investigating further. It currently takes
-  an iterative approach. It can be optimized further via divide and conquer.
+  Divide and conquer. Build a tree upwards where the root is a vector of the final products.
+  Start by dividing challenges in half. Continue dividing in half until the
+  leaves are either size 2 or 1. Then combine. For example:
 
-  Assume there are 4 challenges.
+      Starting with a challenges vec: [c0, c1, c2, c3, c4]
+      2nd level in the tree:          [c0, c1, c2], [c3, c4]
+      3rd level in the tree:          [c0, c1], [c2], [c3, c4]
 
-  Iterative approach (current):
-    1. Do the optimal multiplications across challenge column 0 and 1.
-    2. Do the optimal multiplications across that result and column 2.
-    3. Do the optimal multiplications across that result and column 3.
-
-  Divide and conquer (worth investigating further):
-    1. Do the optimal multiplications across challenge column 0 and 1.
-    2. Do the optimal multiplications across challenge column 2 and 3.
-    3. Multiply both results together.
-
-  When there are 4 challenges (n=16), the iterative approach does 28 multiplications
-  versus divide and conquer's 24.
+      Then multiply the leaves:       [c0 * c1], [c2], [c3 * c4]
+      Then move up the tree:          [c0 * c1] * [c2], [c3 * c4]
+      Final multiplication:           [c0 * c1 * c2] * [c3 * c4]
 
   */
-  fn challenge_products(challenges: &[(C::F, C::F)]) -> Vec<C::F> {
-    let mut products = vec![C::F::ONE; 1 << challenges.len()];
+  fn challenge_products(scratch_slice: &mut [C::F], challenges: &[(C::F, C::F)]) -> &'a mut [C::F] {
+    let scratch = scratch_slice.as_mut_ptr();
+    let mut free_ptr = 0usize;
+
+    let mut alloc = |amount| {
+      debug_assert!((free_ptr + amount) <= scratch_slice.len());
+
+      let res =
+        unsafe { std::slice::from_raw_parts_mut(scratch.add(free_ptr), amount) };
+      free_ptr += amount;
+
+      for item in res.iter_mut() {
+        *item = C::F::ONE;
+      }
+      res
+    };
+
+    // Does 12, a static const, instead of challenges.len(), a dynamic value
+    // Does limit amount of rows to 2**12
+    // TODO: Remove this limitation, dynamically sizing to the proof size
+    debug_assert!(challenges.len() <= 12);
+    let mut product_tree = vec![vec![alloc(1 << challenges.len())]];
 
     if !challenges.is_empty() {
-      products[0] = challenges[0].1;
-      products[1] = challenges[0].0;
+      let log2_floor = |n: usize| {
+        let mut res = 0;
+        let mut log_n = n;
+        while log_n > 1 {
+          res += 1;
+          log_n >>= 1;
+        }
+        res
+      };
 
-      for (j, challenge) in challenges.iter().enumerate().skip(1) {
-        let mut slots = (1 << (j + 1)) - 1;
-        while slots > 0 {
-          products[slots] = products[slots / 2] * challenge.0;
-          products[slots - 1] = products[slots / 2] * challenge.1;
+      // Set up the product tree
+      let mut tree_depth = 0;
+      let mut log_n = challenges.len() - 1;
+      while log_n > 1 {
+        let n_parents = product_tree[tree_depth].len();
+        for i in 0 .. n_parents {
+          let n_parent_challenge_columns = log2_floor(product_tree[tree_depth][i].len());
+          let get_children_sizes = |parent_size: usize| {
+            if parent_size > 2 {
+              let right_child_size = parent_size >> 1;
+              let left_child_size = right_child_size + (parent_size % 2);
+              (left_child_size, right_child_size)
+            } else {
+              (parent_size, 0)
+            }
+          };
+          let (left_child, right_child) = get_children_sizes(n_parent_challenge_columns);
 
-          slots = slots.saturating_sub(2);
+          if i == 0 {
+            // Add the next layer to the tree
+            product_tree.push(vec![]);
+          }
+
+          debug_assert_eq!(left_child, log2_floor(1 << left_child));
+          product_tree[tree_depth + 1].push(alloc(1 << left_child));
+          if right_child > 0 {
+            debug_assert_eq!(right_child, log2_floor(1 << right_child));
+            product_tree[tree_depth + 1].push(alloc(1 << right_child));
+          }
+        }
+
+        tree_depth += 1;
+        log_n >>= 1;
+      }
+
+      // Multiply the leaves together
+      let leaf_depth = product_tree.len() - 1;
+      let mut challenge_idx = 0;
+      for i in 0 .. product_tree[leaf_depth].len() {
+        if product_tree[leaf_depth][i].len() == 4 {
+          product_tree[leaf_depth][i][0] =
+            challenges[challenge_idx].1 * challenges[challenge_idx + 1].1;
+          product_tree[leaf_depth][i][1] =
+            challenges[challenge_idx].1 * challenges[challenge_idx + 1].0;
+          product_tree[leaf_depth][i][2] =
+            challenges[challenge_idx].0 * challenges[challenge_idx + 1].1;
+          product_tree[leaf_depth][i][3] =
+            challenges[challenge_idx].0 * challenges[challenge_idx + 1].0;
+
+          challenge_idx += 2;
+        } else {
+          debug_assert_eq!(product_tree[leaf_depth][i].len(), 2);
+          product_tree[leaf_depth][i][0] = challenges[challenge_idx].1;
+          product_tree[leaf_depth][i][1] = challenges[challenge_idx].0;
+
+          challenge_idx += 1;
         }
       }
 
-      // Sanity check since if the above failed to populate, it'd be critical
-      for product in &products {
-        debug_assert!(!bool::from(product.is_zero()));
+      // Iterate up the tree multiplying children together
+      let mut parent_depth = leaf_depth;
+      while parent_depth > 0 {
+        let child_depth = parent_depth;
+        parent_depth -= 1;
+
+        let n_parents = product_tree[parent_depth].len();
+        let mut child_idx = 0;
+
+        debug_assert_eq!(product_tree[parent_depth].len(), n_parents);
+        for i in 0 .. n_parents {
+          let n_parent_products = product_tree[parent_depth][i].len();
+          let n_left_child_products = product_tree[child_depth][child_idx].len();
+
+          let parent_eq_child = log2_floor(n_parent_products) == log2_floor(n_left_child_products);
+          if !parent_eq_child {
+            debug_assert_eq!(
+              log2_floor(n_parent_products),
+              log2_floor(n_left_child_products) +
+                log2_floor(product_tree[child_depth][child_idx + 1].len())
+            );
+          }
+
+          for j in 0 .. n_parent_products {
+            let left_idx = j * product_tree[child_depth][child_idx].len() / n_parent_products;
+            let left_child = product_tree[child_depth][child_idx][left_idx];
+            if parent_eq_child {
+              product_tree[parent_depth][i][j] = left_child;
+            } else {
+              let right_idx = j % product_tree[child_depth][child_idx + 1].len();
+              let right_child = product_tree[child_depth][child_idx + 1][right_idx];
+              product_tree[parent_depth][i][j] = left_child * right_child;
+            }
+          }
+
+          if parent_eq_child {
+            child_idx += 1;
+          } else {
+            child_idx += 2;
+          }
+        }
       }
     }
 
-    products
+    let res = &mut product_tree[0][0];
+    // Recreate the slice so it has the expected lifetime
+    unsafe { std::slice::from_raw_parts_mut(res.as_mut_ptr(), res.len()) }
   }
 
   pub fn prove<R: RngCore + CryptoRng>(
@@ -440,6 +556,7 @@ impl<'a, T: 'static + Transcript, C: Ciphersuite, GB: 'a + Clone + AsRef<[Multie
     P_terms.reserve(6 + (2 * generators.len()) + proof.L.len());
 
     let mut challenges = Vec::with_capacity(proof.L.len());
+    let mut wip_scratch = (*WIP_SCRATCH).write().unwrap();
     let product_cache = {
       let mut es = Vec::with_capacity(proof.L.len());
       for (L, R) in proof.L.iter().zip(proof.R.iter()) {
@@ -470,7 +587,8 @@ impl<'a, T: 'static + Transcript, C: Ciphersuite, GB: 'a + Clone + AsRef<[Multie
         P_terms.push((inv_e_square, MultiexpPoint::Variable(*R)));
       }
 
-      Self::challenge_products(&challenges)
+      assert!(std::mem::size_of::<C::F>() <= 32);
+      Self::challenge_products(unsafe { std::slice::from_raw_parts_mut(wip_scratch.as_mut_ptr() as *mut C::F, wip_scratch.len()) }, &challenges)
     };
 
     let e = Self::transcript_A_B(transcript, proof.A, proof.B);
