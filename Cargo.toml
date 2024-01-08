@@ -16,8 +16,6 @@ members = [
   "crypto/ecip",
   "crypto/bulletproofs-plus",
   "crypto/curve-trees",
-
-  "tests/no-std",
 ]
 
 # Always compile Monero (and a variety of dependencies) with optimizations due
