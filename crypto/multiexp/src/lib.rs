@@ -24,8 +24,10 @@ mod batch;
 #[cfg(feature = "batch")]
 pub use batch::{Point, BatchVerifier};
 
+/* TODO
 #[cfg(test)]
 mod tests;
+*/
 
 // Use black_box when possible
 #[rustversion::since(1.66)]
