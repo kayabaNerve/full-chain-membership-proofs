@@ -220,9 +220,7 @@ pub fn membership_gadget<R: RngCore + CryptoRng, T: 'static + Transcript, C: Cur
   for i in 1 ..= depth {
     if (i % 2) == 1 {
       let this_blinded_point = blinded_point.map(|point| {
-        let Hash::Even(point) = point else {
-          panic!("blinded_point was odd at odd layer")
-        };
+        let Hash::Even(point) = point else { panic!("blinded_point was odd at odd layer") };
         point
       });
 
@@ -255,9 +253,7 @@ pub fn membership_gadget<R: RngCore + CryptoRng, T: 'static + Transcript, C: Cur
       even_blind = Some(blind);
     } else {
       let this_blinded_point = blinded_point.map(|point| {
-        let Hash::Odd(point) = point else {
-          panic!("blinded_point was even at even layer")
-        };
+        let Hash::Odd(point) = point else { panic!("blinded_point was even at even layer") };
         point
       });
 

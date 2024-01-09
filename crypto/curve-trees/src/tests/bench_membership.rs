@@ -125,15 +125,15 @@ fn bench_membership() {
       Some(blind_c1),
     );
 
-    let (pallas_commitments, _, pallas_vector_commitments, pallas_proof, pallas_proofs) =
+    let (pallas_commitments, _, pallas_vector_commitments, pallas_proof) =
       circuit_c1.prove_with_vector_commitments(&mut OsRng, &mut prove_transcript);
-    let (vesta_commitments, _, vesta_vector_commitments, vesta_proof, vesta_proofs) =
+    let (vesta_commitments, _, vesta_vector_commitments, vesta_proof) =
       circuit_c2.prove_with_vector_commitments(&mut OsRng, &mut prove_transcript);
 
     statements.push(blinded_point);
     proofs.push((
-      (pallas_commitments, pallas_vector_commitments, pallas_proof, pallas_proofs),
-      (vesta_commitments, vesta_vector_commitments, vesta_proof, vesta_proofs),
+      (pallas_commitments, pallas_vector_commitments, pallas_proof),
+      (vesta_commitments, vesta_vector_commitments, vesta_proof),
     ));
   }
   dbg!(std::time::Instant::now() - proving);
@@ -153,8 +153,8 @@ fn bench_membership() {
   for i in 0 .. runs {
     let blinded_point = statements[usize::try_from(i).unwrap()];
     let (
-      (pallas_commitments, pallas_vector_commitments, pallas_proof, pallas_proofs),
-      (vesta_commitments, vesta_vector_commitments, vesta_proof, vesta_proofs),
+      (pallas_commitments, pallas_vector_commitments, pallas_proof),
+      (vesta_commitments, vesta_vector_commitments, vesta_proof),
     ) = proofs[usize::try_from(i).unwrap()].clone();
 
     // We need to arrange the points as post-vars
@@ -199,7 +199,6 @@ fn bench_membership() {
       pallas_vector_commitments,
       c1_additional,
       pallas_proof,
-      pallas_proofs,
     );
     circuit_c2.verify(
       &mut OsRng,
@@ -209,7 +208,6 @@ fn bench_membership() {
       vesta_vector_commitments,
       c2_additional,
       vesta_proof,
-      vesta_proofs,
     );
   }
   dbg!(std::time::Instant::now() - verification);

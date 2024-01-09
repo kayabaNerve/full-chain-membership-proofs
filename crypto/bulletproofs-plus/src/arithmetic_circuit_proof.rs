@@ -4,18 +4,18 @@ use zeroize::{Zeroize, ZeroizeOnDrop};
 
 use transcript::Transcript;
 
-use multiexp::{multiexp, Point as MultiexpPoint, BatchVerifier};
+use multiexp::{multiexp, multiexp_vartime, Point as MultiexpPoint, BatchVerifier};
 use ciphersuite::{
-  group::{ff::Field, GroupEncoding},
+  group::{ff::Field, Group, GroupEncoding},
   Ciphersuite,
 };
 
 use crate::{
   ScalarVector, ScalarMatrix, PointVector, GeneratorsList, ProofGenerators, padded_pow_of_2,
-  weighted_inner_product::{WipStatement, WipWitness, WipProof},
+  inner_product::{IpStatement, IpWitness, IpProof},
 };
 
-// Figure 4
+// 5.1 Relation
 #[derive(Clone, Debug)]
 pub struct ArithmeticCircuitStatement<'a, T: 'static + Transcript, C: Ciphersuite> {
   generators: ProofGenerators<'a, T, C>,
@@ -64,8 +64,20 @@ impl<C: Ciphersuite> ArithmeticCircuitWitness<C> {
 
 #[derive(Clone, Debug, Zeroize)]
 pub struct ArithmeticCircuitProof<C: Ciphersuite> {
-  pub(crate) A: C::G,
-  wip: WipProof<C>,
+  AI: C::G,
+  AO: C::G,
+  S: C::G,
+  T1: C::G,
+  T3: C::G,
+  T4: C::G,
+  T5: C::G,
+  T6: C::G,
+  tau_x: C::F,
+  u: C::F,
+  l: Vec<C::F>,
+  r: Vec<C::F>,
+  // TODO: Implement the logarithmically sized proof
+  // ip: IpProof<C>,
 }
 
 impl<'a, T: 'static + Transcript, C: Ciphersuite> ArithmeticCircuitStatement<'a, T, C> {
@@ -106,117 +118,69 @@ impl<'a, T: 'static + Transcript, C: Ciphersuite> ArithmeticCircuitStatement<'a,
     self.V.transcript(transcript, b"commitment");
   }
 
-  fn transcript_A(transcript: &mut T, A: C::G) -> (C::F, C::F) {
-    transcript.append_message(b"A", A.to_bytes());
-
-    let y = C::hash_to_F(b"arithmetic_circuit_proof", transcript.challenge(b"y").as_ref());
-    if bool::from(y.is_zero()) {
-      panic!("zero challenge in arithmetic circuit proof");
-    }
-
-    let z = C::hash_to_F(b"arithmetic_circuit_proof", transcript.challenge(b"z").as_ref());
-    if bool::from(z.is_zero()) {
-      panic!("zero challenge in arithmetic circuit proof");
-    }
-
-    (y, z)
-  }
-
-  fn compute_A_hat(
-    &self,
+  fn transcript_AI_AO_S(
     transcript: &mut T,
-    A: C::G,
-  ) -> (
-    ScalarVector<C>,
-    Vec<C::F>,
-    ScalarVector<C>,
-    ScalarVector<C>,
-    ScalarVector<C>,
-    ScalarVector<C>,
-    Vec<(C::F, MultiexpPoint<C::G>)>,
-  ) {
-    // TODO: First perform the WIP transcript before acquiring challenges
-    let (y, z) = Self::transcript_A(transcript, A);
+    AI: C::G,
+    AO: C::G,
+    S: C::G,
+    n: usize,
+    q: usize,
+  ) -> (ScalarVector<C>, ScalarVector<C>, ScalarVector<C>) {
+    transcript.append_message(b"AI", AI.to_bytes());
+    transcript.append_message(b"AO", AO.to_bytes());
+    transcript.append_message(b"S", S.to_bytes());
 
-    let q = self.c.len();
-    let n = self.WL.width();
-    assert!(n != 0);
-
-    let z2 = z * z;
-    let mut z_q = Vec::with_capacity(q);
-    z_q.push(z);
-    while z_q.len() < q {
-      z_q.push(*z_q.last().unwrap() * z2);
+    let y_1 = C::hash_to_F(b"arithmetic_circuit_proof", transcript.challenge(b"y").as_ref());
+    if bool::from(y_1.is_zero()) {
+      panic!("zero challenge in arithmetic circuit proof");
     }
-    let z_q = ScalarVector(z_q);
-
-    let n = padded_pow_of_2(n);
-    let mut y_n = Vec::with_capacity(n);
-    y_n.push(y);
-    let mut inv_y_n = Vec::with_capacity(n);
-    inv_y_n.push(y.invert().unwrap());
-    while y_n.len() < n {
-      y_n.push(y_n[y_n.len() - 1] * y);
-      inv_y_n.push(inv_y_n[inv_y_n.len() - 1] * inv_y_n[0]);
-    }
-    let inv_y_n = ScalarVector::<C>(inv_y_n);
-
-    let t_y_z = |W: &ScalarMatrix<C>| {
-      ScalarVector(W.mul_vec(&z_q).0.drain(..).enumerate().map(|(i, w)| w * inv_y_n[i]).collect())
-    };
-    let WL_y_z = t_y_z(&self.WL);
-    let WR_y_z = t_y_z(&self.WR);
-    let WO_y_z = t_y_z(&self.WO);
-
-    let z_q_WV = self.WV.mul_vec(&z_q);
-    // This line ensures we didn't have too many commitments specified
-    assert_eq!(z_q_WV.len(), self.V.len());
-
-    let mut A_terms = Vec::with_capacity(1 + (3 * y_n.len()) + self.V.len() + 1);
-    A_terms.push((C::F::ONE, MultiexpPoint::Variable(A)));
-    for (i, scalar) in WR_y_z.0.iter().enumerate() {
-      A_terms.push((*scalar, self.generators.generator(GeneratorsList::GBold1, i).clone()));
-    }
-    for (i, scalar) in WL_y_z.0.iter().enumerate() {
-      A_terms.push((*scalar, self.generators.generator(GeneratorsList::HBold1, i).clone()));
+    let inv_y_1 = y_1.invert().unwrap();
+    let mut y = Vec::with_capacity(n);
+    let mut inv_y = Vec::with_capacity(n);
+    y.push(C::F::ONE);
+    inv_y.push(C::F::ONE);
+    while y.len() < n {
+      y.push(*y.last().unwrap() * y_1);
+      inv_y.push(*inv_y.last().unwrap() * inv_y_1);
     }
 
-    for (i, scalar) in WO_y_z.0.iter().enumerate() {
-      A_terms.push((
-        (*scalar - C::F::ONE) * inv_y_n.0.last().unwrap(),
-        self.generators.generator(GeneratorsList::HBold2, i).clone(),
-      ));
+    let z_1 = C::hash_to_F(b"arithmetic_circuit_proof", transcript.challenge(b"z").as_ref());
+    if bool::from(z_1.is_zero()) {
+      panic!("zero challenge in arithmetic circuit proof");
     }
-    let neg_inv_y_n = -*inv_y_n.0.last().unwrap();
-    for i in WO_y_z.len() .. inv_y_n.len() {
-      A_terms.push((neg_inv_y_n, self.generators.generator(GeneratorsList::HBold2, i).clone()));
+    let mut z = Vec::with_capacity(q);
+    z.push(z_1);
+    while z.len() < q {
+      z.push(*z.last().unwrap() * z_1);
     }
 
-    for pair in z_q_WV.0.iter().zip(self.V.0.iter()) {
-      A_terms.push((*pair.0, MultiexpPoint::Variable(*pair.1)));
-    }
-    let y_n = ScalarVector(y_n);
-
-    let mut w_WL = WL_y_z.clone();
-    for (i, w) in w_WL.0.iter_mut().enumerate() {
-      *w *= y_n.0[i];
-    }
-    A_terms.push((
-      z_q.inner_product(&self.c) + WR_y_z.inner_product(&w_WL),
-      self.generators.g().clone(),
-    ));
-
-    (y_n, inv_y_n.0, z_q_WV, WL_y_z, WR_y_z, WO_y_z, A_terms)
+    (ScalarVector(y), ScalarVector(inv_y), ScalarVector(z))
   }
 
-  pub fn prove_with_blind<R: RngCore + CryptoRng>(
+  fn transcript_Ts(transcript: &mut T, T1: C::G, T3: C::G, T4: C::G, T5: C::G, T6: C::G) -> C::F {
+    transcript.append_message(b"T1", T1.to_bytes());
+    transcript.append_message(b"T3", T3.to_bytes());
+    transcript.append_message(b"T4", T4.to_bytes());
+    transcript.append_message(b"T5", T5.to_bytes());
+    transcript.append_message(b"T6", T6.to_bytes());
+
+    let x = C::hash_to_F(b"arithmetic_circuit_proof", transcript.challenge(b"x").as_ref());
+    if bool::from(x.is_zero()) {
+      panic!("zero challenge in arithmetic circuit proof");
+    }
+    x
+  }
+
+  pub fn prove<R: RngCore + CryptoRng>(
     self,
     rng: &mut R,
     transcript: &mut T,
     mut witness: ArithmeticCircuitWitness<C>,
-    blind: C::F,
   ) -> ArithmeticCircuitProof<C> {
     let m = self.V.len();
+    let n = witness.aL.len();
+    assert_eq!(self.WL.width(), n);
+    let q = self.WL.length();
 
     assert_eq!(m, witness.v.len());
     assert_eq!(m, witness.gamma.len());
@@ -237,67 +201,133 @@ impl<'a, T: 'static + Transcript, C: Ciphersuite> ArithmeticCircuitStatement<'a,
 
     self.initial_transcript(transcript);
 
-    let alpha = blind;
-    let mut A_terms = Vec::with_capacity((witness.aL.len() * 3) + 1);
+    let alpha = C::F::random(&mut *rng);
+    let beta = C::F::random(&mut *rng);
+    let p = C::F::random(&mut *rng);
+    let mut AI_terms = Vec::with_capacity((witness.aL.len() * 2) + 1);
     for (i, aL) in witness.aL.0.iter().enumerate() {
-      A_terms.push((*aL, self.generators.generator(GeneratorsList::GBold1, i).point()));
+      AI_terms.push((*aL, self.generators.generator(GeneratorsList::GBold1, i).point()));
     }
     for (i, aR) in witness.aR.0.iter().enumerate() {
-      A_terms.push((*aR, self.generators.generator(GeneratorsList::HBold1, i).point()));
+      AI_terms.push((*aR, self.generators.generator(GeneratorsList::HBold1, i).point()));
     }
+    AI_terms.push((alpha, self.generators.h().point()));
+    let AI = multiexp(&AI_terms);
+    AI_terms.zeroize();
+
+    let mut AO_terms = Vec::with_capacity(witness.aL.len() + 1);
     for (i, aO) in witness.aO.0.iter().enumerate() {
-      A_terms.push((*aO, self.generators.generator(GeneratorsList::GBold2, i).point()));
+      AO_terms.push((*aO, self.generators.generator(GeneratorsList::GBold1, i).point()));
     }
-    A_terms.push((alpha, self.generators.h().point()));
-    let A = multiexp(&A_terms);
-    A_terms.zeroize();
+    AO_terms.push((beta, self.generators.h().point()));
+    let AO = multiexp(&AO_terms);
+    AO_terms.zeroize();
 
-    let (y_n, inv_y_n, z_q_WV, WL_y_z, WR_y_z, WO_y_z, A_hat) = self.compute_A_hat(transcript, A);
+    let mut sL = vec![];
+    let mut sR = vec![];
+    let mut S_terms = Vec::with_capacity((witness.aL.len() * 2) + 1);
+    for i in 0 .. n {
+      let new_sL = C::F::random(&mut *rng);
+      sL.push(new_sL);
+      S_terms.push((new_sL, self.generators.generator(GeneratorsList::GBold1, i).point()));
+      let new_sR = C::F::random(&mut *rng);
+      sR.push(new_sR);
+      S_terms.push((new_sR, self.generators.generator(GeneratorsList::HBold1, i).point()));
+    }
+    S_terms.push((p, self.generators.h().point()));
+    let S = multiexp(&S_terms);
+    S_terms.zeroize();
 
-    let mut aL = witness.aL.add_vec(&WR_y_z);
-    let mut aR = witness.aR.add_vec(&WL_y_z);
-    let pow_2 = padded_pow_of_2(aL.len());
-    aL.0.reserve(2 * pow_2);
-    aR.0.reserve(2 * pow_2);
-    while aL.len() < pow_2 {
-      aL.0.push(C::F::ZERO);
-      aR.0.push(C::F::ZERO);
+    let (y, inv_y, z) = Self::transcript_AI_AO_S(transcript, AI, AO, S, n, q);
+    let delta = inv_y.mul_vec(&self.WR.mul_vec(&z)).inner_product(&self.WL.mul_vec(&z));
+
+    let l1_coeff = witness.aL.add_vec(&inv_y.mul_vec(&self.WR.mul_vec(&z)));
+    let l2_coeff = &witness.aO;
+    let l3_coeff = ScalarVector(sL.clone());
+
+    let r0_coeff = self.WO.mul_vec(&z).sub_vec(&y);
+    let r1_coeff = self.WL.mul_vec(&z).add_vec(&y.mul_vec(&witness.aR));
+    let r3_coeff = y.mul_vec(&ScalarVector(sR.clone()));
+
+    let l = |X: C::F| -> ScalarVector<_> {
+      let X2 = X.square();
+      l1_coeff.mul(X).add_vec(&l2_coeff.mul(X2)).add_vec(&l3_coeff.mul(X2 * X))
+    };
+    let r = |X: C::F| -> ScalarVector<_> {
+      r0_coeff.add_vec(&r1_coeff.mul(X)).add_vec(&r3_coeff.mul(X.square() * X))
+    };
+    let t = |X: C::F| -> C::F { l(X).inner_product(&r(X)) };
+
+    /*
+    let w = self
+      .WL
+      .mul_vec(&witness.aL)
+      .add_vec(&self.WR.mul_vec(&witness.aR))
+      .add_vec(&self.WO.mul_vec(&witness.aO));
+    */
+
+    // t1 = (l1 * r0)
+    // t2 = (l1 * r1) + (l2 * r0)
+    // t3 = (l2 * r1) + (l3 * r0)
+    // t4 = (l1 * r3) + (l3 * r1)
+    // t5 = (l2 * r3)
+    // t6 = (l3 * r3)
+
+    let t1 = l1_coeff.inner_product(&r0_coeff);
+    let t2 = l1_coeff.inner_product(&r1_coeff) + l2_coeff.inner_product(&r0_coeff);
+    let t3 = l2_coeff.inner_product(&r1_coeff) + l3_coeff.inner_product(&r0_coeff);
+    let t4 = l1_coeff.inner_product(&r3_coeff) + l3_coeff.inner_product(&r1_coeff);
+    let t5 = l2_coeff.inner_product(&r3_coeff);
+    let t6 = l3_coeff.inner_product(&r3_coeff);
+
+    {
+      let dummy_X = C::F::random(&mut *rng);
+      let dummy_X2 = dummy_X.square();
+      let dummy_X3 = dummy_X2 * dummy_X;
+      let dummy_X4 = dummy_X3 * dummy_X;
+      let dummy_X5 = dummy_X4 * dummy_X;
+      let dummy_X6 = dummy_X5 * dummy_X;
+      assert_eq!(
+        t(dummy_X),
+        (t1 * dummy_X) +
+          (t2 * dummy_X2) +
+          (t3 * dummy_X3) +
+          (t4 * dummy_X4) +
+          (t5 * dummy_X5) +
+          (t6 * dummy_X6)
+      );
     }
 
-    aL.0.append(&mut witness.aO.0);
-    for o in WO_y_z.0 {
-      aR.0.push((o - C::F::ONE) * inv_y_n.last().unwrap());
-    }
+    /*
+    let t2 = witness.aL.inner_product(&witness.aR.mul_vec(&y)) - witness.aO.inner_product(&y) +
+      z.inner_product(&w) +
+      delta;
+    */
 
-    let neg_inv_y_n = -*inv_y_n.last().unwrap();
-    while aR.len() < (2 * pow_2) {
-      aL.0.push(C::F::ZERO);
-      aR.0.push(neg_inv_y_n);
-    }
+    let tau_1 = C::F::random(&mut *rng);
+    let tau_3 = C::F::random(&mut *rng);
+    let tau_4 = C::F::random(&mut *rng);
+    let tau_5 = C::F::random(&mut *rng);
+    let tau_6 = C::F::random(&mut *rng);
+    let T1 = multiexp(&[(t1, self.generators.g().point()), (tau_1, self.generators.h().point())]);
+    let T3 = multiexp(&[(t3, self.generators.g().point()), (tau_3, self.generators.h().point())]);
+    let T4 = multiexp(&[(t4, self.generators.g().point()), (tau_4, self.generators.h().point())]);
+    let T5 = multiexp(&[(t5, self.generators.g().point()), (tau_5, self.generators.h().point())]);
+    let T6 = multiexp(&[(t6, self.generators.g().point()), (tau_6, self.generators.h().point())]);
 
-    let alpha = alpha + z_q_WV.inner_product(&witness.gamma);
+    let x = Self::transcript_Ts(transcript, T1, T3, T4, T5, T6);
+    let l = l(x);
+    let r = r(x);
+    let tau_x = (tau_1 * x) +
+      (self.WV.mul_vec(&z).inner_product(&witness.gamma) * x.square()) +
+      // (z.inner_product(&self.WV.mul_vec(&witness.gamma)) * x.square()) +
+      (tau_3 * x.square() * x) +
+      (tau_4 * x.square().square()) +
+      (tau_5 * x.square().square() * x) +
+      (tau_6 * x.square().square() * x.square());
+    let u = (alpha * x) + (beta * x.square()) + (p * x.square() * x);
 
-    // Safe to not transcript A_hat since A_hat is solely derivative of transcripted values
-    ArithmeticCircuitProof {
-      A,
-      wip: WipStatement::new_without_P_transcript(
-        &self.generators.reduce(self.WL.width(), true),
-        A_hat,
-        y_n,
-        inv_y_n,
-      )
-      .prove(rng, transcript, WipWitness::new(aL, aR, alpha)),
-    }
-  }
-
-  pub fn prove<R: RngCore + CryptoRng>(
-    self,
-    rng: &mut R,
-    transcript: &mut T,
-    witness: ArithmeticCircuitWitness<C>,
-  ) -> ArithmeticCircuitProof<C> {
-    let blind = C::F::random(&mut *rng);
-    self.prove_with_blind(rng, transcript, witness, blind)
+    ArithmeticCircuitProof { AI, AO, S, T1, T3, T4, T5, T6, tau_x, u, l: l.0, r: r.0 }
   }
 
   pub fn verify<R: RngCore + CryptoRng>(
@@ -307,11 +337,78 @@ impl<'a, T: 'static + Transcript, C: Ciphersuite> ArithmeticCircuitStatement<'a,
     transcript: &mut T,
     proof: ArithmeticCircuitProof<C>,
   ) {
-    self.initial_transcript(transcript);
+    let m = self.V.len();
+    let n = self.WL.width();
+    let q = self.WL.length();
 
-    let (y_n, inv_y_n, _, _, _, _, A_hat) = self.compute_A_hat(transcript, proof.A);
-    let reduced = self.generators.reduce(self.WL.width(), true);
-    (WipStatement::new_without_P_transcript(&reduced, A_hat, y_n, inv_y_n))
-      .verify(rng, verifier, transcript, proof.wip);
+    self.initial_transcript(transcript);
+    let (y, inv_y, z) = Self::transcript_AI_AO_S(transcript, proof.AI, proof.AO, proof.S, n, q);
+    let delta = inv_y.mul_vec(&self.WR.mul_vec(&z)).inner_product(&self.WL.mul_vec(&z));
+    let x = Self::transcript_Ts(transcript, proof.T1, proof.T3, proof.T4, proof.T5, proof.T6);
+
+    let reduced = self.generators.reduce(n, true);
+    // TODO: Always keep the following in terms of the original generators to allow de-duplication
+    // within the multiexp
+    let mut hi = vec![];
+    for i in 0 .. n {
+      hi.push(reduced.generator(GeneratorsList::HBold1, i).point() * inv_y[i]);
+    }
+    assert_eq!(reduced.generator(GeneratorsList::HBold1, 0).point(), hi[0]);
+    let hi = PointVector(hi);
+    let WL = hi.mul_vec(&self.WL.mul_vec(&z));
+    let mut WR = vec![];
+    let w_r_scalars = inv_y.mul_vec(&self.WR.mul_vec(&z));
+    for i in 0 .. n {
+      WR.push(reduced.generator(GeneratorsList::GBold1, i).point() * w_r_scalars.0[i]);
+    }
+    let WR = PointVector::<C>(WR);
+    let WO = hi.mul_vec(&self.WO.mul_vec(&z));
+
+    let t_caret = ScalarVector::<C>(proof.l.clone()).inner_product(&ScalarVector(proof.r.clone()));
+    let x_square = x.square();
+    let x_tesseract = x_square * x_square;
+    let Ts = (proof.T3 * (x_square * x) +
+      (proof.T4 * x_tesseract) +
+      (proof.T5 * (x_tesseract * x)) +
+      (proof.T6 * (x_tesseract * x_square));
+    // TODO: Queue this as a batch verification statement
+    assert!(bool::from(
+      (multiexp_vartime(&[
+        (t_caret - (x_square * (delta + z.inner_product(&self.c))), reduced.g().point()),
+        (proof.tau_x, reduced.h().point()),
+        (-x, proof.T1)
+      ]) - self.V.mul_vec(&self.WV.mul_vec(&z).mul(x_square)).sum() -
+        Ts)
+        .is_identity()
+    ));
+
+    // h' ** y is equivalent to h as h' is h ** inv_y
+    // TOOD: Cache this as a long lived generator
+    let mut h_sum = reduced.generator(GeneratorsList::HBold1, 0).point();
+    for i in 1 .. n {
+      h_sum += reduced.generator(GeneratorsList::HBold1, i).point();
+    }
+    let mut P_terms = vec![
+      (C::F::ONE, WO.sum() - h_sum),
+      (x, proof.AI + WL.sum() + WR.sum()),
+      (x_square, proof.AO),
+      (x_square * x, proof.S),
+    ];
+    let P = multiexp_vartime(&P_terms);
+
+    /* TODO: Move this to the logarithmic IP proof and batch verify
+    // P is deterministic to transcripted variables
+    IpProof::new_without_P_transcript(reduced, vec![
+      (x, proof.AI),
+      (x_square, proof.AO),
+    ])
+    */
+
+    let mut rhs = reduced.h().point() * proof.u;
+    for (i, (l, r)) in proof.l.into_iter().zip(proof.r.into_iter()).enumerate() {
+      rhs += reduced.generator(GeneratorsList::GBold1, i).point() * l;
+      rhs += hi[i] * r;
+    }
+    assert_eq!(P, rhs);
   }
 }

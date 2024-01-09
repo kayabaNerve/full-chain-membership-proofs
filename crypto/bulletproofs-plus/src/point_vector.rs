@@ -8,7 +8,7 @@ use ciphersuite::{group::GroupEncoding, Ciphersuite};
 
 #[cfg(test)]
 use multiexp::multiexp;
-#[cfg(test)]
+
 use crate::ScalarVector;
 
 #[derive(Clone, PartialEq, Eq, Debug, Zeroize, ZeroizeOnDrop)]
@@ -43,6 +43,7 @@ impl<C: Ciphersuite> PointVector<C> {
     }
     res
   }
+  */
 
   pub(crate) fn mul(&self, scalar: impl core::borrow::Borrow<C::F>) -> Self {
     let mut res = self.clone();
@@ -52,6 +53,7 @@ impl<C: Ciphersuite> PointVector<C> {
     res
   }
 
+  /*
   pub(crate) fn add_vec(&self, vector: &Self) -> Self {
     assert_eq!(self.len(), vector.len());
     let mut res = self.clone();
@@ -69,6 +71,7 @@ impl<C: Ciphersuite> PointVector<C> {
     }
     res
   }
+  */
 
   pub(crate) fn mul_vec(&self, vector: &ScalarVector<C>) -> Self {
     assert_eq!(self.len(), vector.len());
@@ -78,7 +81,6 @@ impl<C: Ciphersuite> PointVector<C> {
     }
     res
   }
-  */
 
   #[cfg(test)]
   pub(crate) fn multiexp(&self, vector: &ScalarVector<C>) -> C::G {
@@ -99,11 +101,11 @@ impl<C: Ciphersuite> PointVector<C> {
     }
     multiexp_vartime(&res)
   }
+  */
 
   pub(crate) fn sum(&self) -> C::G {
     self.0.iter().sum()
   }
-  */
 
   pub(crate) fn len(&self) -> usize {
     self.0.len()

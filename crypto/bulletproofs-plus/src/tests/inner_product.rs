@@ -1,4 +1,4 @@
-// The inner product relation is P = sum(g_bold * a, h_bold * b, g * (a * y * b), h * alpha)
+// The inner product relation is P = sum(g_bold * a, h_bold * b, g * (a * b))
 
 use rand_core::OsRng;
 
@@ -12,26 +12,23 @@ use ciphersuite::{
 
 use crate::{
   ScalarVector, PointVector, GeneratorsList,
-  weighted_inner_product::{WipStatement, WipWitness},
-  weighted_inner_product,
+  inner_product::{IpStatement, IpWitness},
   tests::generators,
 };
 
 #[test]
-fn test_zero_weighted_inner_product() {
+fn test_zero_inner_product() {
   let P = <Ristretto as Ciphersuite>::G::identity();
-  let y = <Ristretto as Ciphersuite>::F::random(&mut OsRng);
 
   let generators = generators(1);
   let reduced = generators.per_proof().reduce(1, false);
-  let statement = WipStatement::<_, Ristretto, _>::new(&reduced, P, y);
-  let witness = WipWitness::<Ristretto>::new(
+  let statement = IpStatement::<_, Ristretto, _>::new(&reduced, P);
+  let witness = IpWitness::<Ristretto>::new(
     ScalarVector::<Ristretto>::new(1),
     ScalarVector::<Ristretto>::new(1),
-    <Ristretto as Ciphersuite>::F::ZERO,
   );
 
-  let mut transcript = RecommendedTranscript::new(b"Zero WIP Test");
+  let mut transcript = RecommendedTranscript::new(b"Zero IP Test");
   let proof = statement.clone().prove(&mut OsRng, &mut transcript.clone(), witness);
 
   let mut verifier = BatchVerifier::new(1);
@@ -40,14 +37,13 @@ fn test_zero_weighted_inner_product() {
 }
 
 #[test]
-fn test_weighted_inner_product() {
-  // P = sum(g_bold * a, h_bold * b, g * (a * y * b), h * alpha)
+fn test_inner_product() {
+  // P = sum(g_bold * a, h_bold * b, g * (a * b))
   let mut verifier = BatchVerifier::new(6);
   let generators = generators(32);
   for i in [1, 2, 4, 8, 16, 32] {
     let generators = generators.per_proof().reduce(i, false);
     let g = generators.g().point();
-    let h = generators.h().point();
     assert_eq!(generators.len(), i);
     let mut g_bold = vec![];
     let mut h_bold = vec![];
@@ -60,29 +56,18 @@ fn test_weighted_inner_product() {
 
     let mut a = ScalarVector::<Ristretto>::new(i);
     let mut b = ScalarVector::<Ristretto>::new(i);
-    let alpha = <Ristretto as Ciphersuite>::F::random(&mut OsRng);
-
-    let y = <Ristretto as Ciphersuite>::F::random(&mut OsRng);
-    let mut y_vec = ScalarVector::new(g_bold.len());
-    y_vec[0] = y;
-    for i in 1 .. y_vec.len() {
-      y_vec[i] = y_vec[i - 1] * y;
-    }
 
     for i in 0 .. i {
       a[i] = <Ristretto as Ciphersuite>::F::random(&mut OsRng);
       b[i] = <Ristretto as Ciphersuite>::F::random(&mut OsRng);
     }
 
-    let P = g_bold.multiexp(&a) +
-      h_bold.multiexp(&b) +
-      (g * weighted_inner_product(&a, &b, &y_vec)) +
-      (h * alpha);
+    let P = g_bold.multiexp(&a) + h_bold.multiexp(&b) + (g * a.inner_product(&b));
 
-    let statement = WipStatement::<_, Ristretto, _>::new(&generators, P, y);
-    let witness = WipWitness::<Ristretto>::new(a, b, alpha);
+    let statement = IpStatement::<_, Ristretto, _>::new(&generators, P);
+    let witness = IpWitness::<Ristretto>::new(a, b);
 
-    let mut transcript = RecommendedTranscript::new(b"WIP Test");
+    let mut transcript = RecommendedTranscript::new(b"IP Test");
     let proof = statement.clone().prove(&mut OsRng, &mut transcript.clone(), witness);
     statement.verify(&mut OsRng, &mut verifier, &mut transcript, proof);
   }

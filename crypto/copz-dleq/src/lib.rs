@@ -144,7 +144,7 @@ impl<C1: Ciphersuite, C2: Ciphersuite> Statement<C1, C2> {
 
       let c = Self::challenge(&mut transcript, K1, K2);
       let Some(cx) = Option::from(c.checked_mul(&U256::from(witness.commitment_1.value))) else {
-        continue
+        continue;
       };
       let Some(z) = Option::from(k.checked_add(&cx)) else { continue };
       if !z_in_range(&z, bf) {

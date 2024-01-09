@@ -68,7 +68,7 @@ fn test_layer_gadget() {
     )
   };
 
-  let (commitments, blinds, vector_commitments, proof, proofs) = {
+  let (commitments, blinds, vector_commitments, proof) = {
     let mut transcript = transcript.clone();
     let mut circuit = Circuit::new(generators.per_proof(), true);
     gadget(&mut circuit);
@@ -93,7 +93,6 @@ fn test_layer_gadget() {
     vector_commitments,
     vec![Pasta::c1_coords(blinded_point).0, Pasta::c1_coords(blinded_point).1],
     proof,
-    proofs,
   );
   assert!(verifier.verify_vartime());
 }

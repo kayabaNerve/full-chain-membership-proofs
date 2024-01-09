@@ -14,15 +14,13 @@ use ciphersuite::{
 };
 
 mod scalar_vector;
-pub use scalar_vector::{ScalarVector, weighted_inner_product};
+pub use scalar_vector::ScalarVector;
 mod scalar_matrix;
 pub use scalar_matrix::ScalarMatrix;
 mod point_vector;
 pub use point_vector::PointVector;
 
-pub mod weighted_inner_product;
-pub mod single_range_proof;
-pub mod aggregate_range_proof;
+pub mod inner_product;
 
 pub(crate) mod arithmetic_circuit_proof;
 pub mod arithmetic_circuit;
@@ -96,6 +94,7 @@ impl<T: 'static + Transcript, C: Ciphersuite> VectorCommitmentGenerators<T, C> {
   }
 }
 
+// TODO: Remove GBold2, HBold2
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub(crate) enum GeneratorsList {
   GBold1,

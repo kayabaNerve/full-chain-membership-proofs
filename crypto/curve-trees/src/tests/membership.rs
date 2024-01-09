@@ -108,9 +108,9 @@ fn test_membership() {
       },
     );
 
-    let (pallas_commitments, _, pallas_vector_commitments, pallas_proof, pallas_proofs) =
+    let (pallas_commitments, _, pallas_vector_commitments, pallas_proof) =
       circuit_c1.prove_with_vector_commitments(&mut OsRng, &mut prove_transcript);
-    let (vesta_commitments, _, vesta_vector_commitments, vesta_proof, vesta_proofs) =
+    let (vesta_commitments, _, vesta_vector_commitments, vesta_proof) =
       circuit_c2.prove_with_vector_commitments(&mut OsRng, &mut prove_transcript);
 
     // Verify
@@ -167,7 +167,6 @@ fn test_membership() {
       pallas_vector_commitments,
       c1_additional,
       pallas_proof,
-      pallas_proofs,
     );
     circuit_c2.verification_statement_with_vector_commitments().verify(
       &mut OsRng,
@@ -177,7 +176,6 @@ fn test_membership() {
       vesta_vector_commitments,
       c2_additional,
       vesta_proof,
-      vesta_proofs,
     );
   }
 

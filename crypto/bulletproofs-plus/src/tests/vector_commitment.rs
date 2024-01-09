@@ -95,12 +95,11 @@ fn test_vector_commitment() {
 
   let mut circuit = Circuit::new(generators.per_proof(), true);
   gadget(&mut circuit, Some((x, y)), Some((z, a)));
-  let (commitments, blinds, vector_commitments, proof, proofs) =
+  let (commitments, blinds, vector_commitments, proof) =
     circuit.prove_with_vector_commitments(&mut OsRng, &mut transcript.clone());
   assert_eq!(commitments.len(), 0);
   assert_eq!(blinds.len(), 2);
   assert_eq!(vector_commitments.len(), 2);
-  assert_eq!(proofs.len(), 3);
 
   let mut circuit = Circuit::new(generators.per_proof(), false);
   gadget(&mut circuit, None, None);
@@ -113,7 +112,6 @@ fn test_vector_commitment() {
     vector_commitments.clone(),
     vec![],
     proof,
-    proofs,
   );
   assert!(verifier.verify_vartime());
 

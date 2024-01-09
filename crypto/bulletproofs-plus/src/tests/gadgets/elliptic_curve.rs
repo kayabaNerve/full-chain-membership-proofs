@@ -123,7 +123,7 @@ fn test_dlog_pok() {
   let test = |point: (_, _), dlog| {
     let mut circuit = Circuit::new(generators.per_proof(), true);
     gadget(&mut circuit, point, Some(dlog));
-    let (commitments, _, vector_commitments, proof, proofs) =
+    let (commitments, _, vector_commitments, proof) =
       circuit.prove_with_vector_commitments(&mut OsRng, &mut transcript.clone());
     assert!(commitments.is_empty());
 
@@ -139,7 +139,6 @@ fn test_dlog_pok() {
       vector_commitments,
       vec![],
       proof,
-      proofs,
     );
     assert!(verifier.verify_vartime());
   };

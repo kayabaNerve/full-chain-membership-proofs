@@ -6,14 +6,11 @@ use ciphersuite::{group::Group, Ciphersuite, Pallas, Vesta};
 use crate::{Generators, padded_pow_of_2, gadgets::elliptic_curve::EmbeddedShortWeierstrass};
 
 #[cfg(test)]
-mod weighted_inner_product;
-#[cfg(test)]
-mod single_range_proof;
-#[cfg(test)]
-mod aggregate_range_proof;
+mod inner_product;
 
 #[cfg(test)]
 mod arithmetic_circuit_proof;
+
 #[cfg(test)]
 mod arithmetic_circuit;
 #[cfg(test)]

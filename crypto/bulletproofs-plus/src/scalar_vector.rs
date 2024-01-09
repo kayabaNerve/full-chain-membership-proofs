@@ -66,7 +66,6 @@ impl<C: Ciphersuite> ScalarVector<C> {
     res
   }
 
-  /*
   pub(crate) fn sub_vec(&self, vector: &Self) -> Self {
     assert_eq!(self.len(), vector.len());
     let mut res = self.clone();
@@ -75,7 +74,6 @@ impl<C: Ciphersuite> ScalarVector<C> {
     }
     res
   }
-  */
 
   pub(crate) fn mul_vec(&self, vector: &Self) -> Self {
     assert_eq!(self.len(), vector.len());
@@ -123,12 +121,4 @@ impl<C: Ciphersuite> ScalarVector<C> {
       transcript.append_message(label, scalar.to_repr());
     }
   }
-}
-
-pub fn weighted_inner_product<C: Ciphersuite>(
-  a: &ScalarVector<C>,
-  b: &ScalarVector<C>,
-  y: &ScalarVector<C>,
-) -> C::F {
-  a.inner_product(&b.mul_vec(y))
 }

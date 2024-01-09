@@ -13,12 +13,13 @@ use ciphersuite::{
 
 use crate::{
   ScalarVector, PointVector, VectorCommitmentGenerators, GeneratorsList, ProofGenerators,
-  InnerProductGenerators, weighted_inner_product::*, arithmetic_circuit_proof,
+  InnerProductGenerators, arithmetic_circuit_proof,
 };
 pub use arithmetic_circuit_proof::*;
 
 mod challenge;
 pub(crate) use challenge::*;
+
 mod constraints;
 use constraints::*;
 pub use constraints::Constraint;
@@ -664,17 +665,6 @@ impl<'a, T: 'static + Transcript, C: Ciphersuite> Circuit<'a, T, C> {
     )
   }
 
-  fn vector_commitment_statement<GB: Clone + AsRef<[MultiexpPoint<C::G>]>>(
-    alt_generators: &'a InnerProductGenerators<'a, T, C, GB>,
-    transcript: &mut T,
-    commitment: C::G,
-  ) -> WipStatement<'a, T, C, GB> {
-    // TODO: Do we need to transcript more before this? Should we?
-    let y = C::hash_to_F(b"vector_commitment_proof", transcript.challenge(b"y").as_ref());
-
-    WipStatement::new(alt_generators, commitment, y)
-  }
-
   pub fn verification_statement(self) -> ArithmeticCircuitWithoutVectorCommitments<'a, T, C> {
     assert!(!self.prover);
     let (proof_generators, _, _, weights, _, vector_commitments, _, _) = self.compile();
@@ -683,15 +673,14 @@ impl<'a, T: 'static + Transcript, C: Ciphersuite> Circuit<'a, T, C> {
     ArithmeticCircuitWithoutVectorCommitments { proof_generators, weights }
   }
 
-  // Returns the blinds used, the blinded vector commitments, the proof, and proofs the vector
-  // commitments are well formed
+  // Returns the commitments, the vector commitment blinds used, the blinded vector commitments,
+  // and the proof
   // TODO: Create a dedicated struct for this return value
   pub fn prove_with_vector_commitments<R: RngCore + CryptoRng>(
     self,
     rng: &mut R,
     transcript: &mut T,
-  ) -> (Vec<C::G>, Vec<C::F>, Vec<C::G>, ArithmeticCircuitProof<C>, Vec<(WipProof<C>, WipProof<C>)>)
-  {
+  ) -> (Vec<C::G>, Vec<C::F>, Vec<C::G>, ArithmeticCircuitProof<C>) {
     assert!(self.prover);
 
     let finalized_commitments = self.finalized_commitments.clone();
@@ -708,85 +697,8 @@ impl<'a, T: 'static + Transcript, C: Ciphersuite> Circuit<'a, T, C> {
     assert!(!vector_commitments.is_empty());
     let witness = witness.unwrap();
 
-    /*
-      In lieu of a proper vector commitment scheme, the following is done.
-
-      The arithmetic circuit proof takes in a commitment of all product statements.
-      That commitment is of the form left G1, right H1, out G2.
-
-      Each vector commitment is for a series of variables against specfic generators.
-
-      For each required vector commitment, a proof of a known DLog for the commitment, against the
-      specified generators, is provided via a pair of WIP proofs.
-
-      Finally, another pair of WIP proofs proves a known DLog for the remaining generators in this
-      arithmetic circuit proof.
-
-      The arithmetic circuit's in-proof commitment is then defined as the sum of the commitments
-      and the commitment to the remaining variables.
-
-      This forces the commitment to commit as the vector commitments do.
-
-      The security of this is assumed. Technically, the commitment being well-formed isn't
-      guaranteed by the Weighted Inner Product relationship. A formal proof of the security of this
-      requires that property being proven. Such a proof may already exist as part of the WIP proof.
-
-      TODO
-
-      As one other note, a single WIP proof is likely fine, with parallelized g_bold/h_bold, if the
-      prover provides the G component and a Schnorr PoK for it. While they may lie, leaving the G
-      component, that shouldn't create any issues so long as G is distinct for all such proofs.
-
-      That wasn't done here as it further complicates a complicated enough already scheme.
-    */
-
-    fn well_formed<
-      'a,
-      R: RngCore + CryptoRng,
-      C: Ciphersuite,
-      T: 'static + Transcript,
-      GB: Clone + AsRef<[MultiexpPoint<C::G>]>,
-    >(
-      rng: &mut R,
-      alt_generators_1: InnerProductGenerators<'a, T, C, GB>,
-      alt_generators_2: InnerProductGenerators<'a, T, C, GB>,
-      transcript: &mut T,
-      scalars: Vec<C::F>,
-      blind: C::F,
-    ) -> (C::G, (WipProof<C>, WipProof<C>)) {
-      let commitment = {
-        let mut terms = Vec::with_capacity(1 + scalars.len());
-        terms.push((blind, alt_generators_1.h().point()));
-        for (i, scalar) in scalars.iter().enumerate() {
-          terms.push((*scalar, alt_generators_1.generator(GeneratorsList::GBold1, i).point()));
-        }
-        let res = multiexp(&terms);
-        terms.zeroize();
-        res
-      };
-
-      let b = ScalarVector(vec![C::F::ZERO; scalars.len()]);
-      let witness = WipWitness::<C>::new(ScalarVector(scalars), b, blind);
-
-      transcript.append_message(b"vector_commitment", commitment.to_bytes());
-      (
-        commitment,
-        (
-          {
-            Circuit::<T, C>::vector_commitment_statement(&alt_generators_1, transcript, commitment)
-              .prove(&mut *rng, transcript, witness.clone())
-          },
-          {
-            Circuit::<T, C>::vector_commitment_statement(&alt_generators_2, transcript, commitment)
-              .prove(&mut *rng, transcript, witness)
-          },
-        ),
-      )
-    }
-
     let mut blinds = vec![];
     let mut commitments = vec![];
-    let mut proofs = vec![];
     for (vc, vector_commitment) in vector_commitments.drain(..).enumerate() {
       let mut scalars = vec![];
       let mut generators = vec![];
@@ -802,16 +714,18 @@ impl<'a, T: 'static + Transcript, C: Ciphersuite> Circuit<'a, T, C> {
       );
 
       let vc_generators = proof_generators.vector_commitment_generators(generators);
-      let (commitment, proof) = well_formed::<_, C, _, _>(
-        &mut *rng,
-        vc_generators.0,
-        vc_generators.1,
-        transcript,
-        scalars,
-        blinds[blinds.len() - 1],
-      );
+      let commitment = {
+        let mut terms = Vec::with_capacity(1 + scalars.len());
+        terms.push((*blinds.last().unwrap(), vc_generators.0.h().point()));
+        for (i, scalar) in scalars.iter().enumerate() {
+          terms.push((*scalar, vc_generators.0.generator(GeneratorsList::GBold1, i).point()));
+        }
+        let res = multiexp(&terms);
+        terms.zeroize();
+        res
+      };
+      transcript.append_message(b"vector_commitment", commitment.to_bytes());
       commitments.push(commitment);
-      proofs.push(proof);
     }
     let vector_commitments = commitments;
 
@@ -819,29 +733,6 @@ impl<'a, T: 'static + Transcript, C: Ciphersuite> Circuit<'a, T, C> {
     for (challenge, challenger) in challengers {
       challenges[challenge.0] =
         challenger(commitment_challenge::<T, C>(vector_commitments[challenge.0]));
-    }
-
-    // Push one final WIP proof for all other variables
-    let other_commitment;
-    let other_blind = C::F::random(&mut *rng);
-    {
-      let mut scalars = vec![];
-      let mut generators = vec![];
-      for (scalar, generator) in others {
-        scalars.push(scalar.unwrap());
-        generators.push(generator);
-      }
-      let vc_generators = proof_generators.vector_commitment_generators(generators);
-      let proof;
-      (other_commitment, proof) = well_formed::<_, C, _, _>(
-        &mut *rng,
-        vc_generators.0,
-        vc_generators.1,
-        transcript,
-        scalars,
-        other_blind,
-      );
-      proofs.push(proof);
     }
 
     let weights = weights.build(post_values, &challenges);
@@ -854,10 +745,9 @@ impl<'a, T: 'static + Transcript, C: Ciphersuite> Circuit<'a, T, C> {
       weights.3,
       weights.4,
     )
-    .prove_with_blind(rng, transcript, witness, blinds.iter().sum::<C::F>() + other_blind);
-    debug_assert_eq!(proof.A, vector_commitments.iter().sum::<C::G>() + other_commitment);
+    .prove(rng, transcript, witness);
 
-    (V.unwrap(), blinds, vector_commitments, proof, proofs)
+    (V.unwrap(), blinds, vector_commitments, proof)
   }
 
   pub fn verification_statement_with_vector_commitments(
@@ -946,23 +836,9 @@ impl<'a, T: 'static + Transcript, C: Ciphersuite, GB: Clone + AsRef<[MultiexpPoi
     mut vector_commitments: Vec<C::G>,
     post_values: Vec<C::F>,
     proof: ArithmeticCircuitProof<C>,
-    mut vc_proofs: Vec<(WipProof<C>, WipProof<C>)>,
   ) {
-    let vc_sum = vector_commitments.iter().sum::<C::G>();
-    let mut verify_wip =
-      |wip_generators: &(InnerProductGenerators<_, _, _>, InnerProductGenerators<_, _, _>),
-       commitment: C::G,
-       proofs: (_, _)| {
-        transcript.append_message(b"vector_commitment", commitment.to_bytes());
-        Circuit::vector_commitment_statement(&wip_generators.0, transcript, commitment)
-          .verify(rng, verifier, transcript, proofs.0);
-        Circuit::vector_commitment_statement(&wip_generators.1, transcript, commitment)
-          .verify(rng, verifier, transcript, proofs.1);
-      };
-
     // Make sure this had the expected amount of vector commitments.
     assert_eq!(vector_commitments.len(), self.vector_commitment_generators.len() - 1);
-    assert_eq!(vc_proofs.len(), self.vector_commitment_generators.len());
 
     let mut challenges = vec![vec![]; vector_commitments.len()];
     for (challenge, challenger) in &self.challengers {
@@ -970,20 +846,9 @@ impl<'a, T: 'static + Transcript, C: Ciphersuite, GB: Clone + AsRef<[MultiexpPoi
         challenger(commitment_challenge::<T, C>(vector_commitments[challenge.0]));
     }
 
-    for ((generators, commitment), proofs) in self.vector_commitment_generators
-      [.. self.vector_commitment_generators.len() - 1]
-      .iter()
-      .zip(vector_commitments.drain(..))
-      .zip(vc_proofs.drain(.. (vc_proofs.len() - 1)))
-    {
-      verify_wip(generators, commitment, proofs);
+    for vector_commitment in &vector_commitments {
+      transcript.append_message(b"vector_commitment", vector_commitment.to_bytes());
     }
-    assert_eq!(vc_proofs.len(), 1);
-    verify_wip(
-      self.vector_commitment_generators.last().as_ref().unwrap(),
-      proof.A - vc_sum,
-      vc_proofs.swap_remove(0),
-    );
 
     let weights = self.weights.build(post_values, &challenges);
     ArithmeticCircuitStatement::new(
