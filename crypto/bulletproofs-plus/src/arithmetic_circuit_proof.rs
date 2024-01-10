@@ -67,8 +67,8 @@ pub struct ArithmeticCircuitProof<C: Ciphersuite> {
   AI: C::G,
   AO: C::G,
   S: C::G,
-  T1: C::G,
-  T3_onwards: Vec<C::G>,
+  T_before_ni: Vec<C::G>,
+  T_after_ni: Vec<C::G>,
   tau_x: C::F,
   u: C::F,
   l: Vec<C::F>,
@@ -154,10 +154,12 @@ impl<'a, T: 'static + Transcript, C: Ciphersuite> ArithmeticCircuitStatement<'a,
     (ScalarVector(y), ScalarVector(inv_y), ScalarVector(z))
   }
 
-  fn transcript_Ts(transcript: &mut T, T1: C::G, T3_onwards: &[C::G]) -> C::F {
-    transcript.append_message(b"T1", T1.to_bytes());
-    for Ti in T3_onwards {
-      transcript.append_message(b"T3+i", Ti.to_bytes());
+  fn transcript_Ts(transcript: &mut T, T_before_ni: &[C::G], T_after_ni: &[C::G]) -> C::F {
+    for Ti in T_before_ni {
+      transcript.append_message(b"Ti", Ti.to_bytes());
+    }
+    for Ti in T_after_ni {
+      transcript.append_message(b"Tni+1+i", Ti.to_bytes());
     }
 
     let x = C::hash_to_F(b"arithmetic_circuit_proof", transcript.challenge(b"x").as_ref());
@@ -238,6 +240,9 @@ impl<'a, T: 'static + Transcript, C: Ciphersuite> ArithmeticCircuitStatement<'a,
     let delta = inv_y.mul_vec(&self.WR.mul_vec(&z)).inner_product(&self.WL.mul_vec(&z));
 
     let nc = 0;
+    let c = vec![];
+    // TODO let c_gamma = vec![];
+
     let ni = 2 + (2 * (nc / 2));
     let ilr = ni / 2;
     let io = ni;
@@ -245,6 +250,17 @@ impl<'a, T: 'static + Transcript, C: Ciphersuite> ArithmeticCircuitStatement<'a,
     let jlr = ni / 2;
     let jo = 0;
     let js = ni + 1;
+
+    let mut ik = Vec::with_capacity(nc);
+    assert!(nc < (ni / 2));
+    for i in 0 .. nc {
+      ik.push(i);
+    }
+    let mut jk = Vec::with_capacity(nc);
+    assert!((ni - nc) > (ni / 2));
+    for i in 0 .. nc {
+      jk.push(ni - i);
+    }
 
     let coefficients = ni + 1;
     let total_terms = 1 + coefficients;
@@ -255,6 +271,9 @@ impl<'a, T: 'static + Transcript, C: Ciphersuite> ArithmeticCircuitStatement<'a,
     l[ilr] = witness.aL.add_vec(&inv_y.mul_vec(&self.WR.mul_vec(&z)));
     l[io] = witness.aO.clone();
     l[is] = ScalarVector(sL);
+    for (i, c) in ik.iter().zip(c.into_iter()) {
+      l[*i] = c;
+    }
 
     let mut r = Vec::with_capacity(total_terms);
     while r.len() < total_terms {
@@ -263,6 +282,11 @@ impl<'a, T: 'static + Transcript, C: Ciphersuite> ArithmeticCircuitStatement<'a,
     r[jlr] = self.WL.mul_vec(&z).add_vec(&y.mul_vec(&witness.aR));
     r[jo] = self.WO.mul_vec(&z).sub_vec(&y);
     r[js] = y.mul_vec(&ScalarVector(sR.clone()));
+    /* TODO
+    for (j, WC) in jk.iter().zip(self.WC.iter()) {
+      r[*j] = WC.mul_vec(&z);
+    }
+    */
 
     let poly_eval = |poly: &[ScalarVector<C>], X: C::F| -> ScalarVector<_> {
       let mut res = ScalarVector::<C>::new(poly[0].0.len());
@@ -305,24 +329,48 @@ impl<'a, T: 'static + Transcript, C: Ciphersuite> ArithmeticCircuitStatement<'a,
       delta;
     */
 
-    let tau_1 = C::F::random(&mut *rng);
-    let mut tau_3_onwards = vec![];
-    for _ in 0 .. t[3 ..].len() {
-      tau_3_onwards.push(C::F::random(&mut *rng));
+    let mut tau_before_ni = vec![];
+    for i in 0 .. t[1 .. ni].len() {
+      tau_before_ni.push(C::F::random(&mut *rng));
     }
-    let T1 = multiexp(&[(t[1], self.generators.g().point()), (tau_1, self.generators.h().point())]);
-    let mut T3_onwards = vec![];
-    for (t, tau) in t[3 ..].iter().zip(tau_3_onwards.iter()) {
-      T3_onwards
+    let mut tau_after_ni = vec![];
+    for i in 0 .. t[(ni + 1) ..].len() {
+      tau_after_ni.push(C::F::random(&mut *rng));
+    }
+    assert_eq!(t[0], C::F::ZERO);
+    let mut T_before_ni = vec![];
+    for (t, tau) in t[1 .. ni].iter().zip(tau_before_ni.iter()) {
+      T_before_ni
+        .push(multiexp(&[(*t, self.generators.g().point()), (*tau, self.generators.h().point())]));
+    }
+    let mut T_after_ni = vec![];
+    for (t, tau) in t[(ni + 1) ..].iter().zip(tau_after_ni.iter()) {
+      T_after_ni
         .push(multiexp(&[(*t, self.generators.g().point()), (*tau, self.generators.h().point())]));
     }
 
-    let x = Self::transcript_Ts(transcript, T1, &T3_onwards);
+    let x = Self::transcript_Ts(transcript, &T_before_ni, &T_after_ni);
     let l = poly_eval(&l, x);
     let r = poly_eval(&r, x);
 
-    let mut tau_poly = vec![C::F::ZERO, tau_1, self.WV.mul_vec(&z).inner_product(&witness.gamma)];
-    tau_poly.extend(tau_3_onwards);
+    {
+      assert_eq!(l.len(), r.len());
+      let mut found_pow_2 = false;
+      let mut l_len = l.len();
+      for _ in 0 .. 64 {
+        if l_len == 1 {
+          found_pow_2 = true;
+          break;
+        }
+        l_len >>= 1;
+      }
+      assert!(found_pow_2);
+    }
+
+    let mut tau_poly = vec![C::F::ZERO];
+    tau_poly.extend(tau_before_ni);
+    tau_poly.push(self.WV.mul_vec(&z).inner_product(&witness.gamma));
+    tau_poly.extend(tau_after_ni);
     let tau_x = {
       let mut res = C::F::ZERO;
       for coeff in tau_poly.iter().rev() {
@@ -332,9 +380,21 @@ impl<'a, T: 'static + Transcript, C: Ciphersuite> ArithmeticCircuitStatement<'a,
       res
     };
 
-    let u = (alpha * x) + (beta * x.square()) + (p * x.square() * x);
+    let mut x_ilr = C::F::ONE;
+    for _ in 0 .. ilr {
+      x_ilr *= x;
+    }
+    let mut x_io = C::F::ONE;
+    for _ in 0 .. io {
+      x_io *= x;
+    }
+    let mut x_is = C::F::ONE;
+    for _ in 0 .. is {
+      x_is *= x;
+    }
+    let u = (alpha * x_ilr) + (beta * x_io) + (p * x_is); // TODO: Sum c_gamma * x**i[k] for k
 
-    ArithmeticCircuitProof { AI, AO, S, T1, T3_onwards, tau_x, u, l: l.0, r: r.0 }
+    ArithmeticCircuitProof { AI, AO, S, T_before_ni, T_after_ni, tau_x, u, l: l.0, r: r.0 }
   }
 
   pub fn verify<R: RngCore + CryptoRng>(
@@ -352,11 +412,14 @@ impl<'a, T: 'static + Transcript, C: Ciphersuite> ArithmeticCircuitStatement<'a,
     let q = self.WL.length();
     assert_eq!(proof.l.len(), proof.r.len());
     assert_eq!(proof.l.len(), n);
+    let t_poly_len = (2 * l_r_poly_len) - 1;
+    assert_eq!(proof.T_before_ni.len(), ni - 1);
+    assert_eq!(proof.T_after_ni.len(), t_poly_len - ni - 1);
 
     self.initial_transcript(transcript);
     let (y, inv_y, z) = Self::transcript_AI_AO_S(transcript, proof.AI, proof.AO, proof.S, n, q);
     let delta = inv_y.mul_vec(&self.WR.mul_vec(&z)).inner_product(&self.WL.mul_vec(&z));
-    let x = Self::transcript_Ts(transcript, proof.T1, &proof.T3_onwards);
+    let x = Self::transcript_Ts(transcript, &proof.T_before_ni, &proof.T_after_ni);
 
     let reduced = self.generators.reduce(n, true);
     // TODO: Always keep the following in terms of the original generators to allow de-duplication
@@ -377,26 +440,35 @@ impl<'a, T: 'static + Transcript, C: Ciphersuite> ArithmeticCircuitStatement<'a,
     let WO = hi.mul_vec(&self.WO.mul_vec(&z));
 
     let t_caret = ScalarVector::<C>(proof.l.clone()).inner_product(&ScalarVector(proof.r.clone()));
-    let x_square = x.square();
-    let x_cubed = x_square * x;
-    let mut current_x = x_cubed;
+    let mut current_x = x;
     let t_poly_len = (2 * l_r_poly_len) - 1;
-    assert_eq!(proof.T3_onwards.len(), t_poly_len - 3);
-    let mut Ts = proof.T3_onwards[0] * x_cubed;
-    for Ti in &proof.T3_onwards[1 ..] {
-      current_x *= x;
+    let mut Ts = C::G::identity();
+    for Ti in &proof.T_before_ni {
       Ts += *Ti * current_x;
+      current_x *= x;
     }
+    let x_ni = current_x;
+    current_x *= x;
+    for Ti in &proof.T_after_ni {
+      Ts += *Ti * current_x;
+      current_x *= x;
+    }
+
     // TODO: Queue this as a batch verification statement
+    // TODO: Subtract sum x**i[k] C[k]
     assert!(bool::from(
       (multiexp_vartime(&[
-        (t_caret - (x_square * (delta + z.inner_product(&self.c))), reduced.g().point()),
+        (t_caret - (x_ni * (delta + z.inner_product(&self.c))), reduced.g().point()),
         (proof.tau_x, reduced.h().point()),
-        (-x, proof.T1)
-      ]) - self.V.mul_vec(&self.WV.mul_vec(&z).mul(x_square)).sum() -
+      ]) - self.V.mul_vec(&self.WV.mul_vec(&z).mul(x_ni)).sum() -
         Ts)
         .is_identity()
     ));
+
+    let mut x_ilr = C::F::ONE;
+    for _ in 0 .. (ni / 2) {
+      x_ilr *= x;
+    }
 
     // h' ** y is equivalent to h as h' is h ** inv_y
     // TOOD: Cache this as a long lived generator
@@ -406,9 +478,10 @@ impl<'a, T: 'static + Transcript, C: Ciphersuite> ArithmeticCircuitStatement<'a,
     }
     let mut P_terms = vec![
       (C::F::ONE, WO.sum() - h_sum),
-      (x, proof.AI + WL.sum() + WR.sum()),
-      (x_square, proof.AO),
-      (x_square * x, proof.S),
+      (x_ilr, proof.AI + WL.sum() + WR.sum()),
+      (x_ni, proof.AO),
+      (x_ni * x, proof.S),
+      // TODO: x j[k] Wk
     ];
     let P = multiexp_vartime(&P_terms);
 
