@@ -509,6 +509,8 @@ impl<'a, T: 'static + Transcript, C: Ciphersuite> Circuit<'a, T, C> {
           ScalarVector(aR),
           ScalarVector(v),
           ScalarVector(gamma),
+          vec![],
+          vec![],
         )),
       )
     } else {
@@ -655,10 +657,12 @@ impl<'a, T: 'static + Transcript, C: Ciphersuite> Circuit<'a, T, C> {
       ArithmeticCircuitStatement::new(
         generators,
         PointVector(V.unwrap()),
+        PointVector(vec![]),
         weights.0,
         weights.1,
         weights.2,
         weights.3,
+        vec![],
         weights.4,
       )
       .prove(rng, transcript, witness.unwrap()),
@@ -739,10 +743,12 @@ impl<'a, T: 'static + Transcript, C: Ciphersuite> Circuit<'a, T, C> {
     let proof = ArithmeticCircuitStatement::new(
       proof_generators,
       PointVector(V.clone().unwrap()),
+      PointVector(vec![]), // TODO
       weights.0,
       weights.1,
       weights.2,
       weights.3,
+      vec![], // TODO
       weights.4,
     )
     .prove(rng, transcript, witness);
@@ -800,10 +806,12 @@ impl<'a, T: 'static + Transcript, C: Ciphersuite>
     ArithmeticCircuitStatement::new(
       self.proof_generators.clone(),
       PointVector(commitments),
+      PointVector(vec![]),
       weights.0,
       weights.1,
       weights.2,
       weights.3,
+      vec![],
       weights.4,
     )
     .verify(rng, verifier, transcript, proof)
@@ -854,10 +862,12 @@ impl<'a, T: 'static + Transcript, C: Ciphersuite, GB: Clone + AsRef<[MultiexpPoi
     ArithmeticCircuitStatement::new(
       self.proof_generators.clone(),
       PointVector(commitments),
+      PointVector(vec![]), // TODO
       weights.0,
       weights.1,
       weights.2,
       weights.3,
+      vec![], // TODO
       weights.4,
     )
     .verify(rng, verifier, transcript, proof);
