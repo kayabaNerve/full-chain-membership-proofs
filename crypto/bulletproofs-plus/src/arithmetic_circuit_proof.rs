@@ -50,7 +50,7 @@ pub struct ArithmeticCircuitWitness<C: Ciphersuite> {
   pub(crate) v: ScalarVector<C>,
   gamma: ScalarVector<C>,
 
-  c: Vec<ScalarVector<C>>,
+  pub(crate) c: Vec<ScalarVector<C>>,
   c_gamma: Vec<C::F>,
 }
 
@@ -65,6 +65,7 @@ impl<C: Ciphersuite> ArithmeticCircuitWitness<C> {
   ) -> Self {
     assert_eq!(aL.len(), aR.len());
     assert_eq!(v.len(), gamma.len());
+    assert_eq!(c.len(), c_gamma.len());
 
     let aO = aL.mul_vec(&aR);
     ArithmeticCircuitWitness { aL, aR, aO, v, gamma, c, c_gamma }
@@ -118,7 +119,7 @@ impl<'a, T: 'static + Transcript, C: Ciphersuite> ArithmeticCircuitStatement<'a,
     assert_eq!(WC.len(), C.len());
     for WC in &WC {
       assert_eq!(WC.length(), q);
-      assert_eq!(WC.width(), n);
+      // assert_eq!(WC.width(), n); TODO
     }
 
     assert_eq!(c.len(), q);
@@ -187,7 +188,7 @@ impl<'a, T: 'static + Transcript, C: Ciphersuite> ArithmeticCircuitStatement<'a,
   }
 
   pub fn prove<R: RngCore + CryptoRng>(
-    self,
+    mut self,
     rng: &mut R,
     transcript: &mut T,
     mut witness: ArithmeticCircuitWitness<C>,
@@ -196,6 +197,26 @@ impl<'a, T: 'static + Transcript, C: Ciphersuite> ArithmeticCircuitStatement<'a,
     let n = witness.aL.len();
     assert_eq!(self.WL.width(), n);
     let q = self.WL.length();
+
+    let mut largest_WC = 0;
+    for WC in &self.WC {
+      if WC.width() > largest_WC {
+        largest_WC = WC.width();
+      }
+    }
+    // TODO: Move into Statement::new
+    let n = n.max(largest_WC);
+    self.WL.width = n;
+    self.WR.width = n;
+    self.WO.width = n;
+    for WC in &mut self.WC {
+      WC.width = n;
+    }
+    while witness.aL.len() < n {
+      witness.aL.0.push(C::F::ZERO);
+      witness.aR.0.push(C::F::ZERO);
+      witness.aO.0.push(C::F::ZERO);
+    }
 
     assert_eq!(m, witness.v.len());
     assert_eq!(m, witness.gamma.len());
@@ -418,7 +439,7 @@ impl<'a, T: 'static + Transcript, C: Ciphersuite> ArithmeticCircuitStatement<'a,
   }
 
   pub fn verify<R: RngCore + CryptoRng>(
-    self,
+    mut self,
     rng: &mut R,
     verifier: &mut BatchVerifier<(), C::G>,
     transcript: &mut T,
@@ -431,17 +452,32 @@ impl<'a, T: 'static + Transcript, C: Ciphersuite> ArithmeticCircuitStatement<'a,
     let n = self.WL.width();
     let q = self.WL.length();
     assert_eq!(proof.l.len(), proof.r.len());
-    assert_eq!(proof.l.len(), n);
     let t_poly_len = (2 * l_r_poly_len) - 1;
     assert_eq!(proof.T_before_ni.len(), ni);
     assert_eq!(proof.T_after_ni.len(), t_poly_len - ni - 1);
 
+    let mut largest_WC = 0;
+    for WC in &self.WC {
+      if WC.width() > largest_WC {
+        largest_WC = WC.width();
+      }
+    }
+    // TODO: Move into Statement::new
+    let n = n.max(largest_WC);
+    assert_eq!(proof.l.len(), n);
+    self.WL.width = n;
+    self.WR.width = n;
+    self.WO.width = n;
+    for WC in &mut self.WC {
+      WC.width = n;
+    }
     self.initial_transcript(transcript);
     let (y, inv_y, z) = Self::transcript_AI_AO_S(transcript, proof.AI, proof.AO, proof.S, n, q);
     let delta = inv_y.mul_vec(&self.WR.mul_vec(&z)).inner_product(&self.WL.mul_vec(&z));
+
     let x = Self::transcript_Ts(transcript, &proof.T_before_ni, &proof.T_after_ni);
 
-    let reduced = self.generators.reduce(n, true);
+    let reduced = self.generators.reduce(n);
     // TODO: Always keep the following in terms of the original generators to allow de-duplication
     // within the multiexp
     let mut hi = vec![];

@@ -9,7 +9,7 @@ use crate::ScalarVector;
 // Each vector is considered a row
 #[derive(Clone, PartialEq, Eq, Debug, Zeroize, ZeroizeOnDrop)]
 pub struct ScalarMatrix<C: Ciphersuite> {
-  width: usize,
+  pub(crate) width: usize,
   pub(crate) data: Vec<Vec<(usize, C::F)>>,
 }
 
@@ -29,6 +29,17 @@ impl<C: Ciphersuite> ScalarMatrix<C> {
   }
 
   pub(crate) fn push(&mut self, row: Vec<(usize, C::F)>) {
+    let mut high_width = None;
+    for (i, _) in &row {
+      if Some(*i) > high_width {
+        high_width = Some(*i);
+      }
+    }
+    let high_width = high_width.map(|w| w + 1).unwrap_or(0);
+    if self.width < high_width {
+      self.width = high_width;
+    }
+
     self.data.push(row);
   }
 

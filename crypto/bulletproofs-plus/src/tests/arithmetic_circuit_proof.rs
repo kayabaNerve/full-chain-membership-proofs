@@ -64,11 +64,13 @@ fn test_zero_arithmetic_circuit() {
 
 #[test]
 fn test_vector_commitment_arithmetic_circuit() {
-  let generators = generators(1);
+  let generators = generators(2);
 
-  let value = <Ristretto as Ciphersuite>::F::random(&mut OsRng);
+  let v1 = <Ristretto as Ciphersuite>::F::random(&mut OsRng);
+  let v2 = <Ristretto as Ciphersuite>::F::random(&mut OsRng);
   let gamma = <Ristretto as Ciphersuite>::F::random(&mut OsRng);
-  let commitment = (generators.per_proof().generator(GeneratorsList::GBold1, 0).point() * value) +
+  let commitment = (generators.per_proof().generator(GeneratorsList::GBold1, 0).point() * v1) +
+    (generators.per_proof().generator(GeneratorsList::GBold1, 1).point() * v2) +
     (generators.h().point() * gamma);
   let V = PointVector(vec![]);
   let C = PointVector(vec![commitment]);
@@ -87,8 +89,9 @@ fn test_vector_commitment_arithmetic_circuit() {
   let mut WV = ScalarMatrix::new(0);
   WV.push(vec![]);
   let mut WC = vec![ScalarMatrix::new(1)];
-  WC[0].push(vec![(0, <Ristretto as Ciphersuite>::F::ZERO)]);
-  let c = zero_vec();
+  WC[0]
+    .push(vec![(0, <Ristretto as Ciphersuite>::F::ONE), (1, <Ristretto as Ciphersuite>::F::ONE)]);
+  let c = ScalarVector::<Ristretto>(vec![v1 + v2]);
 
   let statement = ArithmeticCircuitStatement::<_, Ristretto>::new(
     generators.per_proof(),
@@ -106,7 +109,7 @@ fn test_vector_commitment_arithmetic_circuit() {
     aR,
     ScalarVector(vec![]),
     ScalarVector(vec![]),
-    vec![ScalarVector(vec![value])],
+    vec![ScalarVector(vec![v1, v2])],
     vec![gamma],
   );
 

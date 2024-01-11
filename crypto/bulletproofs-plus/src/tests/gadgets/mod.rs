@@ -37,8 +37,11 @@ fn test_is_non_zero_gadget() {
   let test = |x| {
     let mut circuit = Circuit::new(generators.per_proof(), true);
     gadget(&mut circuit, Some(x));
-    let (commitments, proof) = circuit.prove(&mut OsRng, &mut transcript.clone());
-    assert_eq!(commitments, vec![]);
+    let (commitments, vector_blinds, vector_commitments, proof) =
+      circuit.prove(&mut OsRng, &mut transcript.clone());
+    assert!(commitments.is_empty());
+    assert!(vector_blinds.is_empty());
+    assert!(vector_commitments.is_empty());
 
     let mut circuit = Circuit::new(generators.per_proof(), false);
     gadget(&mut circuit, None);
@@ -48,6 +51,7 @@ fn test_is_non_zero_gadget() {
       &mut verifier,
       &mut transcript.clone(),
       commitments,
+      vector_commitments,
       vec![],
       proof,
     );

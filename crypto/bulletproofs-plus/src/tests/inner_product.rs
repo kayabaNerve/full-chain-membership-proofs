@@ -21,8 +21,8 @@ fn test_zero_inner_product() {
   let P = <Ristretto as Ciphersuite>::G::identity();
 
   let generators = generators(1);
-  let reduced = generators.per_proof().reduce(1, false);
-  let statement = IpStatement::<_, Ristretto, _>::new(&reduced, P);
+  let reduced = generators.per_proof().reduce(1);
+  let statement = IpStatement::<_, Ristretto>::new(&reduced, P);
   let witness = IpWitness::<Ristretto>::new(
     ScalarVector::<Ristretto>::new(1),
     ScalarVector::<Ristretto>::new(1),
@@ -42,7 +42,7 @@ fn test_inner_product() {
   let mut verifier = BatchVerifier::new(6);
   let generators = generators(32);
   for i in [1, 2, 4, 8, 16, 32] {
-    let generators = generators.per_proof().reduce(i, false);
+    let generators = generators.per_proof().reduce(i);
     let g = generators.g().point();
     assert_eq!(generators.len(), i);
     let mut g_bold = vec![];
@@ -64,7 +64,7 @@ fn test_inner_product() {
 
     let P = g_bold.multiexp(&a) + h_bold.multiexp(&b) + (g * a.inner_product(&b));
 
-    let statement = IpStatement::<_, Ristretto, _>::new(&generators, P);
+    let statement = IpStatement::<_, Ristretto>::new(&generators, P);
     let witness = IpWitness::<Ristretto>::new(a, b);
 
     let mut transcript = RecommendedTranscript::new(b"IP Test");

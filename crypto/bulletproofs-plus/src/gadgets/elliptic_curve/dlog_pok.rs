@@ -16,13 +16,17 @@ use ciphersuite::{
 use ecip::{Ecip, Poly, Divisor};
 
 use crate::{
-  arithmetic_circuit::{ProductReference, ChallengeReference, Constraint, Circuit},
+  arithmetic_circuit::{
+    ProductReference, VectorCommitmentReference, ChallengeReference, Constraint, Circuit,
+  },
   gadgets::{Bit, elliptic_curve::*},
 };
 
 /// A table for efficient proofs of knowledge of discrete logarithms over a specified generator.
 
 /*
+  TODO: This commentary is out of date and needs updating.
+
   Creating a bit takes one gate. Selecting a zero-knowledge variable takes one gate.
 
   The current DLog PoK takes in 255 bits (each costing 1 gate to be created each) and performs
@@ -119,10 +123,11 @@ fn divisor_coeffs(points: usize) -> DivisorCoeffs {
 
 #[derive(Clone, Debug)]
 struct EmbeddedDivisor {
-  y_coeff: Option<ProductReference>,
-  yx_coeffs: Vec<ProductReference>,
-  x_coeffs: Vec<ProductReference>,
-  zero_coeff: ProductReference,
+  vector_commitment: VectorCommitmentReference,
+  y_coeff: Option<usize>,
+  yx_coeffs: Vec<usize>,
+  x_coeffs: Vec<usize>,
+  zero_coeff: usize,
   differentiated: bool,
 }
 
@@ -176,17 +181,12 @@ impl EmbeddedDivisor {
       vec![None; coeffs.0 + coeffs.1 + coeffs.2 + coeffs.3]
     };
 
-    // Commit in pairs
+    // Commit via a vector commitment
+    let vc = circuit.allocate_vector_commitment();
     let mut iter = serial.into_iter();
     let mut serial = VecDeque::new();
     while let Some(a) = iter.next() {
-      let b = iter.next().unwrap_or(a);
-      let a = circuit.add_secret_input(a);
-      let b = circuit.add_secret_input(b);
-      // GC: 0.5 per point
-      let ((l, r, _), _) = circuit.product(a, b);
-      serial.push_back(l);
-      serial.push_back(r);
+      serial.push_back(circuit.add_to_vector_commitment(vc, a));
     }
 
     // Decompose back
@@ -207,7 +207,14 @@ impl EmbeddedDivisor {
       (usize::from(u8::from(y_coeff.is_some())), yx_coeffs.len(), x_coeffs.len(), 1)
     );
 
-    EmbeddedDivisor { y_coeff, yx_coeffs, x_coeffs, zero_coeff, differentiated: false }
+    EmbeddedDivisor {
+      vector_commitment: vc,
+      y_coeff,
+      yx_coeffs,
+      x_coeffs,
+      zero_coeff,
+      differentiated: false,
+    }
   }
 }
 
@@ -257,7 +264,8 @@ impl EmbeddedDivisor {
     let mut constraint = Constraint::new("divisor_eval");
 
     if let Some(y_coeff) = self.y_coeff {
-      constraint.weight_with_challenge(
+      constraint.weight_vector_commitment_variable_with_challenge(
+        self.vector_commitment,
         y_coeff,
         challenge,
         Box::new(move |challenge| DivisorChallenge::<C::Embedded>(challenge).y_coeff(neg_y)),
@@ -266,7 +274,8 @@ impl EmbeddedDivisor {
 
     let differentiated = self.differentiated;
     for (i, yx_coeff) in self.yx_coeffs.iter().enumerate() {
-      constraint.weight_with_challenge(
+      constraint.weight_vector_commitment_variable_with_challenge(
+        self.vector_commitment,
         *yx_coeff,
         challenge,
         Box::new(move |challenge| {
@@ -282,7 +291,8 @@ impl EmbeddedDivisor {
     }
 
     for (i, x_coeff) in self.x_coeffs.iter().enumerate() {
-      constraint.weight_with_challenge(
+      constraint.weight_vector_commitment_variable_with_challenge(
+        self.vector_commitment,
         *x_coeff,
         challenge,
         Box::new(move |challenge| {
@@ -297,7 +307,11 @@ impl EmbeddedDivisor {
       );
     }
 
-    constraint.weight(self.zero_coeff, <C::Embedded as Ecip>::FieldElement::ONE);
+    constraint.weight_variable_in_vector_commitment(
+      self.vector_commitment,
+      self.zero_coeff,
+      <C::Embedded as Ecip>::FieldElement::ONE,
+    );
 
     constraint
   }
@@ -404,43 +418,42 @@ pub(crate) fn divisor_dlog_pok<
 
   // Make sure the divisor isn't zero
   // TODO: Don't add it in-circuit in the first place
-  circuit.equals_constant(embedded.x_coeffs[0], C::F::ONE);
+  let mut constraint = Constraint::new("divisor isn't zero");
+  constraint.weight_variable_in_vector_commitment(
+    embedded.vector_commitment,
+    embedded.x_coeffs[0],
+    C::F::ONE,
+  );
+  constraint.rhs_offset(C::F::ONE);
+  circuit.constrain(constraint);
 
-  // We need to select a challenge point for the divisor
-  // This requires committing to the divisor, a ZK variable
-  // We do this by creating a vector commitment for the divisor's variables
-  // This commitment is then what's hashed for challenges
-  let commitment = {
-    let mut transcript = embedded.x_coeffs.clone();
-    transcript.extend(&embedded.yx_coeffs);
-    transcript.push(embedded.zero_coeff);
-    if let Some(y_coeff) = embedded.y_coeff {
-      transcript.push(y_coeff);
-    }
+  // Include the discrete log inside the divisor's vector commitment so it's also challenged
+  // TODO: Can we make the bits/point more efficient with this vector commitment?
+  for bit in &dlog {
+    let bit_i = circuit.add_to_vector_commitment(
+      embedded.vector_commitment,
+      circuit.prover().then(|| circuit.unchecked_value(bit.variable)),
+    );
+    let mut constraint = Constraint::new("bit equality");
+    constraint.weight(circuit.variable_to_product(bit.variable).unwrap(), C::F::ONE);
+    constraint.weight_variable_in_vector_commitment(embedded.vector_commitment, bit_i, -C::F::ONE);
+    circuit.constrain(constraint);
+  }
 
-    // Also transcript the DLog
-    for bit in &dlog {
-      // Note: We can only bind a single element, the re-composition of the DLog, if desirable
-      // It'd be a single sharable gate and one constraint
-      transcript
-        .push(circuit.variable_to_product(bit.variable).expect("bit was created without a gate"));
-    }
-
-    // And finally the point itself
-    transcript
-      .push(circuit.variable_to_product(p.x).expect("on-curve check didn't use x in a gate"));
-    transcript
-      .push(circuit.variable_to_product(p.y).expect("on-curve check didn't use y in a gate"));
-
-    // Create the commitment
-    let commitment = circuit.allocate_vector_commitment();
-    circuit.bind(commitment, transcript, None);
-    circuit.finalize_commitment(commitment, Some(C::F::random(rng)).filter(|_| circuit.prover()));
-    commitment
-  };
+  // Finally, include the point itself
+  for var in [p.x, p.y] {
+    let var_i = circuit.add_to_vector_commitment(
+      embedded.vector_commitment,
+      circuit.prover().then(|| circuit.unchecked_value(var)),
+    );
+    let mut constraint = Constraint::new("point equality");
+    constraint.weight(circuit.variable_to_product(var).unwrap(), C::F::ONE);
+    constraint.weight_variable_in_vector_commitment(embedded.vector_commitment, var_i, -C::F::ONE);
+    circuit.constrain(constraint);
+  }
 
   let (challenge, challenge_actual) = circuit.in_circuit_challenge(
-    commitment,
+    embedded.vector_commitment,
     Box::new(move |challenge| DivisorChallenge::<C::Embedded>::new::<T>(points, challenge)),
   );
 
@@ -464,6 +477,7 @@ pub(crate) fn divisor_dlog_pok<
     let zero_coeff = x_coeffs.remove(0);
     // Each yx/x coefficient needs weighting by `i + 2`, where i is its zero-indexed position
     EmbeddedDivisor {
+      vector_commitment: embedded.vector_commitment,
       y_coeff: Some(y_coeff),
       yx_coeffs,
       x_coeffs,
@@ -479,6 +493,7 @@ pub(crate) fn divisor_dlog_pok<
     This is thanks to any y term over y^2 being reduced out
   */
   let dy = EmbeddedDivisor {
+    vector_commitment: embedded.vector_commitment,
     y_coeff: None,
     yx_coeffs: vec![],
     x_coeffs: embedded.yx_coeffs.clone(),

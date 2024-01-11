@@ -63,8 +63,11 @@ fn test_incomplete_addition() {
 
   let mut circuit = Circuit::new(generators.per_proof(), true);
   gadget(&mut circuit);
-  let (commitments, proof) = circuit.prove(&mut OsRng, &mut transcript.clone());
-  assert_eq!(commitments, vec![]);
+  let (commitments, vector_blinds, vector_commitments, proof) =
+    circuit.prove(&mut OsRng, &mut transcript.clone());
+  assert!(commitments.is_empty());
+  assert!(vector_blinds.is_empty());
+  assert!(vector_commitments.is_empty());
 
   let mut circuit = Circuit::new(generators.per_proof(), false);
   gadget(&mut circuit);
@@ -74,6 +77,7 @@ fn test_incomplete_addition() {
     &mut verifier,
     &mut transcript,
     commitments,
+    vector_commitments,
     vec![],
     proof,
   );
@@ -124,14 +128,14 @@ fn test_dlog_pok() {
     let mut circuit = Circuit::new(generators.per_proof(), true);
     gadget(&mut circuit, point, Some(dlog));
     let (commitments, _, vector_commitments, proof) =
-      circuit.prove_with_vector_commitments(&mut OsRng, &mut transcript.clone());
+      circuit.prove(&mut OsRng, &mut transcript.clone());
     assert!(commitments.is_empty());
 
     let mut circuit = Circuit::new(generators.per_proof(), false);
     gadget(&mut circuit, point, None);
 
     let mut verifier = BatchVerifier::new(5);
-    circuit.verification_statement_with_vector_commitments().verify(
+    circuit.verification_statement().verify(
       &mut OsRng,
       &mut verifier,
       &mut transcript.clone(),

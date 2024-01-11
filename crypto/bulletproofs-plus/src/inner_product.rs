@@ -23,19 +23,12 @@ enum P<C: Ciphersuite> {
 
 // Protocol 2
 #[derive(Clone, Debug)]
-pub struct IpStatement<
-  'a,
-  T: 'static + Transcript,
-  C: Ciphersuite,
-  GB: Clone + AsRef<[MultiexpPoint<C::G>]>,
-> {
-  generators: &'a InnerProductGenerators<'a, T, C, GB>,
+pub struct IpStatement<'a, T: 'static + Transcript, C: Ciphersuite> {
+  generators: &'a InnerProductGenerators<'a, T, C>,
   P: P<C>,
 }
 
-impl<'a, T: 'static + Transcript, C: Ciphersuite, GB: Clone + AsRef<[MultiexpPoint<C::G>]>> Zeroize
-  for IpStatement<'a, T, C, GB>
-{
+impl<'a, T: 'static + Transcript, C: Ciphersuite> Zeroize for IpStatement<'a, T, C> {
   fn zeroize(&mut self) {
     self.P.zeroize();
   }
@@ -73,16 +66,14 @@ pub struct IpProof<C: Ciphersuite> {
   b: C::F,
 }
 
-impl<'a, T: 'static + Transcript, C: Ciphersuite, GB: 'a + Clone + AsRef<[MultiexpPoint<C::G>]>>
-  IpStatement<'a, T, C, GB>
-{
-  pub fn new(generators: &'a InnerProductGenerators<'a, T, C, GB>, P: C::G) -> Self {
+impl<'a, T: 'static + Transcript, C: Ciphersuite> IpStatement<'a, T, C> {
+  pub fn new(generators: &'a InnerProductGenerators<'a, T, C>, P: C::G) -> Self {
     debug_assert_eq!(generators.len(), padded_pow_of_2(generators.len()));
     Self { generators, P: P::Point(P) }
   }
 
   pub(crate) fn new_without_P_transcript(
-    generators: &'a InnerProductGenerators<'a, T, C, GB>,
+    generators: &'a InnerProductGenerators<'a, T, C>,
     P: Vec<(C::F, MultiexpPoint<C::G>)>,
   ) -> Self {
     debug_assert_eq!(generators.len(), padded_pow_of_2(generators.len()));

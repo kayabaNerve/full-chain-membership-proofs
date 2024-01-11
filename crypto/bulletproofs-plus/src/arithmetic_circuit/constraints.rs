@@ -5,11 +5,18 @@ use ciphersuite::{group::ff::Field, Ciphersuite};
 use crate::{
   ScalarVector, ScalarMatrix,
   arithmetic_circuit::{
-    ChallengeApplicator, ChallengeReference, CommitmentReference, ProductReference,
+    ChallengeApplicator, ChallengeReference, CommitmentReference, VectorCommitmentReference,
+    ProductReference,
   },
 };
 
-/// A constraint of the form WL aL + WR aR + WO aO = WV V + c.
+#[derive(PartialEq, Eq, Hash)]
+pub enum ChallengeWeighted {
+  Product(ProductReference),
+  VectorCommitment(VectorCommitmentReference, usize),
+}
+
+/// A constraint of the form WL aL + WR aR + WO aO + WC C = WV V + c.
 #[must_use]
 pub struct Constraint<C: Ciphersuite> {
   pub(crate) label: &'static str,
@@ -19,11 +26,12 @@ pub struct Constraint<C: Ciphersuite> {
   pub(crate) WR: Vec<(usize, C::F)>,
   pub(crate) WO: Vec<(usize, C::F)>,
   pub(crate) WV: Vec<(usize, C::F)>,
-  // Challenges are post-decided and accordingly can't be inserted into WL/WR/WO/WV at time of
+  pub(crate) WC: Vec<((usize, usize), C::F)>,
+  // Challenges are post-decided and accordingly can't be inserted into WL/WR/WO/WV/WC at time of
   // execution. This post-expands to weighting the specified ProductReference by the specified
   // weight, derived from the challenge.
   pub(crate) challenge_weights:
-    HashMap<ProductReference, (ChallengeReference, Box<dyn ChallengeApplicator<C>>)>,
+    HashMap<ChallengeWeighted, (ChallengeReference, Box<dyn ChallengeApplicator<C>>)>,
 
   pub(crate) c: C::F,
   // challenge_weights yet for c.
@@ -40,6 +48,7 @@ impl<C: Ciphersuite> Clone for Constraint<C> {
       WR: self.WR.clone(),
       WO: self.WO.clone(),
       WV: self.WV.clone(),
+      WC: self.WC.clone(),
       challenge_weights: HashMap::new(),
       c: self.c,
       c_challenge: None,
@@ -62,6 +71,7 @@ impl<C: Ciphersuite> Constraint<C> {
       WR: vec![],
       WO: vec![],
       WV: vec![],
+      WC: vec![],
       challenge_weights: HashMap::new(),
       c: C::F::ZERO,
       c_challenge: None,
@@ -79,7 +89,7 @@ impl<C: Ciphersuite> Constraint<C> {
   /// Cummulatively weight the specified product by the specified weight.
   pub fn weight(&mut self, product: ProductReference, weight: C::F) -> &mut Self {
     assert!(
-      !self.challenge_weights.contains_key(&product),
+      !self.challenge_weights.contains_key(&ChallengeWeighted::Product(product)),
       "weighted product already has a challenge weight"
     );
 
@@ -107,7 +117,28 @@ impl<C: Ciphersuite> Constraint<C> {
     if self.relevant_weights(product).iter().any(|existing| existing.0 == product.id()) {
       panic!("product weighted by challenge already has a non-challenge weight");
     }
-    assert!(self.challenge_weights.insert(product, (challenge, applicator)).is_none());
+    assert!(self
+      .challenge_weights
+      .insert(ChallengeWeighted::Product(product), (challenge, applicator))
+      .is_none());
+    self
+  }
+
+  pub fn weight_vector_commitment_variable_with_challenge(
+    &mut self,
+    vector_commitment: VectorCommitmentReference,
+    variable: usize,
+    challenge: ChallengeReference,
+    applicator: Box<dyn ChallengeApplicator<C>>,
+  ) -> &mut Self {
+    // TODO: Check for no prior weight in WC
+    assert!(self
+      .challenge_weights
+      .insert(
+        ChallengeWeighted::VectorCommitment(vector_commitment, variable),
+        (challenge, applicator)
+      )
+      .is_none());
     self
   }
 
@@ -117,6 +148,20 @@ impl<C: Ciphersuite> Constraint<C> {
       assert!(existing.0 != variable.0);
     }
     self.WV.push((variable.0, weight));
+    self
+  }
+
+  /// Cummulatively weight the specified commitment by the specified weight.
+  pub fn weight_variable_in_vector_commitment(
+    &mut self,
+    commitment: VectorCommitmentReference,
+    variable: usize,
+    weight: C::F,
+  ) -> &mut Self {
+    for existing in &self.WC {
+      assert!(existing.0 != (commitment.0, variable));
+    }
+    self.WC.push(((commitment.0, variable), weight));
     self
   }
 
@@ -148,10 +193,11 @@ pub(crate) struct Weights<C: Ciphersuite> {
   WR: ScalarMatrix<C>,
   WO: ScalarMatrix<C>,
   WV: ScalarMatrix<C>,
+  WC: Vec<ScalarMatrix<C>>,
   c: ScalarVector<C>,
 
   challenge_weights:
-    Vec<HashMap<ProductReference, (ChallengeReference, Box<dyn ChallengeApplicator<C>>)>>,
+    Vec<HashMap<ChallengeWeighted, (ChallengeReference, Box<dyn ChallengeApplicator<C>>)>>,
   c_challenge: Vec<Option<(ChallengeReference, Box<dyn ChallengeApplicator<C>>)>>,
 }
 
@@ -159,6 +205,7 @@ impl<C: Ciphersuite> Weights<C> {
   pub(crate) fn new(
     products: usize,
     commitments: usize,
+    vector_commitments: usize,
     constraints: Vec<Constraint<C>>,
     post_constraints: Vec<Constraint<C>>,
   ) -> Self {
@@ -166,6 +213,10 @@ impl<C: Ciphersuite> Weights<C> {
     let mut WR = ScalarMatrix::new(products);
     let mut WO = ScalarMatrix::new(products);
     let mut WV = ScalarMatrix::new(commitments);
+    let mut WC = vec![];
+    while WC.len() < vector_commitments {
+      WC.push(ScalarMatrix::new(products));
+    }
     let mut c = Vec::with_capacity(constraints.len() + post_constraints.len());
 
     let mut challenge_weights = vec![];
@@ -176,6 +227,15 @@ impl<C: Ciphersuite> Weights<C> {
       WR.push(constraint.WR);
       WO.push(constraint.WO);
       WV.push(constraint.WV);
+
+      let mut vector_commitment_weights = vec![vec![]; vector_commitments];
+      for ((commitment, variable), weight) in constraint.WC {
+        vector_commitment_weights[commitment].push((variable, weight));
+      }
+      for (i, vector_commitment_weights) in vector_commitment_weights.into_iter().enumerate() {
+        WC[i].push(vector_commitment_weights);
+      }
+
       c.push(constraint.c);
 
       challenge_weights.push(constraint.challenge_weights);
@@ -188,21 +248,30 @@ impl<C: Ciphersuite> Weights<C> {
       WO.push(constraint.WO);
       WV.push(vec![]);
       assert!(constraint.WV.is_empty());
+      assert!(constraint.WC.is_empty());
       assert!(constraint.challenge_weights.is_empty());
       assert!(constraint.c_challenge.is_none());
     }
-    Self { WL, WR, WO, WV, c: ScalarVector(c), challenge_weights, c_challenge }
+    Self { WL, WR, WO, WV, WC, c: ScalarVector(c), challenge_weights, c_challenge }
   }
 
   pub(crate) fn build(
     &self,
     post_values: Vec<C::F>,
     challenges: &[Vec<C::F>],
-  ) -> (ScalarMatrix<C>, ScalarMatrix<C>, ScalarMatrix<C>, ScalarMatrix<C>, ScalarVector<C>) {
+  ) -> (
+    ScalarMatrix<C>,
+    ScalarMatrix<C>,
+    ScalarMatrix<C>,
+    ScalarMatrix<C>,
+    Vec<ScalarMatrix<C>>,
+    ScalarVector<C>,
+  ) {
     let mut WL = self.WL.clone();
     let mut WR = self.WR.clone();
     let mut WO = self.WO.clone();
     let WV = self.WV.clone();
+    let mut WC = self.WC.clone();
     let mut c = self.c.clone();
 
     // Post-constraints are defined as terms on the left-hand side expecting to be equal with the
@@ -217,13 +286,20 @@ impl<C: Ciphersuite> Weights<C> {
     assert_eq!(WL.length(), c.len());
 
     for i in 0 .. self.challenge_weights.len() {
-      for (product, (challenge, applicator)) in &self.challenge_weights[i] {
-        let (weights, id) = match product {
-          ProductReference::Left { product: id, variable: _ } => (&mut WL.data[i], id),
-          ProductReference::Right { product: id, variable: _ } => (&mut WR.data[i], id),
-          ProductReference::Output { product: id, variable: _ } => (&mut WO.data[i], id),
-        };
-        weights.push((*id, applicator(&challenges[challenge.0])));
+      for (challenge_weighted, (challenge, applicator)) in &self.challenge_weights[i] {
+        match challenge_weighted {
+          ChallengeWeighted::Product(product) => {
+            let (weights, id) = match product {
+              ProductReference::Left { product: id, variable: _ } => (&mut WL.data[i], id),
+              ProductReference::Right { product: id, variable: _ } => (&mut WR.data[i], id),
+              ProductReference::Output { product: id, variable: _ } => (&mut WO.data[i], id),
+            };
+            weights.push((*id, applicator(&challenges[challenge.0])));
+          }
+          ChallengeWeighted::VectorCommitment(vc, var) => {
+            WC[vc.0].data[i].push((*var, applicator(&challenges[challenge.0])));
+          }
+        }
       }
 
       if let Some(c_challenge) = self.c_challenge[i].as_ref() {
@@ -231,6 +307,6 @@ impl<C: Ciphersuite> Weights<C> {
       }
     }
 
-    (WL, WR, WO, WV, c)
+    (WL, WR, WO, WV, WC, c)
   }
 }
