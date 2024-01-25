@@ -1,7 +1,7 @@
 use transcript::Transcript;
 use ciphersuite::{group::ff::Field, Ciphersuite};
 
-use crate::arithmetic_circuit::{ProductReference, Constraint, Circuit};
+use crate::arithmetic_circuit::{ProductReference, VectorCommitmentReference, Constraint, Circuit};
 
 // Core set membership gadget, shared between the variable/constant routines.
 // member should be Some if matching against a variable, None for a constant.
@@ -10,13 +10,14 @@ fn set_membership<T: 'static + Transcript, C: Ciphersuite>(
   circuit: &mut Circuit<T, C>,
   member: Option<ProductReference>,
   value: Option<C::F>,
-  set: &[ProductReference],
+  vc: VectorCommitmentReference,
+  set: &[usize],
 ) {
   assert!(set.len() >= 2);
 
-  let sub_member = |circuit: &mut Circuit<T, C>, var: ProductReference| {
+  let sub_member = |circuit: &mut Circuit<T, C>, var: usize| {
     let sub = if circuit.prover() {
-      Some(circuit.unchecked_value(var.variable()) - value.unwrap())
+      Some(circuit.unchecked_value_in_vector_commitment(vc, var) - value.unwrap())
     } else {
       None
     };
@@ -33,7 +34,7 @@ fn set_membership<T: 'static + Transcript, C: Ciphersuite>(
 
     let mut constrain_sub = |label, j, var| {
       let mut constraint = Constraint::new(label);
-      constraint.weight(set[j], C::F::ONE);
+      constraint.weight_variable_in_vector_commitment(vc, set[j], C::F::ONE);
       constraint.weight(var, -C::F::ONE);
       if let Some(member) = member {
         constraint.weight(member, -C::F::ONE);
@@ -62,13 +63,15 @@ fn set_membership<T: 'static + Transcript, C: Ciphersuite>(
 pub fn assert_variable_in_set_gadget<T: 'static + Transcript, C: Ciphersuite>(
   circuit: &mut Circuit<T, C>,
   member: ProductReference,
-  set: &[ProductReference],
+  vc: VectorCommitmentReference,
+  set: &[usize],
 ) {
   let value =
     if circuit.prover() { Some(circuit.unchecked_value(member.variable())) } else { None };
-  set_membership(circuit, Some(member), value, set);
+  set_membership(circuit, Some(member), value, vc, set);
 }
 
+/*
 /// Assert a constant is within a set.
 pub fn assert_constant_in_set_gadget<T: 'static + Transcript, C: Ciphersuite>(
   circuit: &mut Circuit<T, C>,
@@ -77,3 +80,4 @@ pub fn assert_constant_in_set_gadget<T: 'static + Transcript, C: Ciphersuite>(
 ) {
   set_membership(circuit, None, Some(constant), set)
 }
+*/

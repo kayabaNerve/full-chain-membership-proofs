@@ -182,7 +182,10 @@ impl EmbeddedDivisor {
     };
 
     // Commit via a vector commitment
-    let vc = circuit.allocate_vector_commitment();
+    // TODO: Don't use OsRng here
+    let vc = circuit.allocate_vector_commitment(
+      circuit.prover().then(|| <C as Ciphersuite>::F::random(&mut rand_core::OsRng)),
+    );
     let mut iter = serial.into_iter();
     let mut serial = VecDeque::new();
     while let Some(a) = iter.next() {

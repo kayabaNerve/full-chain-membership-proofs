@@ -40,7 +40,7 @@ pub fn padded_pow_of_2(i: usize) -> usize {
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
-pub(crate) enum GeneratorsList {
+pub enum GeneratorsList {
   GBold1,
   HBold1,
 }
@@ -151,7 +151,7 @@ impl<'a, T: 'static + Transcript, C: Ciphersuite> ProofGenerators<'a, T, C> {
     self.h
   }
 
-  pub(crate) fn generator(&self, list: GeneratorsList, i: usize) -> &MultiexpPoint<C::G> {
+  pub fn generator(&self, list: GeneratorsList, i: usize) -> &MultiexpPoint<C::G> {
     &(match list {
       GeneratorsList::GBold1 => &self.g_bold1,
       GeneratorsList::HBold1 => &self.h_bold1,
@@ -201,5 +201,32 @@ impl<'a, T: 'static + Transcript, C: Ciphersuite> InnerProductGenerators<'a, T, 
       GeneratorsList::GBold1 => self.g_bold1.as_ref(),
       GeneratorsList::HBold1 => self.h_bold1,
     })[i]
+  }
+}
+
+// Range proof structures
+#[allow(non_snake_case)]
+#[derive(Clone, PartialEq, Eq, Debug, Zeroize, ZeroizeOnDrop)]
+pub struct RangeCommitment<C: Ciphersuite> {
+  pub value: u64,
+  pub mask: C::F,
+}
+
+impl<C: Ciphersuite> RangeCommitment<C> {
+  pub fn zero() -> Self {
+    RangeCommitment { value: 0, mask: C::F::ZERO }
+  }
+
+  pub fn new(value: u64, mask: C::F) -> Self {
+    RangeCommitment { value, mask }
+  }
+
+  pub fn masking<R: RngCore + CryptoRng>(rng: &mut R, value: u64) -> Self {
+    RangeCommitment { value, mask: C::F::random(rng) }
+  }
+
+  /// Calculate a Pedersen commitment, as a point, from the transparent structure.
+  pub fn calculate(&self, g: C::G, h: C::G) -> C::G {
+    (g * C::F::from(self.value)) + (h * self.mask)
   }
 }

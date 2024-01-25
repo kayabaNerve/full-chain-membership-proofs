@@ -158,7 +158,9 @@ fn test_arithmetic_circuit_with_vector_commitment() {
       .rhs_offset(-<Ristretto as Ciphersuite>::F::ONE);
     circuit.constrain(next_constraint);
 
-    let vc = circuit.allocate_vector_commitment();
+    let vc = circuit.allocate_vector_commitment(
+      circuit.prover().then(|| <Ristretto as Ciphersuite>::F::random(&mut rand_core::OsRng)),
+    );
     let vc_var_1 = circuit
       .add_to_vector_commitment(vc, circuit.prover().then(|| circuit.unchecked_value(x_var)));
     let vc_var_2 = circuit

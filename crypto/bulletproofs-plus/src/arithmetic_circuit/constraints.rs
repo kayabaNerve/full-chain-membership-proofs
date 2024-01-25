@@ -205,7 +205,7 @@ impl<C: Ciphersuite> Weights<C> {
   pub(crate) fn new(
     products: usize,
     commitments: usize,
-    vector_commitments: usize,
+    vector_commitments: &[usize],
     constraints: Vec<Constraint<C>>,
     post_constraints: Vec<Constraint<C>>,
   ) -> Self {
@@ -214,8 +214,8 @@ impl<C: Ciphersuite> Weights<C> {
     let mut WO = ScalarMatrix::new(products);
     let mut WV = ScalarMatrix::new(commitments);
     let mut WC = vec![];
-    while WC.len() < vector_commitments {
-      WC.push(ScalarMatrix::new(products));
+    for vector_commitment in vector_commitments {
+      WC.push(ScalarMatrix::new(*vector_commitment));
     }
     let mut c = Vec::with_capacity(constraints.len() + post_constraints.len());
 
@@ -228,7 +228,7 @@ impl<C: Ciphersuite> Weights<C> {
       WO.push(constraint.WO);
       WV.push(constraint.WV);
 
-      let mut vector_commitment_weights = vec![vec![]; vector_commitments];
+      let mut vector_commitment_weights = vec![vec![]; vector_commitments.len()];
       for ((commitment, variable), weight) in constraint.WC {
         vector_commitment_weights[commitment].push((variable, weight));
       }
@@ -247,6 +247,9 @@ impl<C: Ciphersuite> Weights<C> {
       WR.push(constraint.WR);
       WO.push(constraint.WO);
       WV.push(vec![]);
+      for WC in &mut WC {
+        WC.push(vec![]);
+      }
       assert!(constraint.WV.is_empty());
       assert!(constraint.WC.is_empty());
       assert!(constraint.challenge_weights.is_empty());

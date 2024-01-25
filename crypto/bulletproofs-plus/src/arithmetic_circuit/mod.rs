@@ -166,12 +166,28 @@ impl<'a, T: 'static + Transcript, C: Ciphersuite> Circuit<'a, T, C> {
     self.generators.h().point()
   }
 
+  pub fn generators(&self) -> &ProofGenerators<'a, T, C> {
+    &self.generators
+  }
+
   /// Obtain the underlying value from a variable reference.
   ///
   /// Panics if not prover.
   pub fn unchecked_value(&self, variable: VariableReference) -> C::F {
     assert!(self.prover(), "verifier called for the unchecked_value");
     self.variables[variable.0].value().expect("prover didn't have a variable's value")
+  }
+
+  /// Obtain the underlying value from a vector commit variable reference.
+  ///
+  /// Panics if not prover.
+  pub fn unchecked_value_in_vector_commitment(
+    &self,
+    commitment: VectorCommitmentReference,
+    variable: usize,
+  ) -> C::F {
+    assert!(self.prover(), "verifier called for the unchecked_value");
+    self.vector_commitments[commitment.0][variable].unwrap()
   }
 
   pub fn variable_to_product(&self, variable: VariableReference) -> Option<ProductReference> {
@@ -293,13 +309,11 @@ impl<'a, T: 'static + Transcript, C: Ciphersuite> Circuit<'a, T, C> {
   }
 
   /// Allocate a vector commitment ID.
-  pub fn allocate_vector_commitment(&mut self) -> VectorCommitmentReference {
+  pub fn allocate_vector_commitment(&mut self, blind: Option<C::F>) -> VectorCommitmentReference {
+    assert_eq!(blind.is_some(), self.prover);
     let res = VectorCommitmentReference(self.vector_commitments.len());
     self.vector_commitments.push(vec![]);
-    // TODO: Don't use OsRng here, take in a RNG argument
-    self
-      .vector_commitment_blinds
-      .push(Some(C::F::random(&mut rand_core::OsRng)).filter(|_| self.prover));
+    self.vector_commitment_blinds.push(blind);
     res
   }
 
@@ -421,7 +435,14 @@ impl<'a, T: 'static + Transcript, C: Ciphersuite> Circuit<'a, T, C> {
       assert!(variable_constraint.is_none());
     }
 
-    let (commitments, C, C_values, c_gamma, witness) = if self.prover {
+    let mut vector_commitment_lens = vec![0; self.vector_commitments.len()];
+    for (i, vector_commitment) in self.vector_commitments.iter().enumerate() {
+      for item in vector_commitment.iter() {
+        vector_commitment_lens[i] += 1;
+      }
+    }
+
+    let (commitments, C, c_gamma, witness) = if self.prover {
       let mut aL = vec![];
       let mut aR = vec![];
 
@@ -472,7 +493,6 @@ impl<'a, T: 'static + Transcript, C: Ciphersuite> Circuit<'a, T, C> {
       (
         Some(commitments),
         Some(C),
-        Some(C_values.clone()),
         Some(self.vector_commitment_blinds.clone()),
         Some(ArithmeticCircuitWitness::new(
           ScalarVector(aL),
@@ -484,7 +504,7 @@ impl<'a, T: 'static + Transcript, C: Ciphersuite> Circuit<'a, T, C> {
         )),
       )
     } else {
-      (None, None, None, None, None)
+      (None, None, None, None)
     };
 
     let mut V_len = 0;
@@ -497,9 +517,6 @@ impl<'a, T: 'static + Transcript, C: Ciphersuite> Circuit<'a, T, C> {
       }
     }
     assert_eq!(self.commitments, V_len);
-
-    let mut C_len = self.vector_commitment_blinds.len();
-    let mut vector_commitments = C_values;
 
     // Check the constraints are well-formed
     if self.prover() {
@@ -538,7 +555,8 @@ impl<'a, T: 'static + Transcript, C: Ciphersuite> Circuit<'a, T, C> {
         post_values.push(value);
       }
     }
-    let weights = Weights::new(n, V_len, C_len, self.constraints, post_constraints);
+    let weights =
+      Weights::new(n, V_len, &vector_commitment_lens, self.constraints, post_constraints);
 
     (
       self.generators,

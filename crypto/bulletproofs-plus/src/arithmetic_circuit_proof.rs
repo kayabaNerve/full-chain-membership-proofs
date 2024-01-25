@@ -200,9 +200,7 @@ impl<'a, T: 'static + Transcript, C: Ciphersuite> ArithmeticCircuitStatement<'a,
 
     let mut largest_WC = 0;
     for WC in &self.WC {
-      if WC.width() > largest_WC {
-        largest_WC = WC.width();
-      }
+      largest_WC = largest_WC.max(WC.width());
     }
     // TODO: Move into Statement::new
     let n = n.max(largest_WC);
@@ -279,7 +277,8 @@ impl<'a, T: 'static + Transcript, C: Ciphersuite> ArithmeticCircuitStatement<'a,
 
     let nc = self.C.len();
 
-    let ni = 2 + (2 * (nc / 2));
+    // TODO: Have this modified n' formula signed off on
+    let ni = 2 + (2 * (nc + 1).div_ceil(2));
     let ilr = ni / 2;
     let io = ni;
     let is = ni + 1;
@@ -292,11 +291,29 @@ impl<'a, T: 'static + Transcript, C: Ciphersuite> ArithmeticCircuitStatement<'a,
     for i in 0 .. nc {
       ik.push(i);
     }
+    /*
+    {
+      let mut all_is = ik.clone();
+      all_is.push(ilr);
+      all_is.push(io);
+      all_is.push(is);
+      assert_eq!(all_is.iter().collect::<std::collections::HashSet<_>>().len(), all_is.len());
+    }
+    */
     let mut jk = Vec::with_capacity(nc);
     assert!((ni - nc) >= (ni / 2));
     for i in 0 .. nc {
       jk.push(ni - i);
     }
+    /*
+    {
+      let mut all_js = jk.clone();
+      all_js.push(jlr);
+      all_js.push(jo);
+      all_js.push(js);
+      assert_eq!(all_js.iter().collect::<std::collections::HashSet<_>>().len(), all_js.len());
+    }
+    */
 
     let coefficients = ni + 1;
     let total_terms = 1 + coefficients;
@@ -310,6 +327,9 @@ impl<'a, T: 'static + Transcript, C: Ciphersuite> ArithmeticCircuitStatement<'a,
     for (i, c) in ik.iter().zip(witness.c.clone().into_iter()) {
       assert_eq!(l[*i], ScalarVector::new(witness.aL.len()));
       l[*i] = c;
+      while l[*i].len() < n {
+        l[*i].0.push(C::F::ZERO);
+      }
     }
 
     let mut r = Vec::with_capacity(total_terms);
@@ -446,7 +466,7 @@ impl<'a, T: 'static + Transcript, C: Ciphersuite> ArithmeticCircuitStatement<'a,
     proof: ArithmeticCircuitProof<C>,
   ) {
     let nc = self.C.len();
-    let ni = 2 + (2 * (nc / 2));
+    let ni = 2 + (2 * (nc + 1).div_ceil(2));
     let l_r_poly_len = 1 + ni + 1;
     let m = self.V.len();
     let n = self.WL.width();
@@ -458,9 +478,7 @@ impl<'a, T: 'static + Transcript, C: Ciphersuite> ArithmeticCircuitStatement<'a,
 
     let mut largest_WC = 0;
     for WC in &self.WC {
-      if WC.width() > largest_WC {
-        largest_WC = WC.width();
-      }
+      largest_WC = largest_WC.max(WC.width());
     }
     // TODO: Move into Statement::new
     let n = n.max(largest_WC);
