@@ -61,7 +61,6 @@ fn bench_membership() {
     usize::try_from(width).unwrap(),
     max,
   );
-  tree.whitelist_vector_commitments(&mut pallas_generators, &mut vesta_generators);
   dbg!(std::time::Instant::now() - generators);
 
   // Create a tree with the desired depth
@@ -126,9 +125,9 @@ fn bench_membership() {
     );
 
     let (pallas_commitments, _, pallas_vector_commitments, pallas_proof) =
-      circuit_c1.prove_with_vector_commitments(&mut OsRng, &mut prove_transcript);
+      circuit_c1.prove(&mut OsRng, &mut prove_transcript);
     let (vesta_commitments, _, vesta_vector_commitments, vesta_proof) =
-      circuit_c2.prove_with_vector_commitments(&mut OsRng, &mut prove_transcript);
+      circuit_c2.prove(&mut OsRng, &mut prove_transcript);
 
     statements.push(blinded_point);
     proofs.push((
@@ -143,8 +142,8 @@ fn bench_membership() {
   let mut circuit_c2 = Circuit::new(vesta_generators.per_proof(), false);
   let mut verify_transcript = transcript;
   gadget(&mut verify_transcript, &mut circuit_c1, &mut circuit_c2, None, None);
-  let circuit_c1 = circuit_c1.verification_statement_with_vector_commitments();
-  let circuit_c2 = circuit_c2.verification_statement_with_vector_commitments();
+  let circuit_c1 = circuit_c1.verification_statement();
+  let circuit_c2 = circuit_c2.verification_statement();
   dbg!(std::time::Instant::now() - initial_circuit_time);
 
   let verification = std::time::Instant::now();

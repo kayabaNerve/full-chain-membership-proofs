@@ -10,7 +10,7 @@ use ciphersuite::{
 
 use ecip::Ecip;
 use bulletproofs_plus::{
-  arithmetic_circuit::Circuit, gadgets::elliptic_curve::DLogTable,
+  GeneratorsList, arithmetic_circuit::Circuit, gadgets::elliptic_curve::DLogTable,
   tests::generators as generators_fn,
 };
 
@@ -48,15 +48,25 @@ fn test_membership() {
       beta: <<Pasta as CurveCycle>::C2 as Ecip>::FieldElement::random(&mut OsRng),
     };
 
+    let mut even_generators = vec![];
+    let mut odd_generators = vec![];
+    for i in 0 .. width {
+      even_generators
+        .push(pallas_generators.per_proof().generator(GeneratorsList::GBold1, i).point());
+      odd_generators
+        .push(vesta_generators.per_proof().generator(GeneratorsList::GBold1, i).point());
+    }
+
     let max = u64::try_from(width).unwrap().pow(4);
     let mut tree = Tree::<RecommendedTranscript, Pasta>::new(
+      odd_generators,
+      even_generators,
       permissible_c1,
       permissible_c2,
       leaf_randomness,
       width,
       max,
     );
-    tree.whitelist_vector_commitments(&mut pallas_generators, &mut vesta_generators);
 
     // Create a full tree
     let mut leaves = vec![];
@@ -109,9 +119,9 @@ fn test_membership() {
     );
 
     let (pallas_commitments, _, pallas_vector_commitments, pallas_proof) =
-      circuit_c1.prove_with_vector_commitments(&mut OsRng, &mut prove_transcript);
+      circuit_c1.prove(&mut OsRng, &mut prove_transcript);
     let (vesta_commitments, _, vesta_vector_commitments, vesta_proof) =
-      circuit_c2.prove_with_vector_commitments(&mut OsRng, &mut prove_transcript);
+      circuit_c2.prove(&mut OsRng, &mut prove_transcript);
 
     // Verify
     let mut circuit_c1 = Circuit::new(pallas_generators.per_proof(), false);
@@ -159,7 +169,7 @@ fn test_membership() {
       c2_additional.pop();
     }
 
-    circuit_c1.verification_statement_with_vector_commitments().verify(
+    circuit_c1.verification_statement().verify(
       &mut OsRng,
       &mut verifier_c1,
       &mut transcript,
@@ -168,7 +178,7 @@ fn test_membership() {
       c1_additional,
       pallas_proof,
     );
-    circuit_c2.verification_statement_with_vector_commitments().verify(
+    circuit_c2.verification_statement().verify(
       &mut OsRng,
       &mut verifier_c2,
       &mut transcript,

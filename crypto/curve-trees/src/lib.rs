@@ -12,7 +12,7 @@ use ciphersuite::{
 
 use ecip::Ecip;
 use bulletproofs_plus::{
-  VectorCommitmentGenerators,
+  GeneratorsList,
   arithmetic_circuit::*,
   gadgets::{
     elliptic_curve::{Trit, DLogTable, EmbeddedCurveOperations, scalar_to_trits},
@@ -21,6 +21,7 @@ use bulletproofs_plus::{
 };
 
 pub mod pedersen_hash;
+use pedersen_hash::pedersen_hash;
 pub mod permissible;
 use permissible::Permissible;
 pub mod tree;
@@ -89,7 +90,6 @@ pub fn layer_gadget<R: RngCore + CryptoRng, T: 'static + Transcript, C: CurveCyc
   circuit: &mut Circuit<T, C::C2>,
   permissible: &Permissible<C::C1>,
   H: &'static DLogTable<C::C1>,
-  pedersen_generators: &VectorCommitmentGenerators<T, C::C2>,
   blinded_point: Option<<C::C1 as Ciphersuite>::G>,
   blind: Option<<C::C1 as Ciphersuite>::F>,
   permissibility_offset: u64,
@@ -134,38 +134,6 @@ pub fn layer_gadget<R: RngCore + CryptoRng, T: 'static + Transcript, C: CurveCyc
 
   // Create the branch hash
   {
-    // Add the elements in this hash
-    let mut x_coords = vec![];
-    for elem in elements {
-      x_coords.push(circuit.add_secret_input(elem));
-    }
-
-    let x_coords = {
-      let mut prods = vec![];
-      let mut i = 0;
-      while i < x_coords.len() {
-        let (l, r, _) =
-          circuit.product(x_coords[i], x_coords.get(i + 1).copied().unwrap_or(x_coords[i])).0;
-        prods.push(l);
-        prods.push(r);
-        i += 2;
-      }
-      prods.truncate(x_coords.len());
-      prods
-    };
-
-    // Ensure the unblinded point's x coordinate is actually present in the hash
-    assert_variable_in_set_gadget(
-      circuit,
-      circuit.variable_to_product(unblinded.x()).unwrap(),
-      &x_coords,
-    );
-
-    // Bind these to the branch hash
-    let commitment = circuit.allocate_vector_commitment();
-    assert_eq!(pedersen_generators.len(), x_coords.len());
-    circuit.bind(commitment, x_coords, Some(pedersen_generators));
-
     let blind = Some(if last {
       // If this is the last hash, just use the final permissibility offset
       -<C::C2 as Ciphersuite>::F::from(permissibility_offset)
@@ -173,12 +141,37 @@ pub fn layer_gadget<R: RngCore + CryptoRng, T: 'static + Transcript, C: CurveCyc
       new_blind::<_, C::C1, C::C2>(rng, H.trits(), permissibility_offset).1
     })
     .filter(|_| circuit.prover());
+
+    let commitment = circuit.allocate_vector_commitment(blind.map(|blind| -blind));
+    // Add the elements in this hash
+    let mut x_coords = vec![];
+    for elem in &elements {
+      x_coords.push(circuit.add_to_vector_commitment(commitment, *elem));
+    }
+
+    // Ensure the unblinded point's x coordinate is actually present in the hash
+    assert_variable_in_set_gadget(
+      circuit,
+      circuit.variable_to_product(unblinded.x()).unwrap(),
+      commitment,
+      &x_coords,
+    );
+
     (
       // Add the permissibility offset so the 'unblinded' Pedersen hash has the blind needed to be
       // permissible
       // TODO: Adding this offset may make the blind no longer mutual
       blind.map(|blind| blind + <C::C2 as Ciphersuite>::F::from(permissibility_offset)),
-      circuit.finalize_commitment(commitment, blind.map(|blind| -blind)),
+      circuit.prover().then(|| {
+        let mut generators = vec![];
+        for i in 0 .. elements.len() {
+          generators.push(circuit.generators().generator(GeneratorsList::GBold1, i).point());
+        }
+        pedersen_hash::<C::C2>(
+          &elements.iter().map(|e| e.unwrap()).collect::<Vec<_>>(),
+          &generators,
+        ) + (circuit.generators().h().point() * -blind.unwrap())
+      }),
     )
   }
 }
@@ -241,7 +234,6 @@ pub fn membership_gadget<R: RngCore + CryptoRng, T: 'static + Transcript, C: Cur
         circuit_c2,
         permissible_c1,
         dlog_table1,
-        tree.odd_generators(i).unwrap(),
         this_blinded_point,
         odd_blind.take().unwrap(),
         permissibility_offset,
@@ -274,7 +266,6 @@ pub fn membership_gadget<R: RngCore + CryptoRng, T: 'static + Transcript, C: Cur
         circuit_c1,
         permissible_c2,
         dlog_table2,
-        tree.even_generators(i).unwrap(),
         this_blinded_point,
         even_blind.take().unwrap(),
         permissibility_offset,

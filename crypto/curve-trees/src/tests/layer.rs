@@ -10,11 +10,14 @@ use ciphersuite::{
 
 use ecip::Ecip;
 use bulletproofs_plus::{
-  VectorCommitmentGenerators, arithmetic_circuit::Circuit, gadgets::elliptic_curve::DLogTable,
+  GeneratorsList, arithmetic_circuit::Circuit, gadgets::elliptic_curve::DLogTable,
   tests::generators as generators_fn,
 };
 
-use crate::{CurveCycle, permissible::Permissible, new_blind, layer_gadget, tests::Pasta};
+use crate::{
+  CurveCycle, permissible::Permissible, pedersen_hash::pedersen_hash_vartime, new_blind,
+  layer_gadget, tests::Pasta,
+};
 
 #[test]
 fn test_layer_gadget() {
@@ -27,13 +30,6 @@ fn test_layer_gadget() {
   };
 
   let H = <Pallas as Ciphersuite>::G::random(&mut OsRng);
-
-  let mut pedersen_generators = vec![];
-  for _ in 0 .. 4 {
-    pedersen_generators.push(<Vesta as Ciphersuite>::G::random(&mut OsRng));
-  }
-  let pedersen_generators = VectorCommitmentGenerators::new(&pedersen_generators);
-  generators.whitelist_vector_commitments(b"Pedersen Hash Generators", &pedersen_generators);
 
   let mut elems = vec![];
   let mut raw_elems = vec![];
@@ -59,7 +55,6 @@ fn test_layer_gadget() {
       circuit,
       &permissible,
       H_table,
-      &pedersen_generators,
       Some(blinded_point).filter(|_| circuit.prover()),
       Some(blind_c1).filter(|_| circuit.prover()),
       0,
@@ -72,20 +67,25 @@ fn test_layer_gadget() {
     let mut transcript = transcript.clone();
     let mut circuit = Circuit::new(generators.per_proof(), true);
     gadget(&mut circuit);
-    circuit.prove_with_vector_commitments(&mut OsRng, &mut transcript)
+    circuit.prove(&mut OsRng, &mut transcript)
   };
+
+  let mut generators_vec = vec![];
+  for i in 0 .. raw_elems.len() {
+    generators_vec.push(generators.per_proof().generator(GeneratorsList::GBold1, i).point());
+  }
 
   assert!(commitments.is_empty());
   assert_eq!(vector_commitments.len(), 2);
   assert_eq!(
     *vector_commitments.last().unwrap() - (generators.h().point() * blinds.last().unwrap()),
-    pedersen_generators.commit_vartime(&raw_elems),
+    pedersen_hash_vartime::<Vesta>(&raw_elems, &generators_vec),
   );
 
   let mut circuit = Circuit::new(generators.per_proof(), false);
   gadget(&mut circuit);
   let mut verifier = BatchVerifier::new(5);
-  circuit.verification_statement_with_vector_commitments().verify(
+  circuit.verification_statement().verify(
     &mut OsRng,
     &mut verifier,
     &mut transcript,

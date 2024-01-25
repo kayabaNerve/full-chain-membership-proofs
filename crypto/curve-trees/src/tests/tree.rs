@@ -7,8 +7,9 @@ use ciphersuite::{
   Ciphersuite,
 };
 
+use bulletproofs_plus::{GeneratorsList, Generators};
+
 use ecip::Ecip;
-use bulletproofs_plus::VectorCommitmentGenerators;
 
 use crate::{
   CurveCycle,
@@ -58,14 +59,7 @@ fn check_path(
           .permissible_c2()
           .make_permissible(pedersen_hash_vartime::<<Pasta as CurveCycle>::C2>(
             &even,
-            &tree.odd_generators(depth).unwrap().generators()[.. even.len()]
-              .iter()
-              .cloned()
-              .map(|point| {
-                let MultiexpPoint::Constant(_, point) = point else { unreachable!() };
-                point
-              })
-              .collect::<Vec<_>>(),
+            &tree.odd_generators()[.. even.len()],
           ))
           .1,
       );
@@ -75,14 +69,7 @@ fn check_path(
           .permissible_c1()
           .make_permissible(pedersen_hash_vartime::<<Pasta as CurveCycle>::C1>(
             &odd,
-            &tree.even_generators(depth).unwrap().generators()[.. odd.len()]
-              .iter()
-              .cloned()
-              .map(|point| {
-                let MultiexpPoint::Constant(_, point) = point else { unreachable!() };
-                point
-              })
-              .collect::<Vec<_>>(),
+            &tree.even_generators()[.. odd.len()],
           ))
           .1,
       );
@@ -108,8 +95,17 @@ fn test_tree() {
   let leaf_randomness = <<Pasta as CurveCycle>::C1 as Ciphersuite>::G::random(&mut OsRng);
 
   for width in 2 ..= 4usize {
+    let mut even_generators = vec![];
+    let mut odd_generators = vec![];
+    for _ in 0 .. width {
+      even_generators.push(<<Pasta as CurveCycle>::C2 as Ciphersuite>::G::random(&mut OsRng));
+      odd_generators.push(<<Pasta as CurveCycle>::C1 as Ciphersuite>::G::random(&mut OsRng));
+    }
+
     let max = u64::try_from(width).unwrap().pow(4);
     let mut tree = Tree::<RecommendedTranscript, Pasta>::new(
+      even_generators,
+      odd_generators,
       permissible_c1,
       permissible_c2,
       leaf_randomness,
@@ -118,22 +114,6 @@ fn test_tree() {
     );
     assert_eq!(tree.root(), Hash::Odd(<<Pasta as CurveCycle>::C2 as Ciphersuite>::G::identity()));
     assert_eq!(tree.depth(), 0);
-
-    assert!(tree.odd_generators(0).is_none());
-    assert!(tree.even_generators(0).is_none());
-    for i in 1 ..= 4 {
-      if (i % 2) == 0 {
-        assert!(tree.even_generators(i).is_some());
-        assert!(tree.odd_generators(i).is_none());
-      } else {
-        assert!(tree.even_generators(i).is_none());
-        assert!(tree.odd_generators(i).is_some());
-      }
-    }
-    for i in 5 ..= 8 {
-      assert!(tree.odd_generators(i).is_none());
-      assert!(tree.even_generators(i).is_none());
-    }
 
     let mut items = vec![];
     let mut leaves = vec![];
@@ -165,21 +145,11 @@ fn test_tree() {
       let mut even = leaves[.. usize::try_from(i).unwrap()].to_vec();
       let mut odd = vec![];
       fn hash<T: 'static + Transcript, C: Ecip>(
+        generators: &[C::G],
         permissible: &Permissible<C>,
         width: usize,
         values: &mut Vec<C::F>,
-        generators: &VectorCommitmentGenerators<T, C>,
       ) -> Vec<C::G> {
-        let generators = generators
-          .generators()
-          .iter()
-          .cloned()
-          .map(|point| {
-            let MultiexpPoint::Constant(_, point) = point else { unreachable!() };
-            point
-          })
-          .collect::<Vec<_>>();
-
         let mut res = vec![];
         while !values.is_empty() {
           let mut these = vec![];
@@ -200,10 +170,10 @@ fn test_tree() {
       for i in 1 ..= depth {
         if !even.is_empty() {
           let hashes = hash::<RecommendedTranscript, <Pasta as CurveCycle>::C2>(
+            tree.odd_generators(),
             &permissible_c2,
             width,
             &mut even,
-            tree.odd_generators(i).unwrap(),
           );
           for hash in hashes {
             last_odd = Some(hash);
@@ -211,10 +181,10 @@ fn test_tree() {
           }
         } else {
           let hashes = hash::<RecommendedTranscript, <Pasta as CurveCycle>::C1>(
+            tree.even_generators(),
             &permissible_c1,
             width,
             &mut odd,
-            tree.even_generators(i).unwrap(),
           );
           for hash in hashes {
             last_even = Some(hash);

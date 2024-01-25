@@ -11,9 +11,9 @@ use ciphersuite::{
 };
 
 use ecip::Ecip;
-use bulletproofs_plus::{VectorCommitmentGenerators, Generators, gadgets::elliptic_curve::DLogTable};
+use bulletproofs_plus::{Generators, gadgets::elliptic_curve::DLogTable};
 
-use crate::{CurveCycle, permissible::Permissible};
+use crate::{CurveCycle, permissible::Permissible, pedersen_hash::pedersen_hash_vartime};
 
 #[derive(Clone, PartialEq, Eq, Debug)]
 enum Child<C: CurveCycle> {
@@ -52,8 +52,8 @@ where
   leaf_randomness: <C::C1 as Ciphersuite>::G,
 
   width: usize,
-  odd_generators: Vec<VectorCommitmentGenerators<T, C::C2>>,
-  even_generators: Vec<VectorCommitmentGenerators<T, C::C1>>,
+  odd_generators: Vec<<C::C2 as Ciphersuite>::G>,
+  even_generators: Vec<<C::C1 as Ciphersuite>::G>,
 
   parameters_hash: T::Challenge,
 
@@ -98,6 +98,8 @@ where
   T::Challenge: Debug,
 {
   pub fn new(
+    odd_generators: Vec<<C::C2 as Ciphersuite>::G>,
+    even_generators: Vec<<C::C1 as Ciphersuite>::G>,
     permissible_c1: Permissible<C::C1>,
     permissible_c2: Permissible<C::C2>,
     leaf_randomness: <C::C1 as Ciphersuite>::G,
@@ -123,41 +125,6 @@ where
     transcript.append_message(b"leaf_randomness", leaf_randomness.to_bytes());
     transcript.append_message(b"width", width_u64.to_le_bytes());
 
-    // pow now represents the amount of layers we need generators for
-    // TODO: Table these?
-    let mut odd_generators = vec![];
-    let mut even_generators = vec![];
-    for l in 1 ..= pow {
-      let l_bytes = l.to_le_bytes();
-      if (l % 2) == 1 {
-        let mut next_gens = vec![];
-        for i in 0 .. width_u64 {
-          next_gens.push(<C::C2 as Ecip>::hash_to_G(
-            "Curve Tree, Odd Generator",
-            &[l_bytes.as_ref(), i.to_le_bytes().as_ref()].concat(),
-          ));
-        }
-        odd_generators.push(VectorCommitmentGenerators::new(&next_gens));
-      } else {
-        let mut next_gens = vec![];
-        for i in 0 .. width_u64 {
-          next_gens.push(<C::C1 as Ecip>::hash_to_G(
-            "Curve Tree, Even Generator",
-            &[l_bytes.as_ref(), i.to_le_bytes().as_ref()].concat(),
-          ));
-        }
-        even_generators.push(VectorCommitmentGenerators::new(&next_gens));
-      }
-    }
-
-    transcript.domain_separate(b"even_generators");
-    for even_generators in &even_generators {
-      transcript.append_message(b"transcript", even_generators.transcript());
-    }
-    for odd_generators in &odd_generators {
-      transcript.append_message(b"transcript", odd_generators.transcript());
-    }
-
     Tree {
       dlog_table1: Box::leak(Box::new(DLogTable::new(permissible_c1.h))),
       dlog_table2: Box::leak(Box::new(DLogTable::new(permissible_c2.h))),
@@ -181,19 +148,6 @@ where
     &self.parameters_hash
   }
 
-  pub fn whitelist_vector_commitments(
-    &self,
-    c1: &mut Generators<T, C::C1>,
-    c2: &mut Generators<T, C::C2>,
-  ) {
-    for odd_generators in &self.odd_generators {
-      c2.whitelist_vector_commitments(b"Curve Tree, Odd Generators", odd_generators);
-    }
-    for even_generators in &self.even_generators {
-      c1.whitelist_vector_commitments(b"Curve Tree, Even Generators", even_generators);
-    }
-  }
-
   pub(crate) fn permissible_c1(&self) -> &Permissible<C::C1> {
     &self.permissible_c1
   }
@@ -214,20 +168,11 @@ where
     self.node.hash
   }
 
-  pub fn even_generators(&self, layer: usize) -> Option<&VectorCommitmentGenerators<T, C::C1>> {
-    if (layer % 2) != 0 {
-      return None;
-    }
-    if layer < 2 {
-      return None;
-    }
-    self.even_generators.get((layer - 2) / 2)
+  pub fn even_generators(&self) -> &[<C::C1 as Ciphersuite>::G] {
+    &self.even_generators
   }
-  pub fn odd_generators(&self, layer: usize) -> Option<&VectorCommitmentGenerators<T, C::C2>> {
-    if (layer % 2) != 1 {
-      return None;
-    }
-    self.odd_generators.get(layer / 2)
+  pub fn odd_generators(&self) -> &[<C::C2 as Ciphersuite>::G] {
+    &self.odd_generators
   }
 
   pub fn add_leaves(&mut self, leaves: &[<C::C1 as Ciphersuite>::G]) {
@@ -350,11 +295,11 @@ where
       self.paths.insert(leaf.to_bytes().as_ref().to_vec(), path.unwrap());
     }
 
-    fn clean<T: 'static + Transcript, C: CurveCycle>(
+    fn clean<C: CurveCycle>(
       permissible_c1: &Permissible<C::C1>,
       permissible_c2: &Permissible<C::C2>,
-      odd_generators: &[VectorCommitmentGenerators<T, C::C2>],
-      even_generators: &[VectorCommitmentGenerators<T, C::C1>],
+      odd_generators: &Vec<<C::C2 as Ciphersuite>::G>,
+      even_generators: &Vec<<C::C1 as Ciphersuite>::G>,
       node: &mut Node<C>,
     ) {
       if !node.dirty {
@@ -392,26 +337,22 @@ where
         Hash::Even(ref mut hash) => {
           assert!(even_elems.is_empty());
           assert_eq!(this_node_depth % 2, 0);
-          // Even generators are 2, 4, 6
-          let even_generators = &even_generators[(this_node_depth - 2) / 2];
           while odd_elems.len() < even_generators.len() {
             odd_elems.push(<C::C1 as Ciphersuite>::F::ZERO);
           }
-          let permissioned =
-            permissible_c1.make_permissible(even_generators.commit_vartime(&odd_elems));
+          let permissioned = permissible_c1
+            .make_permissible(pedersen_hash_vartime::<C::C1>(&odd_elems, even_generators));
           *hash = permissioned.1;
           permissioned.0
         }
         Hash::Odd(ref mut hash) => {
           assert!(odd_elems.is_empty());
           assert_eq!(this_node_depth % 2, 1);
-          // Truncating division
-          let odd_generators = &odd_generators[this_node_depth / 2];
           while even_elems.len() < odd_generators.len() {
             even_elems.push(<C::C2 as Ciphersuite>::F::ZERO);
           }
-          let permissioned =
-            permissible_c2.make_permissible(odd_generators.commit_vartime(&even_elems));
+          let permissioned = permissible_c2
+            .make_permissible(pedersen_hash_vartime::<C::C2>(&even_elems, odd_generators));
           *hash = permissioned.1;
           permissioned.0
         }
