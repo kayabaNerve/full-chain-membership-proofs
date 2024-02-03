@@ -277,8 +277,7 @@ impl<'a, T: 'static + Transcript, C: Ciphersuite> ArithmeticCircuitStatement<'a,
 
     let nc = self.C.len();
 
-    // TODO: Have this modified n' formula signed off on
-    let ni = 2 + (2 * (nc + 1).div_ceil(2));
+    let ni = 2 + (2 * (nc / 2));
     let ilr = ni / 2;
     let io = ni;
     let is = ni + 1;
@@ -287,8 +286,10 @@ impl<'a, T: 'static + Transcript, C: Ciphersuite> ArithmeticCircuitStatement<'a,
     let js = ni + 1;
 
     let mut ik = Vec::with_capacity(nc);
-    assert!(nc <= (ni / 2));
-    for i in 0 .. nc {
+    for mut i in 0 .. nc {
+      if i >= (ni / 2) {
+        i += 1;
+      }
       ik.push(i);
     }
     /*
@@ -301,9 +302,12 @@ impl<'a, T: 'static + Transcript, C: Ciphersuite> ArithmeticCircuitStatement<'a,
     }
     */
     let mut jk = Vec::with_capacity(nc);
-    assert!((ni - nc) >= (ni / 2));
     for i in 0 .. nc {
-      jk.push(ni - i);
+      let mut i = ni - i;
+      if i <= (ni / 2) {
+        i -= 1;
+      }
+      jk.push(i);
     }
     /*
     {
@@ -450,7 +454,10 @@ impl<'a, T: 'static + Transcript, C: Ciphersuite> ArithmeticCircuitStatement<'a,
 
     let mut u = (alpha * x_ilr) + (beta * x_io) + (p * x_is);
     let mut c_gamma_x = C::F::ONE;
-    for c_gamma in &witness.c_gamma {
+    for (i, c_gamma) in witness.c_gamma.iter().enumerate() {
+      if i == (ni / 2) {
+        c_gamma_x *= x;
+      }
       u += c_gamma_x * c_gamma;
       c_gamma_x *= x;
     }
@@ -466,7 +473,7 @@ impl<'a, T: 'static + Transcript, C: Ciphersuite> ArithmeticCircuitStatement<'a,
     proof: ArithmeticCircuitProof<C>,
   ) {
     let nc = self.C.len();
-    let ni = 2 + (2 * (nc + 1).div_ceil(2));
+    let ni = 2 + (2 * (nc / 2));
     let l_r_poly_len = 1 + ni + 1;
     let m = self.V.len();
     let n = self.WL.width();
@@ -530,7 +537,10 @@ impl<'a, T: 'static + Transcript, C: Ciphersuite> ArithmeticCircuitStatement<'a,
 
     let mut Cs = C::G::identity();
     let mut C_x_coeff = C::F::ONE;
-    for C in &self.C.0 {
+    for (i, C) in self.C.0.iter().enumerate() {
+      if i == (ni / 2) {
+        C_x_coeff *= x;
+      }
       Cs += *C * C_x_coeff;
       C_x_coeff *= x;
     }
@@ -552,7 +562,10 @@ impl<'a, T: 'static + Transcript, C: Ciphersuite> ArithmeticCircuitStatement<'a,
 
     let mut WCs = C::G::identity();
     for (j, WC) in self.WC.iter().enumerate() {
-      let j = ni - j;
+      let mut j = ni - j;
+      if j <= (ni / 2) {
+        j -= 1;
+      }
       let mut x_coeff = C::F::ONE;
       for _ in 0 .. j {
         x_coeff *= x;
