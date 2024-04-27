@@ -418,6 +418,26 @@ impl<F: Field + From<u64>> Poly<F> {
     self.scale(scalar)
   }
 
+  pub fn dx_over_dz<C: Ecip<FieldElement = F>>(slope: F) -> Divisor<C> {
+    let dx = Poly {
+      y_coefficients: vec![],
+      yx_coefficients: vec![],
+      x_coefficients: vec![F::ZERO, F::from(3)],
+      zero_coefficient: F::from(C::A),
+    };
+
+    let dy = Poly {
+      y_coefficients: vec![F::from(2)],
+      yx_coefficients: vec![],
+      x_coefficients: vec![],
+      zero_coefficient: F::ZERO,
+    };
+
+    let dz = dy.clone().scale(-slope).add(&dx);
+
+    Divisor { numerator: dy, denominator: dz }
+  }
+
   // Calculate the logarithmic derivative of a polynomial.
   pub fn logarithmic_derivative<C: Ecip<FieldElement = F>>(&self) -> Divisor<C> {
     let (dx, dy) = self.differentiate();

@@ -228,3 +228,77 @@ fn test_log_deriv_eval() {
     test(divisor.normalize_x_coefficient());
   }
 }
+
+#[test]
+fn test_log_deriv_z_eval() {
+  for i in 0 .. 256 {
+    dbg!(i);
+
+    if (i % 2) != 1 {
+      continue;
+    }
+    let mut points = vec![];
+    for _ in 0 .. i {
+      points.push(<Pallas as Ciphersuite>::G::random(&mut OsRng));
+    }
+    points.push(-points.iter().sum::<<Pallas as Ciphersuite>::G>());
+    let divisor = Divisor::<Pallas>::new(&points);
+
+    let challenge_0 = <Pallas as Ciphersuite>::G::random(&mut OsRng);
+    let challenge_1 = <Pallas as Ciphersuite>::G::random(&mut OsRng);
+    let challenge_2 = -(challenge_0 + challenge_1);
+    let (slope, intercept) = crate::slope_intercept::<Pallas>(challenge_0, challenge_1);
+    // Z = y - slope x
+    // z = intercept
+
+    let c0_xy = <Pallas as Ecip>::to_xy(challenge_0);
+    let c1_xy = <Pallas as Ecip>::to_xy(challenge_1);
+    let c2_xy = <Pallas as Ecip>::to_xy(challenge_2);
+
+    // Classic check
+    {
+      let lhs = divisor.eval(c0_xy.0, c0_xy.1) *
+        divisor.eval(c1_xy.0, c1_xy.1) *
+        divisor.eval(c2_xy.0, c2_xy.1);
+      let mut rhs = <Pallas as Ecip>::FieldElement::ONE;
+      for point in &points {
+        let (x, y) = <Pallas as Ecip>::to_xy(*point);
+        rhs *= intercept - (y - (slope * x));
+      }
+      assert_eq!(lhs, rhs);
+    }
+
+    let sanity = (Poly::dx_over_dz::<Pallas>(slope).numerator.eval(c0_xy.0, c0_xy.1) *
+      Poly::dx_over_dz::<Pallas>(slope).denominator.eval(c0_xy.0, c0_xy.1).invert().unwrap()) +
+      (Poly::dx_over_dz::<Pallas>(slope).numerator.eval(c1_xy.0, c1_xy.1) *
+        Poly::dx_over_dz::<Pallas>(slope).denominator.eval(c1_xy.0, c1_xy.1).invert().unwrap()) +
+      (Poly::dx_over_dz::<Pallas>(slope).numerator.eval(c2_xy.0, c2_xy.1) *
+        Poly::dx_over_dz::<Pallas>(slope).denominator.eval(c2_xy.0, c2_xy.1).invert().unwrap());
+    assert_eq!(sanity, <Pallas as Ecip>::FieldElement::ZERO);
+
+    // Logarithmic derivative check
+    let test = |divisor: Poly<_>| {
+      let log_deriv = divisor.logarithmic_derivative::<Pallas>();
+      let dx_over_dz = Poly::dx_over_dz::<Pallas>(slope);
+
+      let lhs = |c: (<Pallas as Ecip>::FieldElement, <Pallas as Ecip>::FieldElement)| {
+        let fraction_1 = log_deriv.numerator.eval(c.0, c.1) *
+          log_deriv.denominator.eval(c.0, c.1).invert().unwrap();
+        let fraction_2 = dx_over_dz.numerator.eval(c.0, c.1) *
+          dx_over_dz.denominator.eval(c.0, c.1).invert().unwrap();
+        fraction_1 * fraction_2
+      };
+      let lhs = lhs(c0_xy) + lhs(c1_xy) + lhs(c2_xy);
+
+      let mut rhs = <Pallas as Ecip>::FieldElement::ZERO;
+      for point in &points {
+        let (x, y) = <Pallas as Ecip>::to_xy(*point);
+        rhs += (intercept - (y - (slope * x))).invert().unwrap();
+      }
+
+      assert_eq!(lhs, rhs);
+    };
+    test(divisor.clone());
+    test(divisor.normalize_x_coefficient());
+  }
+}
