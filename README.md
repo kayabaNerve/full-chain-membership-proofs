@@ -1,3 +1,8 @@
+# Deprecated
+
+This repository has been deprecated in favor of the
+[FCMP++ repository](https://github.com/kayabaNerve/fcmp-plus-plus).
+
 # Curve Trees
 
 This branch hosts a curve trees proof of concept, built with the explicit goal
